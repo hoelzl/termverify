@@ -28,7 +28,7 @@ Issues = "https://github.com/hoelzl/termverify/issues"
 
 [dependency-groups]
 dev = [
-    "hypothesis>=6.0",
+    "hypothesis>=6.156.2",
     "mypy>=1.0",
     "pre-commit>=4.0",
     "pytest>=8.0",
