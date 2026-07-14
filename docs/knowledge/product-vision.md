@@ -25,3 +25,5 @@ TermVerify supplies reusable contracts and runners for deterministic terminal in
 - prescribing a GUI framework or agent harness;
 - making raw ANSI output the source of truth;
 - automatically approving changed snapshots or behavioral baselines.
+- adding browser bridging before a terminal vertical slice demonstrates that its
+  abstraction is needed.

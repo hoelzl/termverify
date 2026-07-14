@@ -95,6 +95,24 @@ and `scripts`, both pre-commit stages, OKF validation, wheel/sdist isolated
 installation smoke tests, `zizmor`, Markdown-link validation, and
 `git diff --check`.
 
+## Workstream 3 design transition: 2026-07-15
+
+Issue [#3](https://github.com/hoelzl/termverify/issues/3) tracks the focused
+protocol and deterministic-boundary work. The accepted v1 JSONL design defines
+canonical serialization, lifecycle and ordering, stable IDs, required
+configuration, enforced-or-unsupported constraint reporting, and compatibility
+rules. A Windows 11 / CPython 3.12 feasibility spike found the ConPTY kernel
+APIs available but no usable stdlib PTY operations; it also confirmed the need
+for separately drained streams, explicit initial sizing and resize, and
+drain-aware teardown. Browser bridging is deferred unambiguously in the product
+and architecture documents.
+
+Independent human-readable review accepted this material protocol/architecture
+decision on 2026-07-15. Workstream 3 remains active: no committed schemas,
+fixtures, serialization/compatibility tests, or adapter constraint-propagation
+tests exist yet. Those executable contracts are required before accepting Phase
+1 adapter code.
+
 ## Workstream 1: deterministic and supply-chain-safe delivery
 
 ### Objective
