@@ -16,12 +16,14 @@ Thank you for contributing. TermVerify is designed to be trustworthy infrastruct
 ## Local checks
 
 ```bash
-uv sync --all-groups
-uv run pytest
-uv run ruff check .
-uv run ruff format --check .
-uv run mypy src tests
-uv run pre-commit run --all-files
+uv --no-config sync --all-groups --locked
+uv --no-config run pytest --cov --cov-report=term-missing
+uv --no-config run ruff check .
+uv --no-config run ruff format --check .
+uv --no-config run mypy src tests scripts
+uv --no-config run pre-commit run --all-files
+uv --no-config run pre-commit run --hook-stage pre-push --all-files
+uv --no-config build
 ```
 
 ## Pull requests

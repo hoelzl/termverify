@@ -35,6 +35,7 @@ dev = [
     "pytest-cov>=5.0",
     "pyyaml>=6.0",
     "ruff>=0.11",
+    "types-pyyaml>=6.0",
 ]
 
 [build-system]
@@ -61,7 +62,7 @@ target-version = "py312"
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.mypy]
-files = ["src", "tests"]
+files = ["src", "tests", "scripts"]
 python_version = "3.12"
 strict = true
 warn_unreachable = true

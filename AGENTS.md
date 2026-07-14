@@ -16,7 +16,7 @@ TermVerify is a Python library and reference tooling for verifying autonomous te
 | Dependencies and supported Python versions | `pyproject.toml` and `uv.lock` |
 | Test, lint, format, and type-check commands | `pyproject.toml`, `.pre-commit-config.yaml`, and CI workflow |
 | Public API | `src/termverify/` plus tests |
-| Protocol schemas and compatibility | `docs/knowledge/protocol.md` and committed schema files |
+| Protocol schemas and compatibility | `docs/knowledge/protocol.md`; committed schema files become authoritative in Phase 1 |
 | Architecture decisions | `docs/knowledge/architecture.md` and ADRs under `docs/agent/design/` |
 | Current work state | GitHub issues/PRs and `git status`; do not encode volatile state in this file |
 
@@ -46,12 +46,14 @@ TermVerify is a Python library and reference tooling for verifying autonomous te
 ## Validation Before Commit
 
 ```bash
-uv sync --all-groups
-uv run pytest
-uv run ruff check .
-uv run ruff format --check .
-uv run mypy src tests
-uv run pre-commit run --all-files
+uv --no-config sync --all-groups --locked
+uv --no-config run pytest --cov --cov-report=term-missing
+uv --no-config run ruff check .
+uv --no-config run ruff format --check .
+uv --no-config run mypy src tests scripts
+uv --no-config run pre-commit run --all-files
+uv --no-config run pre-commit run --hook-stage pre-push --all-files
+uv --no-config build
 ```
 
 Run the narrowest relevant command during development, then the appropriate wider gate before a commit. Keep changes focused; use a fresh reviewer context for nontrivial code changes.

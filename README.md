@@ -51,11 +51,15 @@ See [the knowledge bundle](docs/knowledge/index.md) for the durable architecture
 Requirements: [uv](https://docs.astral.sh/uv/) and Python 3.12+ (uv manages the pinned interpreter automatically).
 
 ```bash
-uv sync --all-groups
-uv run pytest
-uv run ruff check .
-uv run ruff format --check .
-uv run mypy src tests
+uv --no-config sync --all-groups --locked
+uv --no-config run pytest --cov --cov-report=term-missing
+uv --no-config run ruff check .
+uv --no-config run ruff format --check .
+uv --no-config run mypy src tests scripts
+uv --no-config run pre-commit run --all-files
+uv --no-config run pre-commit run --hook-stage pre-push --all-files
+uv --no-config build
+uv --no-config run pre-commit install --hook-type pre-commit --hook-type pre-push
 ```
 
 See [developer workflow](docs/developer-guide/agent-workflow.md) and [contributing guide](CONTRIBUTING.md).
