@@ -50,7 +50,7 @@ Implement a robust PTY process adapter with readiness conditions, terminal snaps
 
 ## Current status
 
-Foundation documentation and package tooling are being created. No protocol runner, adapter, fixture, or copied R://N code exists yet.
+Phase 0 is complete and published on `main`. The repository has a locked uv environment, local pre-commit hooks, passing Python 3.12/3.13 CI, a validated OKF knowledge bundle, Apache-2.0 licensing, and the initial public package contract. No protocol runner, adapter, fixture, or copied R://N code exists yet.
 
 ## Next step
 
