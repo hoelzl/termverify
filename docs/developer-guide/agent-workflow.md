@@ -25,6 +25,40 @@ AGENTS.md
 
 Do not paste architecture dumps, old handovers, generated wiki pages, or volatile issue state into `AGENTS.md`.
 
+## Handover lifecycle
+
+Handover documents preserve the verified context needed to transfer a bounded
+initiative or phase. They are not task trackers: GitHub issues, pull requests,
+and Git remain the source of truth for volatile work state.
+
+Create one handover under `docs/agent/handovers/` when an initiative crosses a
+meaningful ownership, phase, or context boundary. Name it
+`<initiative>-handover.md`. An active handover must state its status, optional
+owner, whether review is required, scope, verified current state, decisions,
+risks, next actions, validation evidence, and completion or supersession
+criteria.
+
+Use these statuses:
+
+- **draft:** proposed context, not yet accepted as the working handover;
+- **active:** the current handover for its initiative;
+- **blocked:** active work cannot proceed without an explicit decision or
+  external dependency;
+- **complete:** all documented completion criteria have been verified;
+- **superseded:** a named successor replaces this handover.
+
+Update handovers only at meaningful transitions and record evidence rather
+than copying issue-by-issue progress. A handover that changes architectural
+decisions, protocol commitments, security posture, or baseline governance
+requires human-readable independent review.
+
+When a handover becomes complete or superseded, move it to
+`docs/agent/handovers/archive/` and update
+`docs/agent/handovers/index.md` with its final status and successor, if any.
+Do not delete it: the archived document and Git history preserve the rationale
+needed for future work. `index.md` is navigation only; it must not duplicate
+the handover's volatile detail.
+
 ## Evidence hierarchy
 
 Prefer, in order:

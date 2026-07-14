@@ -6,5 +6,33 @@ repos:
     rev: v0.11.13
     hooks:
       - id: ruff-check
-        args: [--fix]
       - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: validate-knowledge-frontmatter
+        name: validate knowledge frontmatter
+        entry: uv --no-config run python scripts/validate_knowledge_frontmatter.py
+        language: system
+        pass_filenames: false
+
+      - id: test
+        name: test suite
+        entry: uv --no-config run pytest
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: type-check
+        name: type check
+        entry: uv --no-config run mypy src tests scripts
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: build-distributions
+        name: build distributions
+        entry: uv --no-config build
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
