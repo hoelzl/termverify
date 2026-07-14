@@ -34,7 +34,7 @@ The repository is in its foundation phase. The initial public contract, develope
 ```text
 application under test
   ├── direct semantic adapter ── fast properties, replay, differential tests
-  └── PTY/browser adapter ───── real interaction and rendering evidence
+  └── PTY adapter ───────────── real terminal interaction and rendering evidence
                │
           TermVerify
   ├── run configuration and interaction protocol
@@ -45,6 +45,8 @@ application under test
 ```
 
 See [the knowledge bundle](docs/knowledge/index.md) for the durable architecture and verification model.
+Browser bridging is deferred until the terminal vertical slice proves a shared
+abstraction is necessary.
 
 ## Development
 
