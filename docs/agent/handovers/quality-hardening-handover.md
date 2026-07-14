@@ -75,14 +75,19 @@ reviewed commit and pull-request run before they are considered CI-verified:
   findings; OSV-Scanner awaits its first CI run.
 - GitHub configuration is verified: SHA pinning is required; Dependabot
   security updates, secret scanning, and secret-scanning push protection are
-  enabled; `main` requires up-to-date checks, one approving review, stale
-  review dismissal, conversation resolution, and applies those rules to
-  administrators. GitHub retained non-provider secret patterns as disabled.
+  enabled; `main` requires up-to-date checks, a pull request with zero required
+  approvals for the single-maintainer workflow, stale-review dismissal,
+  conversation resolution, and applies those rules to administrators. GitHub
+  retained non-provider secret patterns as disabled.
 
-Pending evidence: no commit or push has been made, so the new workflows,
-Dependabot configuration, Python 3.14 matrix, and required-check names have
-not yet executed on GitHub. After the reviewed change reaches a pull request,
-record the workflow URLs and outcomes here before closing Workstreams 1 and 2.
+Remote verification passed on 2026-07-15: the CI matrix, package-distribution,
+and documentation-contract jobs passed in
+`https://github.com/hoelzl/termverify/actions/runs/29373481944`; the `zizmor`
+and OSV-Scanner jobs passed in
+`https://github.com/hoelzl/termverify/actions/runs/29373481942`; and Dependabot
+validated its configuration. The branch-protection policy retains required,
+up-to-date checks and resolved conversations while requiring zero approvals for
+the single-maintainer workflow.
 
 Local verification passed on 2026-07-15: the full pytest suite with branch
 coverage, Ruff check and format verification, strict mypy over `src`, `tests`,
@@ -108,7 +113,9 @@ Make CI test the committed environment and reduce workflow supply-chain risk.
 4. Add a dependency vulnerability audit and secret/workflow-policy checks
    proportionate to the repository's maturity.
 5. Configure repository branch protection outside this repository so required
-   CI checks and an approving review are required for `main`; record the
+   CI checks, a pull request, and resolved conversations are required for
+   `main`. Require zero approvals while the repository is single-maintainer;
+   revisit independent approval when a second maintainer joins. Record the
    configuration and verification evidence in the associated issue or pull
    request.
 
