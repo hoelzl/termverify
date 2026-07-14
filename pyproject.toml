@@ -1,0 +1,67 @@
+[project]
+name = "termverify"
+version = "0.1.0"
+description = "Protocol-driven verification for autonomous terminal applications."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+authors = [
+    { name = "Matthias Hölzl", email = "tc@xantira.com" },
+]
+keywords = ["agents", "testing", "terminal", "tui", "verification"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Testing",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/hoelzl/termverify"
+Repository = "https://github.com/hoelzl/termverify"
+Issues = "https://github.com/hoelzl/termverify/issues"
+
+[dependency-groups]
+dev = [
+    "hypothesis>=6.0",
+    "mypy>=1.0",
+    "pre-commit>=4.0",
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "pyyaml>=6.0",
+    "ruff>=0.11",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.28,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["termverify"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+files = ["src", "tests"]
+python_version = "3.12"
+strict = true
+warn_unreachable = true

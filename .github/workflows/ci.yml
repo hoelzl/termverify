@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+      - run: uv sync --all-groups
+      - run: uv run pytest
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy src tests
+
+  docs-contract:
+    name: Documentation contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --all-groups
+      - name: Validate OKF knowledge frontmatter
+        run: |
+          uv run python - <<'PY'
+          from pathlib import Path
+          import yaml
+
+          root = Path("docs/knowledge")
+          errors = []
+          for path in root.rglob("*.md"):
+              if path.name in {"index.md", "log.md"}:
+                  continue
+              text = path.read_text(encoding="utf-8")
+              if not text.startswith("---\n"):
+                  errors.append(f"{path}: missing YAML frontmatter")
+                  continue
+              _, frontmatter, *_ = text.split("---", 2)
+              data = yaml.safe_load(frontmatter)
+              if not isinstance(data, dict) or not data.get("type"):
+                  errors.append(f"{path}: missing non-empty type")
+          if errors:
+              raise SystemExit("\n".join(errors))
+          PY

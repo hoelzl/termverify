@@ -1,0 +1,10 @@
+# Keep source, protocols, and documentation stable across Windows and POSIX hosts.
+* text=auto eol=lf
+
+# Preserve binary assets when they are introduced.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
