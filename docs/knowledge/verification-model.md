@@ -29,3 +29,7 @@ A golden master is optional, never the only oracle.
 # Baseline governance
 
 Changed snapshots or approved divergences are behavioral changes. They need a readable diff, rationale, and independent review. CI detects unapproved changes; it does not create approval.
+
+The accepted [evidence-governance policy](evidence-governance.md) defines the
+redaction, capture, metadata, and validation controls that must be accepted and
+implemented before baseline files or CI evidence artifacts are introduced.

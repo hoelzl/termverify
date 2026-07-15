@@ -7,6 +7,8 @@ This directory is an [Open Knowledge Format (OKF) v0.1](https://github.com/Googl
 - [Product vision](product-vision.md) — scope, users, and non-goals.
 - [Architecture](architecture.md) — boundaries, adapters, and package model.
 - [Verification model](verification-model.md) — evidence layers and oracle types.
+- [Evidence governance](evidence-governance.md) — accepted redaction, capture,
+  and baseline-approval controls.
 - [Protocol](protocol.md) — the planned interaction and observation contract.
 
 ## Navigation rule
