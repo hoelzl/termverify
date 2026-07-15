@@ -747,13 +747,23 @@ def test_transcript_rejects_evidence_time_that_differs_from_manual_clock(
         parse_transcript(encoded)
 
 
-def test_transcript_accepts_evidence_at_explicitly_advanced_manual_time() -> None:
+@pytest.mark.parametrize("kind", ["diagnostic", "observation"])
+def test_transcript_accepts_evidence_at_explicitly_advanced_manual_time(
+    kind: str,
+) -> None:
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
     transcript[8]["kind"] = "input.clock_advanced"
     transcript[8]["payload"] = {"at_ms": 1, "delta_ms": 1}
-    observation = transcript[9]["payload"]
-    assert isinstance(observation, dict)
-    observation["at_ms"] = 1
+    evidence = transcript[9]["payload"]
+    assert isinstance(evidence, dict)
+    evidence["at_ms"] = 1
+    if kind == "diagnostic":
+        transcript[9]["kind"] = kind
+        transcript[9]["payload"] = {
+            "at_ms": 1,
+            "code": "synthetic",
+            "message": "synthetic",
+        }
 
     encoded = serialize_transcript(transcript)
 

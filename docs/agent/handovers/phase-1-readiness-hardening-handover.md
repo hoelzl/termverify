@@ -77,11 +77,12 @@ review contexts. No tracked repository files were modified by the review.
 - `actionlint` was not available locally. GitHub's pinned workflow-security and
   dependency-vulnerability jobs passed and remain the current remote evidence.
 
-### Reconciliation after merged PRs #12, #13, #15, and #17
+### Reconciliation through merged PR #17
 
-The confirmed-finding lists below preserve the original review baseline. A
-reconciliation on clean `main` at `b20993d` found 145 passing tests and no open
-issues before the next focused prerequisite was filed:
+The confirmed-finding lists below preserve the original review baseline. An
+intermediate reconciliation after PRs #12, #13, and #15 on clean `main` at
+`b20993d` found 145 passing tests and no open issues before the next focused
+prerequisite was filed:
 
 - PR #12 made parsing and serialization share envelope/lifecycle validation,
   enforced the accepted inception-v1 and baseline-review decisions, and aligned
