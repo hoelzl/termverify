@@ -223,6 +223,17 @@ adapter responsibility rather than descriptive metadata.
 
 ## Workstream 4: evidence and baseline safety governance
 
+### Policy transition: 2026-07-15
+
+Issue [#5](https://github.com/hoelzl/termverify/issues/5) tracks this work.
+The evidence-governance policy is independently human-reviewed and accepted. It
+defines transcript/clipboard/frame/diagnostic/path/artifact classification,
+safe and non-persistent defaults, bounded sensitive-mode retention, deterministic
+redaction, and baseline approval records bound to canonical baseline and
+readable-diff digests. Workstream 4 remains active until the redactor and
+governance validator have bypass-proof tests and run in the local and CI gates;
+CI artifact publication remains disabled.
+
 ### Objective
 
 Prevent sensitive terminal evidence from leaking and turn baseline-review policy
