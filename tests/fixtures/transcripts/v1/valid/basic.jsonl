@@ -1,0 +1,11 @@
+{"id":"record-000","kind":"run.started","payload":{"config":{"clock":{"initial_ms":0,"mode":"manual"},"filesystem":{"mode":"sandbox","root_id":"fixture-root"},"locale":"C","network":{"mode":"deny"},"seed":"0","terminal":{"capabilities":["ansi"],"columns":80,"rows":24},"timezone":"UTC"}},"protocol":"termverify.transcript/v1","run_id":"run-basic","seq":0}
+{"id":"record-001","kind":"capability.result","payload":{"constraint":"seed","effective":"0","status":"enforced"},"protocol":"termverify.transcript/v1","run_id":"run-basic","seq":1}
+{"id":"record-002","kind":"capability.result","payload":{"constraint":"clock","effective":{"initial_ms":0,"mode":"manual"},"status":"enforced"},"protocol":"termverify.transcript/v1","run_id":"run-basic","seq":2}
+{"id":"record-003","kind":"capability.result","payload":{"constraint":"locale","effective":"C","status":"enforced"},"protocol":"termverify.transcript/v1","run_id":"run-basic","seq":3}
+{"id":"record-004","kind":"capability.result","payload":{"constraint":"timezone","effective":"UTC","status":"enforced"},"protocol":"termverify.transcript/v1","run_id":"run-basic","seq":4}
+{"id":"record-005","kind":"capability.result","payload":{"constraint":"terminal","effective":{"capabilities":["ansi"],"columns":80,"rows":24},"status":"enforced"},"protocol":"termverify.transcript/v1","run_id":"run-basic","seq":5}
+{"id":"record-006","kind":"capability.result","payload":{"constraint":"filesystem","effective":{"mode":"sandbox","root_id":"fixture-root"},"status":"enforced"},"protocol":"termverify.transcript/v1","run_id":"run-basic","seq":6}
+{"id":"record-007","kind":"capability.result","payload":{"constraint":"network","effective":{"mode":"deny"},"status":"enforced"},"protocol":"termverify.transcript/v1","run_id":"run-basic","seq":7}
+{"id":"record-008","kind":"input.text","payload":{"at_ms":0,"text":"hello"},"protocol":"termverify.transcript/v1","run_id":"run-basic","seq":8}
+{"id":"record-009","kind":"observation","payload":{"at_ms":0,"events":[],"state":{},"ui":{"cursor":{"column":0,"row":0,"visible":false},"focus":null,"mode":null,"regions":[]}},"protocol":"termverify.transcript/v1","run_id":"run-basic","seq":9}
+{"id":"record-010","kind":"run.finished","payload":{"exit":{"kind":"code","value":0}},"protocol":"termverify.transcript/v1","run_id":"run-basic","seq":10}

@@ -1,0 +1,1 @@
+{"id":"record-000","kind":"run.started","payload":{"config":{"clock":{"initial_ms":0,"mode":"manual"},"filesystem":{"mode":"sandbox","root_id":"fixture-root"},"locale":"C","network":{"mode":"deny"},"seed":"0","terminal":{"columns":80,"rows":24},"timezone":"UTC"}},"protocol":"termverify.transcript/v0","run_id":"run-invalid","seq":0}
