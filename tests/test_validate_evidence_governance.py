@@ -124,6 +124,176 @@ def test_validate_evidence_governance_rejects_unapproved_nested_baseline(
     assert any("missing readable-diff record" in error for error in errors)
 
 
+def test_validate_evidence_governance_rejects_secret_in_nested_transcript_fixture(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository"
+    fixture = (
+        repository
+        / "tests"
+        / "fixtures"
+        / "transcripts"
+        / "v1"
+        / "invalid"
+        / "nested-secret.jsonl"
+    )
+    fixture.parent.mkdir(parents=True)
+    fixture.write_text(
+        '{"payload":{"x-private":{"apiToken":"super-secret"}}}\n',
+        encoding="utf-8",
+    )
+
+    validator = load_validator()
+
+    errors = validator.validate_evidence_governance(repository)
+
+    assert any("restricted evidence" in error for error in errors)
+
+
+def test_validate_evidence_governance_requires_explicit_synthetic_classification(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository"
+    fixture = repository / "tests" / "fixtures" / "transcripts" / "raw.jsonl"
+    fixture.parent.mkdir(parents=True)
+    fixture.write_text(
+        '{"kind":"input.text","payload":{"text":"synthetic input"}}\n',
+        encoding="utf-8",
+    )
+
+    validator = load_validator()
+
+    errors = validator.validate_evidence_governance(repository)
+
+    assert any("missing public-synthetic classification" in error for error in errors)
+
+    fixture.with_name(f"{fixture.name}.evidence.json").write_text(
+        json.dumps(
+            {
+                "schema": "termverify.fixture-evidence/v1",
+                "classification": "public-synthetic",
+                "fixture": fixture.name,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert validator.validate_evidence_governance(repository) == []
+
+
+def test_validate_evidence_governance_rejects_duplicate_classification_members(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository"
+    fixture = repository / "tests" / "fixtures" / "transcripts" / "raw.jsonl"
+    fixture.parent.mkdir(parents=True)
+    fixture.write_text("{}\n", encoding="utf-8")
+    fixture.with_name(f"{fixture.name}.evidence.json").write_text(
+        '{"schema":"wrong",'
+        '"schema":"termverify.fixture-evidence/v1",'
+        '"classification":"public-synthetic",'
+        '"fixture":"raw.jsonl"}',
+        encoding="utf-8",
+    )
+
+    validator = load_validator()
+
+    errors = validator.validate_evidence_governance(repository)
+
+    assert any("duplicate object member" in error for error in errors)
+
+
+def test_validate_evidence_governance_checks_shadowed_duplicate_members(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository"
+    fixture = repository / "tests" / "fixtures" / "transcripts" / "leak.jsonl"
+    fixture.parent.mkdir(parents=True)
+    fixture.write_text(
+        '{"payload":{"apiToken":"super-secret"},"payload":{"safe":"ok"}}\n',
+        encoding="utf-8",
+    )
+
+    validator = load_validator()
+
+    errors = validator.validate_evidence_governance(repository)
+
+    assert any("restricted evidence" in error for error in errors)
+
+
+def test_validate_evidence_governance_rejects_unclassified_fixture_extension(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository"
+    fixture = repository / "tests" / "fixtures" / "transcripts" / "leak.txt"
+    fixture.parent.mkdir(parents=True)
+    fixture.write_text("private transcript", encoding="utf-8")
+
+    validator = load_validator()
+
+    errors = validator.validate_evidence_governance(repository)
+
+    assert any("unsupported transcript fixture extension" in error for error in errors)
+
+
+@pytest.mark.parametrize("root_name", ["artifacts", "reports"])
+def test_validate_evidence_governance_rejects_disabled_persistent_roots(
+    tmp_path: Path,
+    root_name: str,
+) -> None:
+    repository = tmp_path / "repository"
+    evidence = repository / root_name / "nested" / "evidence.json"
+    evidence.parent.mkdir(parents=True)
+    evidence.write_text('{"value":"synthetic"}\n', encoding="utf-8")
+
+    validator = load_validator()
+
+    errors = validator.validate_evidence_governance(repository)
+
+    assert any("persistent evidence root is disabled" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "uses",
+    ["actions/upload-artifact@v4", '"actions/upload-artifact@v4"'],
+)
+def test_validate_evidence_governance_rejects_ci_artifact_upload(
+    tmp_path: Path,
+    uses: str,
+) -> None:
+    repository = tmp_path / "repository"
+    workflow = repository / ".github" / "workflows" / "ci.yml"
+    workflow.parent.mkdir(parents=True)
+    workflow.write_text(
+        f"steps:\n  - uses: {uses}\n",
+        encoding="utf-8",
+    )
+
+    validator = load_validator()
+
+    errors = validator.validate_evidence_governance(repository)
+
+    assert any("CI artifact upload is disabled" in error for error in errors)
+
+
+def test_validate_evidence_governance_rejects_quoted_artifact_upload_key(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository"
+    workflow = repository / ".github" / "workflows" / "ci.yml"
+    workflow.parent.mkdir(parents=True)
+    workflow.write_text(
+        'steps:\n  - "uses": actions/upload-artifact@v4\n',
+        encoding="utf-8",
+    )
+
+    validator = load_validator()
+
+    errors = validator.validate_evidence_governance(repository)
+
+    assert any("CI artifact upload is disabled" in error for error in errors)
+
+
 def test_review_url_requires_https_host() -> None:
     validator = load_validator()
 

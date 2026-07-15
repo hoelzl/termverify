@@ -7,10 +7,11 @@ tags: [evidence, redaction, baselines, snapshots, security]
 
 # Evidence safety and baseline governance
 
-> **Status: accepted.** Independently human-reviewed on 2026-07-15. The
-> required redactor, governance validator, and tests must pass before TermVerify
-> enables persistent evidence capture, committed baselines, or CI artifact
-> upload.
+> **Status: accepted and partially implemented.** Independently human-reviewed
+> on 2026-07-15. Safe transcript persistence and recursive transcript-fixture
+> validation are implemented. Sensitive retention, committed baselines, report
+> roots, and CI artifact upload remain disabled pending their separate reviewed
+> enablement boundaries.
 
 Terminal evidence can contain credentials, personal data, host paths, and
 proprietary application output. The safe default is to capture only sanitized,
@@ -42,8 +43,9 @@ Future evidence capture has these modes:
 - **safe (default):** sensitive fields are redacted; clipboard values are never
   retained; paths are sandbox-relative or redacted; persistence is allowed only
   for validated public evidence.
-- **non-persistent:** evidence stays in process memory for the current verdict
-  and is not serialized, written to a fixture, reported, or uploaded.
+- **non-persistent:** evidence stays in process memory for the current verdict.
+  It may pass through the in-memory codec but is not written to a fixture,
+  reported, or uploaded.
 - **sensitive (explicit opt-in):** may retain restricted evidence locally for a
   debugging session, but never enables repository persistence or CI upload. It
   requires an explicit caller setting.
@@ -63,10 +65,12 @@ boundary exception.
 
 ## Redaction contract
 
-Redaction happens before any serializer, fixture writer, report renderer, or
-artifact publisher receives evidence. It is deterministic and replaces a value
-with the exact marker `<redacted:reason>`; it must not retain the original
-value, its length, hash, or a reversible encoding.
+Redaction happens inside the persistence boundary before a fixture writer,
+report renderer, or artifact publisher receives encoded bytes. The raw
+transcript codec validates and canonicalizes in memory but does not claim safe
+persistence. Redaction is deterministic and replaces a value with the exact
+marker `<redacted:reason>`; it must not retain the original value, its length,
+hash, or a reversible encoding.
 
 The initial implementation must recursively redact structured transcript
 values, including `state`, event `data`, diagnostic `details`, and `x-`
@@ -80,6 +84,42 @@ Fixture and artifact writers must invoke the same redactor; no path-specific
 writer may serialize raw evidence directly. Tests must construct nested fixture
 and artifact destinations to prove that changing a normal output path does not
 bypass redaction.
+
+## Codec and persistence boundary
+
+`serialize_transcript()` is the pure validated v1 codec. Its returned bytes may
+still contain restricted or secret evidence and therefore must not be written
+to a repository file, report, artifact, or other persistent destination.
+
+`persist_transcript_evidence()` is the only supported transcript persistence
+API. It copies rather than mutates the caller's records, validates that stable
+snapshot, classifies semantic fields by record kind, redacts them,
+revalidates the sanitized transcript, and only then creates the destination and
+writes canonical JSONL. Safe mode redacts text input, clipboard values,
+application state, event data, frame lines, diagnostic messages/details,
+sandbox identity, network hosts, path/credential-shaped values, unknown semantic
+members, and every `x-` extension value. Structural fields required for replay
+remain intact.
+
+Sensitive persistence is intentionally rejected because per-user access,
+outside-repository containment, bounded lifetime, and cleanup are not yet
+implemented. General JSON persistence and path-specific raw transcript writers
+are not supported public APIs.
+
+Every committed `.jsonl` file under `tests/fixtures/transcripts/` has an
+adjacent `<fixture>.jsonl.evidence.json` sidecar that explicitly classifies its
+contents as synthetic public evidence. The sidecar has exactly `schema`
+(`termverify.fixture-evidence/v1`), `classification` (`public-synthetic`), and
+`fixture` (the adjacent basename). The validator rejects missing, malformed,
+non-finite, mismatched, duplicate-member, and orphan classifications, then
+recursively checks fixture values for known restricted evidence. This explicit
+classification permits protocol fixtures to exercise synthetic text, state,
+events, and frames without treating a repository path alone as proof that
+captured evidence is public.
+
+`tests/fixtures/baselines/` remains governed by the approval records below.
+Repository `artifacts/` and `reports/` roots and every GitHub Actions
+`actions/upload-artifact` step remain rejected until separately enabled.
 
 ## Baseline proposal and approval
 
@@ -137,8 +177,8 @@ validation for a path. Suspected leakage means revoke affected credentials,
 remove public exposure, rotate secrets, and add a regression test before
 resuming capture.
 
-Before enabling baselines or artifacts, CI and local pre-commit must run the
-same evidence-governance validator. The validator's tests must cover valid
+Before enabling baselines or artifacts, CI and local pre-commit run the same
+evidence-governance validator. The validator's tests cover valid
 redaction of nested transcript fields/extensions, nested fixture and artifact
 paths, sensitive-retention boundary failure, missing/stale approval metadata or
 readable-diff records, invalid identity combinations for each review mode, and
