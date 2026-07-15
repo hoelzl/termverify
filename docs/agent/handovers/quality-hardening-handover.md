@@ -225,14 +225,16 @@ adapter responsibility rather than descriptive metadata.
 
 ### Policy transition: 2026-07-15
 
-Issue [#5](https://github.com/hoelzl/termverify/issues/5) tracks this work.
-The evidence-governance policy is independently human-reviewed and accepted. It
-defines transcript/clipboard/frame/diagnostic/path/artifact classification,
-safe and non-persistent defaults, bounded sensitive-mode retention, deterministic
-redaction, and baseline approval records bound to canonical baseline and
-readable-diff digests. Workstream 4 remains active until the redactor and
-governance validator have bypass-proof tests and run in the local and CI gates;
-CI artifact publication remains disabled.
+Issue [#5](https://github.com/hoelzl/termverify/issues/5) tracked this work and
+closed with [PR #6](https://github.com/hoelzl/termverify/pull/6). The
+independently human-reviewed policy defines transcript/clipboard/frame/
+diagnostic/path/artifact classification, safe and non-persistent defaults,
+bounded sensitive-mode retention, deterministic redaction, and baseline approval
+records bound to canonical baseline and readable-diff digests. PR #6 added the
+redactor, governance validator, nested-path redaction/approval tests, and the
+fast local/CI hook; all required remote checks passed. Workstream 4 is complete.
+CI artifact publication remains disabled until a separately reviewed policy
+change enables it.
 
 ### Objective
 
