@@ -22,7 +22,7 @@ adapters, fixtures, reports, and future CI artifact publication.
 
 | Evidence type | Default classification | Persistent handling |
 | --- | --- | --- |
-| Transcript records, including `state`, event `data`, diagnostic `details`, and `x-` extensions | restricted | Recursively classify and redact before any persistence; unknown fields remain restricted. |
+| Transcript records, including `state`, event `data`, diagnostic `details`, and `x-` extensions | restricted | Validate the closed protocol shape, then recursively classify and redact before persistence; undeclared generic protocol members fail closed. |
 | Synthetic transcript fixtures | public | May be committed only after recursive transcript redaction validation. |
 | User input and text paste | restricted | Redact by default; persist only synthetic or explicitly approved values. |
 | Clipboard value | secret | Do not capture or persist the value by default; record only a redaction marker when event evidence is needed. |
@@ -98,12 +98,17 @@ revalidates the sanitized transcript, and only then creates the destination and
 writes canonical JSONL. Safe mode redacts text input, clipboard values,
 application state, event data, frame lines, diagnostic messages/details,
 sandbox identity, network hosts, path/credential-shaped values, unknown semantic
-members, and every `x-` extension value. The closed replay-subject selectors are
+values inside open application data, and every `x-` extension value. The closed
+replay-subject selectors are
 caller-declared structural identities and remain intact; their grammar excludes
 raw paths, command lines, environments, and hostnames. If a structural selector
 matches a recognized credential shape, safe persistence rejects the transcript
 before creating the destination because redacting that selector would corrupt
 replay identity. Other structural fields required for replay remain intact.
+Likewise, an undeclared non-`x-` protocol member or a member that is invalid for
+its tagged variant is malformed transcript structure and is rejected before
+redaction or destination creation; redaction does not convert a malformed wire
+contract into a valid one.
 
 Sensitive persistence is intentionally rejected because per-user access,
 outside-repository containment, bounded lifetime, and cleanup are not yet

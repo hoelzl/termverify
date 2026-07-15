@@ -828,3 +828,237 @@ def test_serialize_transcript_rejects_malformed_finished_exit() -> None:
 
     with pytest.raises(TranscriptValidationError, match="exit"):
         serialize_transcript(transcript)
+
+
+def _transcript_with_payload_kind(kind: str) -> tuple[list[dict[str, JsonValue]], int]:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    body_payloads: dict[str, dict[str, JsonValue]] = {
+        "input.key": {"at_ms": 0, "keys": ["enter"]},
+        "input.text": {"at_ms": 0, "text": "hello"},
+        "input.resize": {"at_ms": 0, "columns": 80, "rows": 24},
+        "input.mouse": {
+            "action": "move",
+            "at_ms": 0,
+            "column": 0,
+            "row": 0,
+        },
+        "input.clock_advanced": {"at_ms": 1, "delta_ms": 1},
+        "input.clipboard_set": {"at_ms": 0, "text": "synthetic"},
+        "input.stop": {"at_ms": 0},
+        "diagnostic": {"at_ms": 0, "code": "synthetic", "message": "synthetic"},
+        "observation": {
+            "at_ms": 0,
+            "events": [],
+            "state": {},
+            "ui": {
+                "cursor": {"column": 0, "row": 0, "visible": False},
+                "focus": None,
+                "mode": None,
+                "regions": [],
+            },
+        },
+    }
+    if kind in body_payloads:
+        transcript[8]["kind"] = kind
+        transcript[8]["payload"] = body_payloads[kind]
+        return transcript, 8
+    if kind == "run.started":
+        return transcript, 0
+    if kind == "capability.result":
+        return transcript, 1
+    if kind == "run.finished":
+        return transcript, len(transcript) - 1
+    if kind == "run.failed":
+        transcript[-1]["kind"] = kind
+        transcript[-1]["payload"] = {
+            "error": {"code": "adapter-runtime-failed", "message": "synthetic"}
+        }
+        return transcript, len(transcript) - 1
+    if kind == "run.unsupported":
+        capability = transcript[7]["payload"]
+        assert isinstance(capability, dict)
+        capability.clear()
+        capability.update(
+            {
+                "constraint": "network",
+                "reason": "synthetic",
+                "status": "unsupported",
+            }
+        )
+        transcript[8]["kind"] = kind
+        transcript[8]["payload"] = {
+            "code": "constraint-unsupported",
+            "constraint": "network",
+            "message": "synthetic",
+        }
+        del transcript[9:]
+        return transcript, 8
+    raise AssertionError(f"unsupported test kind: {kind}")
+
+
+def _add_complete_observation_evidence(payload: dict[str, JsonValue]) -> None:
+    payload["events"] = [{"data": {}, "type": "synthetic"}]
+    ui = payload["ui"]
+    assert isinstance(ui, dict)
+    ui["regions"] = [
+        {
+            "bounds": {"column": 0, "columns": 1, "row": 0, "rows": 1},
+            "id": "main",
+            "role": "main",
+        }
+    ]
+    payload["frame"] = {"columns": 1, "lines": [""], "rows": 1}
+    payload["process"] = {
+        "exit": {"kind": "code", "value": 0},
+        "state": "exited",
+    }
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "run.started",
+        "capability.result",
+        "input.key",
+        "input.text",
+        "input.resize",
+        "input.mouse",
+        "input.clock_advanced",
+        "input.clipboard_set",
+        "input.stop",
+        "observation",
+        "diagnostic",
+        "run.finished",
+        "run.failed",
+        "run.unsupported",
+    ],
+)
+def test_serialize_transcript_rejects_unknown_generic_payload_member(kind: str) -> None:
+    transcript, index = _transcript_with_payload_kind(kind)
+    payload = transcript[index]["payload"]
+    assert isinstance(payload, dict)
+    payload["unexpected"] = True
+
+    with pytest.raises(TranscriptValidationError, match="member"):
+        serialize_transcript(transcript)
+    encoded = (
+        b"\n".join(
+            json.dumps(
+                record, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+            ).encode()
+            for record in transcript
+        )
+        + b"\n"
+    )
+    with pytest.raises(TranscriptValidationError, match="member"):
+        parse_transcript(encoded)
+
+
+@pytest.mark.parametrize(
+    ("kind", "path"),
+    [
+        ("run.finished", ("exit",)),
+        ("run.failed", ("error",)),
+        ("observation", ("ui",)),
+        ("observation", ("ui", "cursor")),
+        ("observation", ("events", 0)),
+        ("observation", ("ui", "regions", 0)),
+        ("observation", ("ui", "regions", 0, "bounds")),
+        ("observation", ("frame",)),
+        ("observation", ("process",)),
+        ("observation", ("process", "exit")),
+    ],
+)
+def test_serialize_transcript_rejects_unknown_nested_generic_member(
+    kind: str, path: tuple[str | int, ...]
+) -> None:
+    transcript, index = _transcript_with_payload_kind(kind)
+    payload = transcript[index]["payload"]
+    assert isinstance(payload, dict)
+    if kind == "observation":
+        _add_complete_observation_evidence(payload)
+    target: JsonValue = payload
+    for member in path:
+        if isinstance(member, str):
+            assert isinstance(target, dict)
+            target = target[member]
+        else:
+            assert isinstance(target, list)
+            target = target[member]
+    assert isinstance(target, dict)
+    target["unexpected"] = True
+
+    with pytest.raises(TranscriptValidationError, match="invalid|member"):
+        serialize_transcript(transcript)
+
+
+@pytest.mark.parametrize(
+    ("status", "extra_member"),
+    [("enforced", "reason"), ("unsupported", "effective")],
+)
+def test_serialize_transcript_rejects_capability_member_for_wrong_status(
+    status: str, extra_member: str
+) -> None:
+    transcript, _ = _transcript_with_payload_kind("run.unsupported")
+    capability = transcript[7]["payload"]
+    assert isinstance(capability, dict)
+    if status == "enforced":
+        transcript, _ = _transcript_with_payload_kind("capability.result")
+        capability = transcript[1]["payload"]
+        assert isinstance(capability, dict)
+        capability[extra_member] = "synthetic"
+    else:
+        capability[extra_member] = {"mode": "deny"}
+
+    with pytest.raises(TranscriptValidationError, match="member"):
+        serialize_transcript(transcript)
+
+
+@pytest.mark.parametrize(
+    ("kind", "path"),
+    [
+        ("run.started", ()),
+        ("capability.result", ()),
+        ("input.key", ()),
+        ("input.text", ()),
+        ("input.resize", ()),
+        ("input.mouse", ()),
+        ("input.clock_advanced", ()),
+        ("input.clipboard_set", ()),
+        ("input.stop", ()),
+        ("diagnostic", ()),
+        ("observation", ()),
+        ("run.finished", ()),
+        ("run.finished", ("exit",)),
+        ("run.failed", ()),
+        ("run.failed", ("error",)),
+        ("run.unsupported", ()),
+        ("observation", ("ui",)),
+        ("observation", ("ui", "cursor")),
+        ("observation", ("events", 0)),
+        ("observation", ("ui", "regions", 0)),
+        ("observation", ("ui", "regions", 0, "bounds")),
+        ("observation", ("frame",)),
+        ("observation", ("process",)),
+        ("observation", ("process", "exit")),
+    ],
+)
+def test_serialize_transcript_accepts_extension_in_closed_object(
+    kind: str, path: tuple[str | int, ...]
+) -> None:
+    transcript, index = _transcript_with_payload_kind(kind)
+    target = transcript[index]["payload"]
+    assert isinstance(target, dict)
+    if kind == "observation":
+        _add_complete_observation_evidence(target)
+    for member in path:
+        if isinstance(member, str):
+            assert isinstance(target, dict)
+            target = target[member]
+        else:
+            assert isinstance(target, list)
+            target = target[member]
+    assert isinstance(target, dict)
+    target["x-synthetic"] = {"uninterpreted": True}
+
+    assert parse_transcript(serialize_transcript(transcript)) == transcript

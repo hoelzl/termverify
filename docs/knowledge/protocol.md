@@ -128,6 +128,13 @@ Terminal record payloads are:
 | `run.failed` | `error`: `{"code": non-empty string, "message": string, "details"?: JSON value}` |
 | `run.unsupported` | `constraint`, `code`, `message`, and optional `details`; `constraint` and `code` are non-empty strings |
 
+Every defined record payload and nested generic protocol object is closed to
+its listed members plus uninterpreted `x-` extensions. In particular,
+`capability.result` permits `effective` only with `enforced` and `reason` only
+with `unsupported`. Application-defined JSON values such as observation
+`state`, event `data`, diagnostic `details`, and error `details` remain open
+semantic values rather than generic protocol objects.
+
 `message` is diagnostic only. Consumers use stable `code` values for behavior;
 v1 reserves `adapter-start-failed`, `adapter-runtime-failed`,
 `constraint-unsupported`, and `constraint-not-enforced`.
