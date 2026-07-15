@@ -147,7 +147,7 @@ v1 reserves `adapter-start-failed`, `adapter-runtime-failed`,
 | --- | --- |
 | `seed` | canonical decimal string representing an unsigned 64-bit integer: `"0"` or a nonzero digit followed by digits, with no leading zeroes |
 | `clock` | `{"mode": "manual", "initial_ms": non-negative integer}` |
-| `locale` | BCP 47 language tag, or `"C"` |
+| `locale` | literal `"C"`, or a well-formed RFC 5646 language tag |
 | `timezone` | IANA time-zone identifier, or `"UTC"` |
 | `terminal` | `columns` and `rows` positive integers; `capabilities` sorted unique strings |
 | `filesystem` | `{"mode": "sandbox", "root_id": string}` |
@@ -157,6 +157,16 @@ The configuration object and each defined nested object are closed except for
 uninterpreted `x-` extensions. Raw command lines, environment variables, host
 paths, and other invocation or machine identity are not deterministic-constraint
 members and cannot be added as generic configuration fields at any nesting level.
+
+Locale validation applies the RFC 5646 language-tag syntax only, including
+normal, private-use, and fixed grandfathered forms plus the RFC prohibition on
+duplicate variants and extension singletons. It does not consult the IANA
+Language Subtag Registry, reject deprecated tags, or claim registry-backed
+validity. RFC 5646 language tags are case-insensitive, while the separate `C`
+sentinel is literal and case-sensitive. The codec preserves the caller's
+spelling and case exactly; v1 performs no locale normalization or
+preferred-value rewriting. Validation is therefore independent of the host
+locale, installed locale data, environment, and network.
 
 The configuration requests a constraint; it does not itself prove enforcement.
 The adapter-facing contract is:
