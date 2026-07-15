@@ -242,6 +242,12 @@ frame cannot conceal a domain mismatch. Application-specific values belong
 under documented `x-` members or a registered normalizer, not under new generic
 v1 member names.
 
+When a transcript ends with `run.finished`, every exited-process observation
+has the same exit `kind` and `value` as `run.finished.payload.exit`.
+Uninterpreted `x-` extensions do not participate in that comparison. The
+relationship between exited-process evidence and `run.failed` or
+`run.unsupported` is not yet defined.
+
 ## Compatibility and evolution
 
 `termverify.transcript/v1` readers must reject a different `protocol` value.

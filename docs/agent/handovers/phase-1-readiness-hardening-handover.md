@@ -7,7 +7,7 @@
   workstreams below.
 - **Owner:** project maintainer
 - **Created:** 2026-07-15
-- **Updated:** 2026-07-15
+- **Updated:** 2026-07-16
 - **Review required:** yes — accepted protocol compatibility,
   deterministic-enforcement, evidence-security, schema-authority, and
   baseline-governance decisions require executable implementation and
@@ -77,7 +77,7 @@ review contexts. No tracked repository files were modified by the review.
 - `actionlint` was not available locally. GitHub's pinned workflow-security and
   dependency-vulnerability jobs passed and remain the current remote evidence.
 
-### Reconciliation through merged PR #17
+### Reconciliation through merged PR #19
 
 The confirmed-finding lists below preserve the original review baseline. An
 intermediate reconciliation after PRs #12, #13, and #15 on clean `main` at
@@ -98,17 +98,23 @@ prerequisite was filed:
 - PR #17 closed every defined runtime payload and nested generic protocol object
   to its declared members plus `x-` extensions, completing issue #16 without
   expanding the deliberately non-exhaustive schema.
-- Runtime probes after PR #17 still accepted diagnostic and observation
-  timestamps that contradicted the manual clock at their transcript position.
-  Issue [#18](https://github.com/hoelzl/termverify/issues/18) is the smallest next
-  cross-record prerequisite and is limited to enforcing that clock consistency.
+- PR #19 made diagnostic and observation timestamps agree with the manual clock
+  current at each record's position, completing issue #18 without adding
+  readiness, causality, or asynchronous-drain semantics.
+- A probe after PR #19 confirmed that an observation could report process exit
+  code 99 while the final `run.finished` reported exit code 0. Issue
+  [#20](https://github.com/hoelzl/termverify/issues/20) is the next smallest
+  unambiguous cross-record prerequisite: exited-process evidence must match a
+  final `run.finished` outcome. The relationship to `run.failed` and
+  `run.unsupported` remains later decision work.
 
-The adapter-contract entry gate remains closed after issue #18. Remaining gates
+The adapter-contract entry gate remains closed after issue #20. Remaining gates
 include other Workstream 1 local and cross-record rules, the deterministic
-vocabularies and enforcement semantics in Workstream 2, and the deliberately
-bounded fixture/schema/package access criteria in Workstreams 3 and 6. Neither
-issues #16/#18 nor the merged schema slice authorizes adapter/runtime
-implementation or exhaustive schema work.
+vocabularies and negotiation/attestation semantics in Workstream 2,
+locale/timezone conformance, fixture/property coverage, resource limits, and the
+deliberately bounded schema package-access criteria in Workstreams 3 and 6.
+Neither issues #16/#18/#20 nor the merged schema slice authorizes
+adapter/runtime implementation or exhaustive schema work.
 
 ### Confirmed P0 defects
 

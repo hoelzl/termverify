@@ -711,6 +711,19 @@ def _validate_lifecycle(records: list[Record]) -> None:
                 )
             ):
                 raise TranscriptValidationError("observation process is invalid")
+            if records[-1]["kind"] == "run.finished":
+                finished_exit = cast(
+                    dict[str, JsonValue],
+                    cast(dict[str, JsonValue], terminal_payload)["exit"],
+                )
+                if exit_value.get("kind") != finished_exit.get(
+                    "kind"
+                ) or not _json_equivalent(
+                    exit_value.get("value"), finished_exit.get("value")
+                ):
+                    raise TranscriptValidationError(
+                        "observation process exit does not match run.finished exit"
+                    )
     _validate_evidence_times(
         records[len(capabilities) + 1 : -1],
         cast(int, clock_config["initial_ms"]),

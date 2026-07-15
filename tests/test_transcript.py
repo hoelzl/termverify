@@ -876,6 +876,148 @@ def test_serialize_transcript_rejects_exited_process_without_exit() -> None:
         serialize_transcript(transcript)
 
 
+def test_transcript_rejects_exited_process_code_that_differs_from_finished() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[9]["payload"]
+    assert isinstance(payload, dict)
+    payload["process"] = {
+        "exit": {"kind": "code", "value": 99},
+        "state": "exited",
+    }
+
+    with pytest.raises(TranscriptValidationError, match="process exit"):
+        serialize_transcript(transcript)
+
+    encoded = (
+        b"\n".join(
+            json.dumps(
+                record, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+            ).encode()
+            for record in transcript
+        )
+        + b"\n"
+    )
+    with pytest.raises(TranscriptValidationError, match="process exit"):
+        parse_transcript(encoded)
+
+
+def test_transcript_rejects_exited_process_signal_that_differs_from_finished() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    observation = transcript[9]["payload"]
+    terminal = transcript[-1]["payload"]
+    assert isinstance(observation, dict)
+    assert isinstance(terminal, dict)
+    observation["process"] = {
+        "exit": {"kind": "signal", "value": "SIGTERM"},
+        "state": "exited",
+    }
+    terminal["exit"] = {"kind": "signal", "value": "SIGKILL"}
+
+    with pytest.raises(TranscriptValidationError, match="process exit"):
+        serialize_transcript(transcript)
+
+    encoded = (
+        b"\n".join(
+            json.dumps(
+                record, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+            ).encode()
+            for record in transcript
+        )
+        + b"\n"
+    )
+    with pytest.raises(TranscriptValidationError, match="process exit"):
+        parse_transcript(encoded)
+
+
+@pytest.mark.parametrize(
+    "exit_value",
+    [
+        {"kind": "code", "value": 0},
+        {"kind": "signal", "value": "SIGTERM"},
+    ],
+)
+def test_transcript_accepts_exited_process_that_matches_finished(
+    exit_value: dict[str, JsonValue],
+) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    observation = transcript[9]["payload"]
+    terminal = transcript[-1]["payload"]
+    assert isinstance(observation, dict)
+    assert isinstance(terminal, dict)
+    observation["process"] = {"exit": deepcopy(exit_value), "state": "exited"}
+    terminal["exit"] = deepcopy(exit_value)
+
+    encoded = serialize_transcript(transcript)
+
+    assert parse_transcript(encoded) == transcript
+
+
+def test_transcript_rejects_one_mismatched_exit_among_multiple_observations() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    first_observation = transcript[9]["payload"]
+    assert isinstance(first_observation, dict)
+    first_observation["process"] = {
+        "exit": {"kind": "code", "value": 0},
+        "state": "exited",
+    }
+    second_observation = deepcopy(transcript[9])
+    second_observation["id"] = "record-second-observation"
+    second_observation["seq"] = 10
+    second_payload = second_observation["payload"]
+    assert isinstance(second_payload, dict)
+    second_payload["process"] = {
+        "exit": {"kind": "code", "value": 99},
+        "state": "exited",
+    }
+    transcript.insert(-1, second_observation)
+    transcript[-1]["seq"] = 11
+
+    with pytest.raises(TranscriptValidationError, match="process exit"):
+        serialize_transcript(transcript)
+
+
+def test_transcript_accepts_multiple_matching_exited_process_observations() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    first_observation = transcript[9]["payload"]
+    assert isinstance(first_observation, dict)
+    first_observation["process"] = {
+        "exit": {"kind": "code", "value": 0},
+        "state": "exited",
+    }
+    second_observation = deepcopy(transcript[9])
+    second_observation["id"] = "record-second-observation"
+    second_observation["seq"] = 10
+    transcript.insert(-1, second_observation)
+    transcript[-1]["seq"] = 11
+
+    encoded = serialize_transcript(transcript)
+
+    assert parse_transcript(encoded) == transcript
+
+
+def test_transcript_exit_coherence_ignores_uninterpreted_extensions() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    observation = transcript[9]["payload"]
+    terminal = transcript[-1]["payload"]
+    assert isinstance(observation, dict)
+    assert isinstance(terminal, dict)
+    observation["process"] = {
+        "exit": {
+            "kind": "code",
+            "value": 0,
+            "x-observation": {"source": "observation"},
+        },
+        "state": "exited",
+    }
+    terminal_exit = terminal["exit"]
+    assert isinstance(terminal_exit, dict)
+    terminal_exit["x-terminal"] = {"source": "terminal"}
+
+    encoded = serialize_transcript(transcript)
+
+    assert parse_transcript(encoded) == transcript
+
+
 def test_serialize_transcript_rejects_malformed_finished_exit() -> None:
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
     transcript = parse_transcript(fixture)
