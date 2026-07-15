@@ -45,6 +45,85 @@ def test_serialize_transcript_emits_canonical_fixture_bytes() -> None:
     assert serialize_transcript(parse_transcript(fixture)) == fixture
 
 
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda record: record.__setitem__("protocol", "wrong/v1"), "protocol"),
+        (lambda record: record.__setitem__("seq", 1), "sequence"),
+        (lambda record: record.pop("kind"), "envelope"),
+        (lambda record: record.__setitem__("unexpected", True), "envelope"),
+    ],
+)
+def test_serialize_transcript_rejects_invalid_record_envelope(
+    mutation: object, message: str
+) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    assert callable(mutation)
+    mutation(transcript[0])
+
+    with pytest.raises(TranscriptValidationError, match=message):
+        serialize_transcript(transcript)
+
+
+def test_serialize_transcript_rejects_boolean_sequence() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    transcript[0]["seq"] = False
+
+    with pytest.raises(TranscriptValidationError, match="sequence"):
+        serialize_transcript(transcript)
+
+
+@pytest.mark.parametrize("field", ["run_id", "id"])
+def test_serialize_transcript_rejects_identifier_outside_v1_grammar(
+    field: str,
+) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    transcript[0][field] = "Upper Case"
+
+    with pytest.raises(TranscriptValidationError, match="identifier"):
+        serialize_transcript(transcript)
+
+
+def test_serialize_transcript_rejects_repeated_run_started() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    transcript[8]["kind"] = "run.started"
+    transcript[8]["payload"] = transcript[0]["payload"]
+
+    with pytest.raises(TranscriptValidationError, match="run.started"):
+        serialize_transcript(transcript)
+
+
+def test_serialize_transcript_rejects_intermediate_terminal_record() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    transcript[8]["kind"] = "run.failed"
+    transcript[8]["payload"] = {
+        "error": {"code": "adapter-runtime-failed", "message": "failed"}
+    }
+
+    with pytest.raises(TranscriptValidationError, match="terminal"):
+        serialize_transcript(transcript)
+
+
+def test_serialize_transcript_rejects_record_after_terminal() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    record = transcript[8].copy()
+    record["seq"] = len(transcript)
+    record["id"] = "record-after-terminal"
+    transcript.append(record)
+
+    with pytest.raises(TranscriptValidationError, match="terminal"):
+        serialize_transcript(transcript)
+
+
+def test_serialize_transcript_rejects_unsupported_terminal_after_enforcement() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    transcript[-1]["kind"] = "run.unsupported"
+    transcript[-1]["payload"] = {}
+
+    with pytest.raises(TranscriptValidationError, match="run.unsupported"):
+        serialize_transcript(transcript)
+
+
 def test_parse_transcript_rejects_unsupported_constraint_without_terminal_match() -> (
     None
 ):
@@ -136,6 +215,25 @@ def test_serialize_transcript_rejects_incomplete_terminal_config() -> None:
     config = payload["config"]
     assert isinstance(config, dict)
     config["terminal"] = {"columns": 80}
+
+    with pytest.raises(TranscriptValidationError, match="terminal"):
+        serialize_transcript(transcript)
+
+
+def test_serialize_transcript_requires_terminal_capabilities() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[0]["payload"]
+    assert isinstance(payload, dict)
+    config = payload["config"]
+    assert isinstance(config, dict)
+    terminal = config["terminal"]
+    assert isinstance(terminal, dict)
+    terminal.pop("capabilities")
+    capability = transcript[5]["payload"]
+    assert isinstance(capability, dict)
+    effective = capability["effective"]
+    assert isinstance(effective, dict)
+    effective.pop("capabilities")
 
     with pytest.raises(TranscriptValidationError, match="terminal"):
         serialize_transcript(transcript)
@@ -244,6 +342,29 @@ def test_parse_transcript_rejects_non_finite_json_number() -> None:
         parse_transcript(data)
 
 
+def test_parse_transcript_converts_excessive_nesting_to_validation_error() -> None:
+    data = b'{"x":' * 2_000 + b"0" + b"}" * 2_000 + b"\n"
+
+    with pytest.raises(TranscriptValidationError, match="nesting"):
+        parse_transcript(data)
+
+
+def test_serialize_transcript_converts_excessive_nesting_to_validation_error() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[9]["payload"]
+    assert isinstance(payload, dict)
+    nested: list[JsonValue] = []
+    root = nested
+    for _ in range(2_000):
+        child: list[JsonValue] = []
+        nested.append(child)
+        nested = child
+    payload["state"] = root
+
+    with pytest.raises(TranscriptValidationError, match="nesting"):
+        serialize_transcript(transcript)
+
+
 def test_serialize_transcript_uses_rfc_8785_number_rendering() -> None:
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
     transcript = parse_transcript(fixture)
@@ -263,6 +384,25 @@ def test_serialize_transcript_rejects_mismatched_enforced_effective_value() -> N
     payload = transcript[1]["payload"]
     assert isinstance(payload, dict)
     payload["effective"] = "1"
+
+    with pytest.raises(TranscriptValidationError, match="effective"):
+        serialize_transcript(transcript)
+
+
+def test_serialize_transcript_rejects_boolean_effective_integer() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    started = transcript[0]["payload"]
+    capability = transcript[2]["payload"]
+    assert isinstance(started, dict)
+    assert isinstance(capability, dict)
+    config = started["config"]
+    effective = capability["effective"]
+    assert isinstance(config, dict)
+    assert isinstance(effective, dict)
+    clock = config["clock"]
+    assert isinstance(clock, dict)
+    clock["initial_ms"] = 1
+    effective["initial_ms"] = True
 
     with pytest.raises(TranscriptValidationError, match="effective"):
         serialize_transcript(transcript)
@@ -342,6 +482,21 @@ def test_serialize_transcript_rejects_mouse_press_without_button() -> None:
     transcript[8]["payload"] = {"action": "press", "at_ms": 0, "column": 0, "row": 0}
 
     with pytest.raises(TranscriptValidationError, match="input.mouse"):
+        serialize_transcript(transcript)
+
+
+def test_serialize_transcript_rejects_boolean_mouse_scroll_delta() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    transcript[8]["kind"] = "input.mouse"
+    transcript[8]["payload"] = {
+        "action": "scroll",
+        "at_ms": 0,
+        "column": 0,
+        "delta": True,
+        "row": 0,
+    }
+
+    with pytest.raises(TranscriptValidationError, match="scroll delta"):
         serialize_transcript(transcript)
 
 

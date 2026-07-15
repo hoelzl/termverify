@@ -128,4 +128,8 @@ Prefer, in order:
 
 ## Review boundaries
 
-An agent may generate code, fixtures, and candidate baseline updates. It must not silently approve its own snapshot/golden-master change. A human-readable report and independent review are required for changed expected behavior.
+An agent may generate code, fixtures, and candidate baseline updates. It must
+not approve its own snapshot/golden-master change. Changed expected behavior in
+the TermVerify repository requires a human-readable report and explicit human
+approval under the accepted independent-review or maintainer-self-review mode.
+This does not prescribe the baseline policy of downstream projects.

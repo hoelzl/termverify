@@ -19,7 +19,11 @@ TermVerify provides a common foundation for:
 
 ## Project status
 
-The repository is in its foundation phase. The initial public contract, developer workflow, architecture, and verification model are documented; implementation begins with the deterministic run configuration and adapter boundary.
+The repository is in its foundation phase. The reviewed transcript design has
+an initial codec and semantic validator, but conformance hardening is incomplete.
+Public adapter/runtime implementation remains blocked on the Phase 1 readiness
+prerequisite workstreams. The eight owner decision gates are accepted; their
+executable contract and governance consequences are still being implemented.
 
 ## Design principles
 
@@ -50,7 +54,10 @@ abstraction is necessary.
 
 ## Development
 
-Requirements: [uv](https://docs.astral.sh/uv/) and Python 3.12+ (uv manages the pinned interpreter automatically).
+Requirements: [uv](https://docs.astral.sh/uv/) and Python 3.12 or newer. The
+minimum installer version is 3.12; the continuously supported and tested
+versions are currently 3.12 through 3.14. Support for later Python releases is
+not implied until they join the CI matrix.
 
 ```bash
 uv --no-config sync --all-groups --locked

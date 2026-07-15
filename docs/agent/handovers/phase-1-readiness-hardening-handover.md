@@ -2,15 +2,16 @@
 
 ## Handover metadata
 
-- **Status:** active — public adapter/runtime implementation is blocked on the
-  decision gates and prerequisite workstreams below; independent documentation,
-  fixture, governance, and ConPTY research may proceed.
-- **Owner:** unassigned
+- **Status:** active — all owner decision gates were accepted on 2026-07-15;
+  public adapter/runtime implementation remains blocked on the prerequisite
+  workstreams below.
+- **Owner:** project maintainer
 - **Created:** 2026-07-15
 - **Updated:** 2026-07-15
-- **Review required:** yes — protocol compatibility, deterministic-enforcement,
-  evidence-security, schema-authority, and baseline-governance decisions require
-  explicit owner approval and independent human-readable review.
+- **Review required:** yes — accepted protocol compatibility,
+  deterministic-enforcement, evidence-security, schema-authority, and
+  baseline-governance decisions require executable implementation and
+  independent human-readable review.
 - **Predecessor:**
   [Quality hardening handover](archive/quality-hardening-handover.md)
 - **Successor:** none
@@ -171,59 +172,67 @@ review contexts. No tracked repository files were modified by the review.
   local and CI implementation unless a later reviewed tooling decision states
   otherwise.
 
-### Decision gates requiring owner approval
+### Owner decisions accepted on 2026-07-15
 
-Public adapter/runtime implementation remains blocked until these decisions are
-accepted and reflected in prose plus executable tests.
+The project maintainer accepted all eight dispositions below. Public
+adapter/runtime implementation remains blocked until they are reflected in the
+applicable prose and executable tests.
 
 1. **Correction policy for the existing v1 contract.** Decide whether confirmed
    defects and missing replay metadata may be corrected in place before the
    first supported external release, or whether any required wire-shape change
    must introduce `termverify.transcript/v2`.
-   - **Recommended default:** treat v1 as pre-release but preserve all already
+   - **Accepted disposition:** treat v1 as pre-release but preserve all already
      valid canonical fixtures where possible; correct validation bugs in place.
      Introduce v2 only if required replay/subject metadata cannot be additive.
 2. **V1 extension/evolution rule.** Decide whether generic optional members may
    be added within v1.
-   - **Recommended default:** v1 generic members are closed; only `x-` members
+   - **Accepted disposition:** v1 generic members are closed; only `x-` members
      are additive. Any new generic semantic member requires a new protocol
      version.
 3. **Normative schema and distribution contract.** Decide whether the JSON
    Schema is a complete normative per-record contract or only an envelope aid,
    and how installed/external consumers obtain it.
-   - **Recommended default:** make per-kind schema validation normative for
+   - **Accepted disposition:** make per-kind schema validation normative for
      record-local structure, keep Python lifecycle validation normative for
      cross-record semantics, package the schema, test wheel contents, and use a
      resolvable canonical `$id` before public release.
 4. **Replay subject and normalizer identity.** Decide which application, build,
    invocation, adapter, platform, and normalizer metadata is required in-band.
-   - **Recommended default:** require a versioned subject descriptor sufficient
+   - **Accepted disposition:** require a versioned subject descriptor sufficient
      to select the application/fixture and normalizer; keep volatile host details
      normalized or optional. Do not rely on undocumented out-of-band context.
 5. **Evidence codec versus persistence boundary.** Decide whether canonical
    transcript serialization may remain a pure in-memory codec for restricted
    data, with a separate mandatory sanitized writer, or whether every public
    serializer must reject/redact restricted evidence.
-   - **Recommended default:** keep a pure validated codec explicitly documented
+   - **Accepted disposition:** keep a pure validated codec explicitly documented
      as non-persistent, expose one evidence-aware persistence API that classifies
      and sanitizes before bytes are written, and prohibit repository/artifact
      persistence through the raw codec. Update policy wording to distinguish
      encoding from persistence.
 6. **Baseline independent-review enforcement.** Decide what happens while the
    repository has one maintainer and branch protection requires zero approvals.
-   - **Recommended default:** keep baselines disabled until CI can verify one
-     independent GitHub approval or an explicitly accepted external review
-     record with a durable identity and URL.
+   - **Accepted disposition:** this policy governs only baselines committed to
+     the TermVerify repository, not downstream projects. Keep the unused
+     `termverify.baseline-approval/v1` format at v1 and support explicit
+     `independent` and `maintainer-self-review` modes. Independent review requires
+     distinct proposer and reviewer identities. Single-maintainer self-review
+     permits the same identity but requires a separate explicit human approval
+     action, a digest-bound readable behavioral diff, successful required
+     checks, and a durable pull-request or issue URL. Agents and automation may
+     propose but never approve baselines; independent review remains preferred
+     whenever another qualified human is reasonably available.
 7. **Initial filesystem/network enforcement scope.** Decide which policies a
    Phase 1 direct adapter and terminal adapter may truthfully report as enforced.
-   - **Recommended default:** direct adapters may enforce only through explicit
+   - **Accepted disposition:** direct adapters may enforce only through explicit
      application ports; terminal/subprocess adapters report unsupported until
      OS-level containment is proven. Narrow the first terminal slice to network
      deny; defer allow-list enforcement until DNS/address semantics are accepted.
 8. **Phase 1 terminal scope.** Decide whether Phase 1 ends at the immutable
    configuration/direct-adapter contract or includes one minimal real terminal
    lifecycle slice.
-   - **Recommended default:** Phase 1 includes contract hardening, immutable
+   - **Accepted disposition:** Phase 1 includes contract hardening, immutable
      configuration, a fake/direct adapter, and one narrow create/drain/resize/
      stop terminal feasibility slice; production PTY behavior remains later.
 

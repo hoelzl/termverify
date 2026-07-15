@@ -2,7 +2,11 @@
 
 ## Tooling
 
-TermVerify uses uv for interpreter management, dependency resolution, virtual environments, and command execution. The supported baseline is Python 3.12; the project declares Python 3.12+ in `pyproject.toml`.
+TermVerify uses uv for interpreter management, dependency resolution, virtual
+environments, and command execution. Python 3.12 is the minimum installer
+version; the continuously supported and tested versions are currently 3.12
+through 3.14. The open-ended `>=3.12` package declaration does not promise
+support for later Python releases before they join the CI matrix.
 
 ```bash
 uv --no-config sync --all-groups --locked
@@ -14,6 +18,12 @@ uv --no-config run pre-commit run --all-files
 uv --no-config run pre-commit run --hook-stage pre-push --all-files
 uv --no-config build
 ```
+
+The uv lockfile supplies the authoritative Ruff executable for direct commands,
+hooks, and CI; the local pre-commit hooks invoke that executable rather than a
+separately versioned mirror. The local pre-push stage runs tests, mypy, and
+package builds; workflow-policy and dependency-vulnerability checks remain
+CI-only.
 
 Install the optional local hooks after the first sync:
 

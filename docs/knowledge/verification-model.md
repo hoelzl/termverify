@@ -28,7 +28,12 @@ A golden master is optional, never the only oracle.
 
 # Baseline governance
 
-Changed snapshots or approved divergences are behavioral changes. They need a readable diff, rationale, and independent review. CI detects unapproved changes; it does not create approval.
+For baselines committed to the TermVerify repository, changed snapshots or
+approved divergences are behavioral changes. They need a readable diff,
+rationale, and explicit human review. Review may be independent or, while the
+repository has one maintainer, an explicitly recorded maintainer self-review;
+CI detects unapproved changes but does not create approval. This repository
+policy does not prescribe baseline governance for downstream projects.
 
 The accepted [evidence-governance policy](evidence-governance.md) defines the
 redaction, capture, metadata, and validation controls that must be accepted and

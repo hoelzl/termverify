@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from typing import cast
 
 import rfc8785
@@ -14,6 +15,7 @@ type JsonValue = (
 type Record = dict[str, JsonValue]
 
 _PROTOCOL = "termverify.transcript/v1"
+_IDENTIFIER_PATTERN = re.compile(r"[a-z0-9._-]+")
 _CONSTRAINTS = (
     "seed",
     "clock",
@@ -66,19 +68,30 @@ def parse_transcript(data: bytes) -> list[Record]:
         raise TranscriptValidationError(
             "transcript must use exactly one final LF without a BOM"
         )
-    records = [
-        _parse_line(line, number) for number, line in enumerate(data.splitlines())
-    ]
-    _validate_lifecycle(records)
-    return records
+    try:
+        records = [
+            _parse_line(line, number) for number, line in enumerate(data.splitlines())
+        ]
+        _validate_lifecycle(records)
+        return records
+    except RecursionError as error:
+        raise TranscriptValidationError(
+            "transcript JSON nesting exceeds the supported depth"
+        ) from error
 
 
 def serialize_transcript(records: list[Record]) -> bytes:
     """Validate *records* and emit their canonical UTF-8 JSONL representation."""
-    for record in records:
-        _validate_json_numbers(record)
-    _validate_lifecycle(records)
-    return b"".join(_canonical_record(record) + b"\n" for record in records)
+    try:
+        for sequence, record in enumerate(records):
+            _validate_json_numbers(record)
+            _validate_envelope(record, sequence)
+        _validate_lifecycle(records)
+        return b"".join(_canonical_record(record) + b"\n" for record in records)
+    except RecursionError as error:
+        raise TranscriptValidationError(
+            "transcript JSON nesting exceeds the supported depth"
+        ) from error
 
 
 def _validate_json_numbers(value: JsonValue) -> None:
@@ -138,7 +151,12 @@ def _validate_envelope(record: Record, sequence: int) -> None:
         not key.startswith("x-") and key not in required for key in record
     ):
         raise TranscriptValidationError("record has invalid envelope members")
-    if record["protocol"] != _PROTOCOL or record["seq"] != sequence:
+    if (
+        record["protocol"] != _PROTOCOL
+        or not isinstance(record["seq"], int)
+        or isinstance(record["seq"], bool)
+        or record["seq"] != sequence
+    ):
         raise TranscriptValidationError("record protocol or sequence is invalid")
     if not all(
         isinstance(record[key], str) and record[key] for key in ("run_id", "id", "kind")
@@ -146,6 +164,11 @@ def _validate_envelope(record: Record, sequence: int) -> None:
         raise TranscriptValidationError(
             "record identifiers and kind must be non-empty strings"
         )
+    if any(
+        _IDENTIFIER_PATTERN.fullmatch(cast(str, record[key])) is None
+        for key in ("run_id", "id")
+    ):
+        raise TranscriptValidationError("record identifier grammar is invalid")
     if not isinstance(record["payload"], dict):
         raise TranscriptValidationError("record payload must be an object")
 
@@ -159,8 +182,17 @@ def _validate_lifecycle(records: list[Record]) -> None:
             raise TranscriptValidationError("record kind is not defined by v1")
     if not records or records[0]["kind"] != "run.started":
         raise TranscriptValidationError("transcript must start with run.started")
-    if records[-1]["kind"] not in _TERMINAL_KINDS:
-        raise TranscriptValidationError("transcript must end with a terminal record")
+    if any(record["kind"] == "run.started" for record in records[1:]):
+        raise TranscriptValidationError("run.started may appear only once")
+    terminal_indexes = [
+        index
+        for index, record in enumerate(records)
+        if record["kind"] in _TERMINAL_KINDS
+    ]
+    if terminal_indexes != [len(records) - 1]:
+        raise TranscriptValidationError(
+            "transcript must contain exactly one final terminal record"
+        )
     run_id = records[0]["run_id"]
     identifiers: set[JsonValue] = set()
     for record in records:
@@ -202,7 +234,7 @@ def _validate_lifecycle(records: list[Record]) -> None:
         for value in terminal_dimensions
     ):
         raise TranscriptValidationError("run.started terminal is invalid")
-    terminal_capabilities = terminal_config.get("capabilities", [])
+    terminal_capabilities = terminal_config.get("capabilities")
     if not isinstance(terminal_capabilities, list) or not all(
         isinstance(capability, str) and capability
         for capability in terminal_capabilities
@@ -307,7 +339,9 @@ def _validate_lifecycle(records: list[Record]) -> None:
     ):
         if not isinstance(constraint, str):
             raise TranscriptValidationError("capability result constraint is invalid")
-        if status == "enforced" and payload.get("effective") != config[constraint]:
+        if status == "enforced" and not _json_equivalent(
+            payload.get("effective"), config[constraint]
+        ):
             raise TranscriptValidationError(
                 "enforced capability effective value does not match config"
             )
@@ -338,6 +372,17 @@ def _validate_lifecycle(records: list[Record]) -> None:
             )
     elif len(capabilities) != len(_CONSTRAINTS):
         raise TranscriptValidationError("capability results are missing")
+    elif records[-1]["kind"] == "run.unsupported":
+        raise TranscriptValidationError(
+            "run.unsupported requires an unsupported capability result"
+        )
+    if any(
+        record["kind"] == "capability.result"
+        for record in records[len(capabilities) + 1 :]
+    ):
+        raise TranscriptValidationError(
+            "capability results must precede all body and terminal records"
+        )
     clock_config = config["clock"]
     if not isinstance(clock_config, dict):
         raise TranscriptValidationError("run.started clock is invalid")
@@ -436,7 +481,12 @@ def _validate_lifecycle(records: list[Record]) -> None:
                 if button not in {"left", "middle", "right"} or delta is not None:
                     raise TranscriptValidationError("input.mouse button is invalid")
             elif action == "scroll":
-                if button is not None or not isinstance(delta, int) or not delta:
+                if (
+                    button is not None
+                    or not isinstance(delta, int)
+                    or isinstance(delta, bool)
+                    or not delta
+                ):
                     raise TranscriptValidationError(
                         "input.mouse scroll delta is invalid"
                     )
@@ -570,3 +620,18 @@ def _validate_lifecycle(records: list[Record]) -> None:
                 )
             ):
                 raise TranscriptValidationError("observation process is invalid")
+
+
+def _json_equivalent(left: JsonValue, right: JsonValue) -> bool:
+    if isinstance(left, bool) or isinstance(right, bool):
+        return isinstance(left, bool) and isinstance(right, bool) and left == right
+    if isinstance(left, list) and isinstance(right, list):
+        return len(left) == len(right) and all(
+            _json_equivalent(left_item, right_item)
+            for left_item, right_item in zip(left, right, strict=True)
+        )
+    if isinstance(left, dict) and isinstance(right, dict):
+        return left.keys() == right.keys() and all(
+            _json_equivalent(left[key], right[key]) for key in left
+        )
+    return left == right

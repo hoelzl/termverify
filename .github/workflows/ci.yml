@@ -43,9 +43,9 @@ jobs:
           python-version: "3.12"
           enable-cache: true
       - run: uv --no-config build
-      - run: uv --no-config run --no-project --with ./dist/*.whl python -c "import termverify; assert termverify.__version__ == '0.1.0'"
+      - run: uv --no-config run --no-project --with ./dist/*.whl python -c "import importlib.metadata; import termverify; from termverify.transcript import parse_transcript, serialize_transcript; assert termverify.__version__ == importlib.metadata.version('termverify'); assert callable(parse_transcript) and callable(serialize_transcript)"
         shell: bash
-      - run: uv --no-config run --no-project --with ./dist/*.tar.gz python -c "import termverify; assert termverify.__version__ == '0.1.0'"
+      - run: uv --no-config run --no-project --with ./dist/*.tar.gz python -c "import importlib.metadata; import termverify; from termverify.transcript import parse_transcript, serialize_transcript; assert termverify.__version__ == importlib.metadata.version('termverify'); assert callable(parse_transcript) and callable(serialize_transcript)"
         shell: bash
 
   docs-contract:

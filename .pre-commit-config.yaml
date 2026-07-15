@@ -2,14 +2,20 @@ default_language_version:
   python: python3.12
 
 repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.13
-    hooks:
-      - id: ruff-check
-      - id: ruff-format
-
   - repo: local
     hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: uv --no-config run ruff check .
+        language: system
+        pass_filenames: false
+
+      - id: ruff-format
+        name: ruff format check
+        entry: uv --no-config run ruff format --check .
+        language: system
+        pass_filenames: false
+
       - id: validate-knowledge-frontmatter
         name: validate knowledge frontmatter
         entry: uv --no-config run python scripts/validate_knowledge_frontmatter.py
