@@ -711,6 +711,24 @@ def _validate_lifecycle(records: list[Record]) -> None:
                 )
             ):
                 raise TranscriptValidationError("observation process is invalid")
+    _validate_evidence_times(
+        records[len(capabilities) + 1 : -1],
+        cast(int, clock_config["initial_ms"]),
+    )
+
+
+def _validate_evidence_times(records: list[Record], manual_time: int) -> None:
+    for record in records:
+        payload = cast(dict[str, JsonValue], record["payload"])
+        if record["kind"] == "input.clock_advanced":
+            manual_time = cast(int, payload["at_ms"])
+        elif (
+            record["kind"] in {"diagnostic", "observation"}
+            and payload["at_ms"] != manual_time
+        ):
+            raise TranscriptValidationError(
+                f"{record['kind']} at_ms does not match the manual clock"
+            )
 
 
 def _json_equivalent(left: JsonValue, right: JsonValue) -> bool:

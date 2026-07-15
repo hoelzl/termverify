@@ -77,11 +77,12 @@ review contexts. No tracked repository files were modified by the review.
 - `actionlint` was not available locally. GitHub's pinned workflow-security and
   dependency-vulnerability jobs passed and remain the current remote evidence.
 
-### Reconciliation after merged PRs #12, #13, and #15
+### Reconciliation through merged PR #17
 
-The confirmed-finding lists below preserve the original review baseline. A
-reconciliation on clean `main` at `b20993d` found 145 passing tests and no open
-issues before the next focused prerequisite was filed:
+The confirmed-finding lists below preserve the original review baseline. An
+intermediate reconciliation after PRs #12, #13, and #15 on clean `main` at
+`b20993d` found 145 passing tests and no open issues before the next focused
+prerequisite was filed:
 
 - PR #12 made parsing and serialization share envelope/lifecycle validation,
   enforced the accepted inception-v1 and baseline-review decisions, and aligned
@@ -94,17 +95,20 @@ issues before the next focused prerequisite was filed:
   configuration selectors, and made the deliberately non-exhaustive
   `run.started` schema slice executable. It did not approve exhaustive per-kind
   schema coverage.
-- Runtime probes still accepted undeclared non-`x-` members in defined payloads
-  and nested protocol objects. Issue
-  [#16](https://github.com/hoelzl/termverify/issues/16) is the smallest next
-  Workstream 1 prerequisite and is limited to closing those runtime shapes.
+- PR #17 closed every defined runtime payload and nested generic protocol object
+  to its declared members plus `x-` extensions, completing issue #16 without
+  expanding the deliberately non-exhaustive schema.
+- Runtime probes after PR #17 still accepted diagnostic and observation
+  timestamps that contradicted the manual clock at their transcript position.
+  Issue [#18](https://github.com/hoelzl/termverify/issues/18) is the smallest next
+  cross-record prerequisite and is limited to enforcing that clock consistency.
 
-The adapter-contract entry gate remains closed after issue #16. Remaining gates
-include the other Workstream 1 local and cross-record rules, the deterministic
+The adapter-contract entry gate remains closed after issue #18. Remaining gates
+include other Workstream 1 local and cross-record rules, the deterministic
 vocabularies and enforcement semantics in Workstream 2, and the deliberately
 bounded fixture/schema/package access criteria in Workstreams 3 and 6. Neither
-issue #16 nor the merged schema slice authorizes adapter/runtime implementation
-or exhaustive schema work.
+issues #16/#18 nor the merged schema slice authorizes adapter/runtime
+implementation or exhaustive schema work.
 
 ### Confirmed P0 defects
 
