@@ -77,7 +77,7 @@ review contexts. No tracked repository files were modified by the review.
 - `actionlint` was not available locally. GitHub's pinned workflow-security and
   dependency-vulnerability jobs passed and remain the current remote evidence.
 
-### Reconciliation through merged PR #19
+### Reconciliation through merged PR #21 and issue #22
 
 The confirmed-finding lists below preserve the original review baseline. An
 intermediate reconciliation after PRs #12, #13, and #15 on clean `main` at
@@ -101,19 +101,26 @@ prerequisite was filed:
 - PR #19 made diagnostic and observation timestamps agree with the manual clock
   current at each record's position, completing issue #18 without adding
   readiness, causality, or asynchronous-drain semantics.
-- A probe after PR #19 confirmed that an observation could report process exit
-  code 99 while the final `run.finished` reported exit code 0. Issue
-  [#20](https://github.com/hoelzl/termverify/issues/20) is the next smallest
-  unambiguous cross-record prerequisite: exited-process evidence must match a
-  final `run.finished` outcome. The relationship to `run.failed` and
+- PR #21 made every exited-process observation agree semantically with the final
+  `run.finished` exit kind and value, completing issue #20. Uninterpreted `x-`
+  extensions do not participate, and the relationship to `run.failed` and
   `run.unsupported` remains later decision work.
+- A fresh probe after PR #21 confirmed that malformed locale values including
+  `not a tag!`, `en_US`, and the incomplete private-use singleton `x` remained
+  accepted. Issue [#22](https://github.com/hoelzl/termverify/issues/22) is the
+  next focused prerequisite: accept literal `C` or RFC 5646 well-formed syntax,
+  preserve caller spelling and case, and avoid registry lookup or normalization.
+  Timezone conformance remains separate because its accepted vocabulary and
+  platform-independent registry/version mechanism still require a decision.
 
-The adapter-contract entry gate remains closed after issue #20. Remaining gates
+The adapter-contract entry gate remains closed during and after issue #22.
+Remaining gates
 include other Workstream 1 local and cross-record rules, the deterministic
 vocabularies and negotiation/attestation semantics in Workstream 2,
-locale/timezone conformance, fixture/property coverage, resource limits, and the
-deliberately bounded schema package-access criteria in Workstreams 3 and 6.
-Neither issues #16/#18/#20 nor the merged schema slice authorizes
+locale enforcement/attestation and timezone conformance, fixture/property
+coverage, resource limits, and the deliberately bounded schema package-access
+criteria in Workstreams 3 and 6.
+Neither issues #16/#18/#20/#22 nor the merged schema slice authorizes
 adapter/runtime implementation or exhaustive schema work.
 
 ### Confirmed P0 defects

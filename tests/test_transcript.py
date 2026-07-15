@@ -14,6 +14,52 @@ from termverify.transcript import (
 )
 
 FIXTURES = Path("tests/fixtures/transcripts/v1")
+GRANDFATHERED_LOCALES = (
+    "art-lojban",
+    "cel-gaulish",
+    "en-GB-oed",
+    "i-ami",
+    "i-bnn",
+    "i-default",
+    "i-enochian",
+    "i-hak",
+    "i-klingon",
+    "i-lux",
+    "i-mingo",
+    "i-navajo",
+    "i-pwn",
+    "i-tao",
+    "i-tay",
+    "i-tsu",
+    "no-bok",
+    "no-nyn",
+    "sgn-BE-FR",
+    "sgn-BE-NL",
+    "sgn-CH-DE",
+    "zh-guoyu",
+    "zh-hakka",
+    "zh-min",
+    "zh-min-nan",
+    "zh-xiang",
+)
+MALFORMED_LOCALES = (
+    "c",
+    "en_US",
+    "a-DE",
+    "de-419-DE",
+    "en-a",
+    "en-x",
+    "en-a-aaa-A-bbb",
+    "en-0-aaa-0-bbb",
+    "sl-rozaj-ROZAJ",
+    "i-not-registered",
+    "abcdefghi",
+    "en-abcdefghi",
+    "x-abcdefghi",
+    "abc-def-ghi-jkl-mno",
+    "en--US",
+    "én-US",
+)
 
 
 def test_parse_transcript_accepts_canonical_valid_fixture() -> None:
@@ -526,6 +572,118 @@ def test_serialize_transcript_rejects_empty_locale_config() -> None:
 
     with pytest.raises(TranscriptValidationError, match="locale"):
         serialize_transcript(transcript)
+
+
+def test_serialize_transcript_rejects_malformed_locale_config() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    started_payload = transcript[0]["payload"]
+    assert isinstance(started_payload, dict)
+    config = started_payload["config"]
+    assert isinstance(config, dict)
+    config["locale"] = "not a tag!"
+    locale_result = transcript[3]["payload"]
+    assert isinstance(locale_result, dict)
+    assert locale_result["constraint"] == "locale"
+    locale_result["effective"] = "not a tag!"
+
+    with pytest.raises(TranscriptValidationError, match="locale"):
+        serialize_transcript(transcript)
+
+
+def test_serialize_transcript_rejects_incomplete_private_use_locale() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    started_payload = transcript[0]["payload"]
+    assert isinstance(started_payload, dict)
+    config = started_payload["config"]
+    assert isinstance(config, dict)
+    config["locale"] = "x"
+    locale_result = transcript[3]["payload"]
+    assert isinstance(locale_result, dict)
+    assert locale_result["constraint"] == "locale"
+    locale_result["effective"] = "x"
+
+    with pytest.raises(TranscriptValidationError, match="locale"):
+        serialize_transcript(transcript)
+
+
+@pytest.mark.parametrize(
+    "locale",
+    MALFORMED_LOCALES,
+)
+def test_serialize_transcript_rejects_non_well_formed_locale(locale: str) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    started_payload = transcript[0]["payload"]
+    assert isinstance(started_payload, dict)
+    config = started_payload["config"]
+    assert isinstance(config, dict)
+    config["locale"] = locale
+    locale_result = transcript[3]["payload"]
+    assert isinstance(locale_result, dict)
+    assert locale_result["constraint"] == "locale"
+    locale_result["effective"] = locale
+
+    with pytest.raises(TranscriptValidationError, match="locale"):
+        serialize_transcript(transcript)
+
+
+@pytest.mark.parametrize(
+    "locale",
+    [
+        "C",
+        "de",
+        "zh-cmn-Hans-CN",
+        "sl-rozaj-biske",
+        "de-CH-1901",
+        "x-whatever",
+        "en-US-u-islamcal",
+        "i-KLINGON",
+        "abcd",
+        "abcdefgh-123-1abc-abcdefgh-a-aa-abcdefgh-x-a-abcdefgh",
+        *GRANDFATHERED_LOCALES,
+    ],
+)
+def test_locale_spelling_round_trips_for_well_formed_tags(locale: str) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    started_payload = transcript[0]["payload"]
+    assert isinstance(started_payload, dict)
+    config = started_payload["config"]
+    assert isinstance(config, dict)
+    config["locale"] = locale
+    locale_result = transcript[3]["payload"]
+    assert isinstance(locale_result, dict)
+    assert locale_result["constraint"] == "locale"
+    locale_result["effective"] = locale
+
+    reparsed = parse_transcript(serialize_transcript(transcript))
+    reparsed_started = reparsed[0]["payload"]
+    assert isinstance(reparsed_started, dict)
+    reparsed_config = reparsed_started["config"]
+    assert isinstance(reparsed_config, dict)
+    assert reparsed_config["locale"] == locale
+
+
+@pytest.mark.parametrize("locale", MALFORMED_LOCALES)
+def test_parse_transcript_rejects_non_well_formed_locale(locale: str) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    started_payload = transcript[0]["payload"]
+    assert isinstance(started_payload, dict)
+    config = started_payload["config"]
+    assert isinstance(config, dict)
+    config["locale"] = locale
+    locale_result = transcript[3]["payload"]
+    assert isinstance(locale_result, dict)
+    assert locale_result["constraint"] == "locale"
+    locale_result["effective"] = locale
+    encoded = b"".join(
+        json.dumps(
+            record, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        ).encode()
+        + b"\n"
+        for record in transcript
+    )
+
+    with pytest.raises(TranscriptValidationError, match="locale"):
+        parse_transcript(encoded)
 
 
 def test_serialize_transcript_rejects_non_finite_json_number() -> None:
