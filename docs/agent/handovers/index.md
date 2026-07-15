@@ -7,11 +7,12 @@ source of truth for volatile work state.
 
 ## Active
 
-- [Quality hardening handover](quality-hardening-handover.md) — **active**;
-  strengthens delivery controls and resolves prerequisites identified by the
-  July 2026 adversarial review before Phase 1 protocol implementation.
+No active handovers.
 
 ## Archive
 
 - [Foundation handover](archive/foundation-handover.md) — **complete**; Phase 0
   established the initial package, workflow, documentation, and CI foundation.
+- [Quality hardening handover](archive/quality-hardening-handover.md) —
+  **complete**; delivered the July 2026 delivery controls, evidence governance,
+  and executable transcript-v1 contract prerequisites.
