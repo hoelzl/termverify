@@ -2,7 +2,7 @@
 
 ## Handover metadata
 
-- **Status:** active
+- **Status:** complete
 - **Owner:** unassigned
 - **Created:** 2026-07-14
 - **Review required:** yes — independent human-readable review is required for
@@ -108,10 +108,14 @@ drain-aware teardown. Browser bridging is deferred unambiguously in the product
 and architecture documents.
 
 Independent human-readable review accepted this material protocol/architecture
-decision on 2026-07-15. Workstream 3 remains active: no committed schemas,
-fixtures, serialization/compatibility tests, or adapter constraint-propagation
-tests exist yet. Those executable contracts are required before accepting Phase
-1 adapter code.
+decision on 2026-07-15. The executable contracts subsequently landed in
+[PR #8](https://github.com/hoelzl/termverify/pull/8), which merged into `main`
+as `1e94b7d` on 2026-07-15 and closed issue #3. It added the committed v1
+record-envelope schema, canonical valid/invalid JSONL fixtures, semantic
+parser/serializer validation, RFC 8785 canonicalization, and deterministic
+constraint, lifecycle, payload, observation, frame, and process contract tests.
+The full locked quality gate passed before merge. Workstream 3 is complete;
+adapter-runtime implementation remains a separately scoped Phase 1 successor.
 
 ## Workstream 1: deterministic and supply-chain-safe delivery
 
@@ -289,3 +293,14 @@ Update this document when a workstream is completed, blocked on a decision, or
 materially re-scoped. On completion, mark this document **complete**, add final
 validation evidence and the Phase 1 successor (if any), then move it to
 `docs/agent/handovers/archive/` and update the handover index.
+
+## Completion transition: 2026-07-15
+
+All quality-hardening workstreams are complete. Final Workstream 3 evidence is
+PR #8 and its merged commit `1e94b7d`; the local final gate passed with locked
+dependency synchronization, 47 tests with coverage reporting, Ruff check and
+format verification, strict mypy, both pre-commit stages, package build, and
+`git diff --check`. The successor is not another quality-hardening handover:
+any Phase 1 adapter-runtime implementation must begin in a new focused issue
+and handover, preserving the accepted protocol and evidence-governance
+boundaries.
