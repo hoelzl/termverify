@@ -46,6 +46,14 @@ _INPUT_MEMBERS = {
     "input.clipboard_set": frozenset({"at_ms", "text"}),
     "input.stop": frozenset({"at_ms"}),
 }
+_PAYLOAD_MEMBERS = {
+    **_INPUT_MEMBERS,
+    "diagnostic": frozenset({"at_ms", "code", "message", "details"}),
+    "observation": frozenset({"at_ms", "state", "events", "ui", "frame", "process"}),
+    "run.finished": frozenset({"exit"}),
+    "run.failed": frozenset({"error"}),
+    "run.unsupported": frozenset({"constraint", "code", "message", "details"}),
+}
 _RECORD_KINDS = (
     _INPUT_KINDS
     | _TERMINAL_KINDS
@@ -180,6 +188,16 @@ def _validate_lifecycle(records: list[Record]) -> None:
             if isinstance(kind, str) and kind.startswith("input."):
                 raise TranscriptValidationError("input kind is not defined by v1")
             raise TranscriptValidationError("record kind is not defined by v1")
+        payload = record["payload"]
+        if (
+            isinstance(kind, str)
+            and kind in _PAYLOAD_MEMBERS
+            and isinstance(payload, dict)
+            and _has_unknown_generic_members(payload, _PAYLOAD_MEMBERS[kind])
+        ):
+            raise TranscriptValidationError(
+                f"{kind} payload member is not defined by v1"
+            )
     if not records or records[0]["kind"] != "run.started":
         raise TranscriptValidationError("transcript must start with run.started")
     if any(record["kind"] == "run.started" for record in records[1:]):
@@ -322,6 +340,8 @@ def _validate_lifecycle(records: list[Record]) -> None:
         exit_value = terminal_payload.get("exit")
         if not isinstance(exit_value, dict):
             raise TranscriptValidationError("run.finished exit must be an object")
+        if _has_unknown_generic_members(exit_value, frozenset({"kind", "value"})):
+            raise TranscriptValidationError("run.finished exit members are invalid")
         exit_kind = exit_value.get("kind")
         exit_result = exit_value.get("value")
         valid_exit = (
@@ -339,6 +359,9 @@ def _validate_lifecycle(records: list[Record]) -> None:
         error_value = terminal_payload.get("error")
         if (
             not isinstance(error_value, dict)
+            or _has_unknown_generic_members(
+                error_value, frozenset({"code", "message", "details"})
+            )
             or not isinstance(error_value.get("code"), str)
             or not error_value["code"]
             or not isinstance(error_value.get("message"), str)
@@ -366,6 +389,15 @@ def _validate_lifecycle(records: list[Record]) -> None:
     ):
         if not isinstance(constraint, str):
             raise TranscriptValidationError("capability result constraint is invalid")
+        allowed_members = (
+            frozenset({"constraint", "status", "effective"})
+            if status == "enforced"
+            else frozenset({"constraint", "status", "reason"})
+        )
+        if _has_unknown_generic_members(payload, allowed_members):
+            raise TranscriptValidationError(
+                "capability result members are invalid for its status"
+            )
         if status == "enforced" and not _json_equivalent(
             payload.get("effective"), config[constraint]
         ):
@@ -560,6 +592,9 @@ def _validate_lifecycle(records: list[Record]) -> None:
         cursor = ui.get("cursor")
         if (
             not isinstance(ui.get("regions"), list)
+            or _has_unknown_generic_members(
+                ui, frozenset({"regions", "focus", "cursor", "mode"})
+            )
             or ui.get("focus") is not None
             and not isinstance(ui.get("focus"), str)
             or not isinstance(cursor, dict)
@@ -568,10 +603,16 @@ def _validate_lifecycle(records: list[Record]) -> None:
         ):
             raise TranscriptValidationError("observation ui is invalid")
         cursor_values = (cursor.get("column"), cursor.get("row"))
-        if not all(
-            isinstance(value, int) and not isinstance(value, bool) and value >= 0
-            for value in cursor_values
-        ) or not isinstance(cursor.get("visible"), bool):
+        if (
+            _has_unknown_generic_members(
+                cursor, frozenset({"column", "row", "visible"})
+            )
+            or not all(
+                isinstance(value, int) and not isinstance(value, bool) and value >= 0
+                for value in cursor_values
+            )
+            or not isinstance(cursor.get("visible"), bool)
+        ):
             raise TranscriptValidationError("observation ui cursor is invalid")
         regions = ui["regions"]
         assert isinstance(regions, list)
@@ -583,6 +624,9 @@ def _validate_lifecycle(records: list[Record]) -> None:
             bounds = region.get("bounds")
             if (
                 not isinstance(region_id, str)
+                or _has_unknown_generic_members(
+                    region, frozenset({"id", "role", "bounds"})
+                )
                 or not region_id
                 or region_id in region_ids
                 or not isinstance(region.get("role"), str)
@@ -592,12 +636,20 @@ def _validate_lifecycle(records: list[Record]) -> None:
                 raise TranscriptValidationError("observation ui region is invalid")
             dimensions = (bounds.get("columns"), bounds.get("rows"))
             origin = (bounds.get("column"), bounds.get("row"))
-            if not all(
-                isinstance(value, int) and not isinstance(value, bool) and value > 0
-                for value in dimensions
-            ) or not all(
-                isinstance(value, int) and not isinstance(value, bool) and value >= 0
-                for value in origin
+            if (
+                _has_unknown_generic_members(
+                    bounds, frozenset({"column", "row", "columns", "rows"})
+                )
+                or not all(
+                    isinstance(value, int) and not isinstance(value, bool) and value > 0
+                    for value in dimensions
+                )
+                or not all(
+                    isinstance(value, int)
+                    and not isinstance(value, bool)
+                    and value >= 0
+                    for value in origin
+                )
             ):
                 raise TranscriptValidationError("observation ui bounds are invalid")
             region_ids.add(region_id)
@@ -608,6 +660,7 @@ def _validate_lifecycle(records: list[Record]) -> None:
         for event in events:
             if (
                 not isinstance(event, dict)
+                or _has_unknown_generic_members(event, frozenset({"type", "data"}))
                 or not isinstance(event.get("type"), str)
                 or not event["type"]
                 or "data" not in event
@@ -621,6 +674,9 @@ def _validate_lifecycle(records: list[Record]) -> None:
             dimensions = (frame.get("columns"), frame.get("rows"))
             if (
                 not isinstance(lines, list)
+                or _has_unknown_generic_members(
+                    frame, frozenset({"lines", "columns", "rows"})
+                )
                 or not all(isinstance(line, str) for line in lines)
                 or not all(
                     isinstance(value, int) and not isinstance(value, bool) and value > 0
@@ -633,12 +689,18 @@ def _validate_lifecycle(records: list[Record]) -> None:
             process = observation_payload["process"]
             if not isinstance(process, dict):
                 raise TranscriptValidationError("observation process is invalid")
-            if process.get("state") == "running" and set(process) == {"state"}:
+            if process.get("state") == "running" and not _has_unknown_generic_members(
+                process, frozenset({"state"})
+            ):
                 continue
             exit_value = process.get("exit")
             if (
                 process.get("state") != "exited"
+                or _has_unknown_generic_members(process, frozenset({"state", "exit"}))
                 or not isinstance(exit_value, dict)
+                or _has_unknown_generic_members(
+                    exit_value, frozenset({"kind", "value"})
+                )
                 or not (
                     exit_value.get("kind") == "code"
                     and isinstance(exit_value.get("value"), int)

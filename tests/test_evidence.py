@@ -256,7 +256,7 @@ def test_persist_transcript_evidence_redacts_sandbox_and_network_identity(
     }
 
 
-def test_persist_transcript_evidence_redacts_unknown_semantic_members(
+def test_persist_transcript_evidence_rejects_unknown_semantic_members(
     tmp_path: Path,
 ) -> None:
     records = parse_transcript(TRANSCRIPT_FIXTURE.read_bytes())
@@ -285,30 +285,13 @@ def test_persist_transcript_evidence_redacts_unknown_semantic_members(
     finished_exit["private"] = "unclassified exit"
     destination = tmp_path / "transcript.jsonl"
 
-    persist_transcript_evidence(destination, records)
+    with pytest.raises(TranscriptValidationError, match="member"):
+        persist_transcript_evidence(destination, records)
 
-    persisted = parse_transcript(destination.read_bytes())
-    persisted_started = persisted[0]["payload"]
-    persisted_observation = persisted[9]["payload"]
-    persisted_finished = persisted[-1]["payload"]
-    assert isinstance(persisted_started, dict)
-    assert isinstance(persisted_observation, dict)
-    assert isinstance(persisted_finished, dict)
-    assert persisted_observation["private"] == "<redacted:unknown>"
-    persisted_events = persisted_observation["events"]
-    persisted_ui = persisted_observation["ui"]
-    assert isinstance(persisted_events, list)
-    assert isinstance(persisted_events[0], dict)
-    assert isinstance(persisted_ui, dict)
-    assert persisted_events[0]["private"] == "<redacted:unknown>"
-    assert persisted_ui["private"] == "<redacted:unknown>"
-    assert persisted_finished["private"] == "<redacted:unknown>"
-    persisted_exit = persisted_finished["exit"]
-    assert isinstance(persisted_exit, dict)
-    assert persisted_exit["private"] == "<redacted:unknown>"
+    assert not destination.exists()
 
 
-def test_persist_transcript_evidence_redacts_unsupported_capability_details(
+def test_persist_transcript_evidence_rejects_effective_unsupported_capability(
     tmp_path: Path,
 ) -> None:
     records = parse_transcript(TRANSCRIPT_FIXTURE.read_bytes())
@@ -333,21 +316,10 @@ def test_persist_transcript_evidence_redacts_unsupported_capability_details(
     records = records[:2] + [terminal]
     destination = tmp_path / "transcript.jsonl"
 
-    persist_transcript_evidence(destination, records)
+    with pytest.raises(TranscriptValidationError, match="members"):
+        persist_transcript_evidence(destination, records)
 
-    persisted = parse_transcript(destination.read_bytes())
-    assert persisted[1]["payload"] == {
-        "constraint": "seed",
-        "status": "unsupported",
-        "reason": "<redacted:diagnostic>",
-        "effective": "<redacted:unknown>",
-    }
-    assert persisted[-1]["payload"] == {
-        "constraint": "seed",
-        "code": "seed-not-enforceable",
-        "message": "<redacted:diagnostic>",
-        "details": "<redacted:diagnostic>",
-    }
+    assert not destination.exists()
 
 
 def test_persist_transcript_evidence_rejects_sensitive_retention(
