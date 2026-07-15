@@ -34,6 +34,104 @@ def test_persist_transcript_evidence_redacts_text_before_canonical_write(
     assert input_payload["text"] == "password=hunter2"
 
 
+def test_persist_transcript_evidence_preserves_replay_subject(
+    tmp_path: Path,
+) -> None:
+    records = parse_transcript(TRANSCRIPT_FIXTURE.read_bytes())
+    started_payload = records[0]["payload"]
+    assert isinstance(started_payload, dict)
+    subject = deepcopy(started_payload["subject"])
+    destination = tmp_path / "transcript.jsonl"
+
+    persist_transcript_evidence(destination, records)
+
+    persisted = parse_transcript(destination.read_bytes())
+    persisted_started = persisted[0]["payload"]
+    assert isinstance(persisted_started, dict)
+    assert persisted_started["subject"] == subject
+
+
+def test_persist_transcript_evidence_rejects_credential_shaped_subject_selector(
+    tmp_path: Path,
+) -> None:
+    records = parse_transcript(TRANSCRIPT_FIXTURE.read_bytes())
+    started_payload = records[0]["payload"]
+    assert isinstance(started_payload, dict)
+    subject = started_payload["subject"]
+    assert isinstance(subject, dict)
+    application = subject["application"]
+    assert isinstance(application, dict)
+    application["build"] = "ghp_" + "a" * 24
+    destination = tmp_path / "transcript.jsonl"
+
+    with pytest.raises(ValueError, match="credential-shaped selector"):
+        persist_transcript_evidence(destination, records)
+
+    assert not destination.exists()
+
+
+def test_persist_transcript_evidence_redacts_subject_extensions_only(
+    tmp_path: Path,
+) -> None:
+    records = parse_transcript(TRANSCRIPT_FIXTURE.read_bytes())
+    started_payload = records[0]["payload"]
+    assert isinstance(started_payload, dict)
+    subject = started_payload["subject"]
+    assert isinstance(subject, dict)
+    normalizer = subject["normalizer"]
+    assert isinstance(normalizer, dict)
+    subject["x-private"] = {"hostname": "private-host"}
+    subject["x-credential"] = "ghp_" + "a" * 24
+    normalizer["x-private"] = "private normalizer detail"
+    application = deepcopy(subject["application"])
+    destination = tmp_path / "transcript.jsonl"
+
+    persist_transcript_evidence(destination, records)
+
+    persisted = parse_transcript(destination.read_bytes())
+    persisted_started = persisted[0]["payload"]
+    assert isinstance(persisted_started, dict)
+    persisted_subject = persisted_started["subject"]
+    assert isinstance(persisted_subject, dict)
+    assert persisted_subject["application"] == application
+    assert persisted_subject["x-private"] == "<redacted:extension>"
+    assert persisted_subject["x-credential"] == "<redacted:extension>"
+    persisted_normalizer = persisted_subject["normalizer"]
+    assert isinstance(persisted_normalizer, dict)
+    assert persisted_normalizer["x-private"] == "<redacted:extension>"
+
+
+def test_persist_transcript_evidence_redacts_nested_config_extension(
+    tmp_path: Path,
+) -> None:
+    records = parse_transcript(TRANSCRIPT_FIXTURE.read_bytes())
+    started_payload = records[0]["payload"]
+    assert isinstance(started_payload, dict)
+    config = started_payload["config"]
+    assert isinstance(config, dict)
+    terminal = config["terminal"]
+    assert isinstance(terminal, dict)
+    terminal["x-private"] = "private terminal detail"
+    capability_payload = records[5]["payload"]
+    assert isinstance(capability_payload, dict)
+    capability_payload["effective"] = deepcopy(terminal)
+    destination = tmp_path / "transcript.jsonl"
+
+    persist_transcript_evidence(destination, records)
+
+    persisted = parse_transcript(destination.read_bytes())
+    persisted_started = persisted[0]["payload"]
+    assert isinstance(persisted_started, dict)
+    persisted_config = persisted_started["config"]
+    assert isinstance(persisted_config, dict)
+    persisted_terminal = persisted_config["terminal"]
+    assert isinstance(persisted_terminal, dict)
+    assert persisted_terminal["x-private"] == "<redacted:extension>"
+    persisted_capability = persisted[5]["payload"]
+    assert isinstance(persisted_capability, dict)
+    assert persisted_capability["effective"] == persisted_terminal
+
+
 def test_persist_transcript_evidence_redacts_semantic_evidence_fields(
     tmp_path: Path,
 ) -> None:
@@ -164,15 +262,6 @@ def test_persist_transcript_evidence_redacts_unknown_semantic_members(
     records = parse_transcript(TRANSCRIPT_FIXTURE.read_bytes())
     started_payload = records[0]["payload"]
     assert isinstance(started_payload, dict)
-    config = started_payload["config"]
-    assert isinstance(config, dict)
-    terminal = config["terminal"]
-    assert isinstance(terminal, dict)
-    config["private"] = "unclassified config"
-    terminal["private"] = "unclassified terminal"
-    terminal_result = records[5]["payload"]
-    assert isinstance(terminal_result, dict)
-    terminal_result["effective"] = deepcopy(terminal)
     observation_payload = records[9]["payload"]
     assert isinstance(observation_payload, dict)
     observation_payload["private"] = "unclassified observation"
@@ -205,12 +294,6 @@ def test_persist_transcript_evidence_redacts_unknown_semantic_members(
     assert isinstance(persisted_started, dict)
     assert isinstance(persisted_observation, dict)
     assert isinstance(persisted_finished, dict)
-    persisted_config = persisted_started["config"]
-    assert isinstance(persisted_config, dict)
-    persisted_terminal = persisted_config["terminal"]
-    assert isinstance(persisted_terminal, dict)
-    assert persisted_config["private"] == "<redacted:unknown>"
-    assert persisted_terminal["private"] == "<redacted:unknown>"
     assert persisted_observation["private"] == "<redacted:unknown>"
     persisted_events = persisted_observation["events"]
     persisted_ui = persisted_observation["ui"]
@@ -290,6 +373,20 @@ def test_redact_evidence_redacts_nested_values() -> None:
         "state": {"api_token": "<redacted:api_token>"},
         "events": [{"data": {"clipboard": "<redacted:clipboard>"}}],
         "x-application": {"authorization": "<redacted:authorization>"},
+    }
+
+
+def test_redact_evidence_redacts_unvalidated_replay_subject_credentials() -> None:
+    credential = "ghp_" + "a" * 24
+
+    assert redact_evidence(
+        {
+            "kind": "run.started",
+            "payload": {"subject": {"application": {"build": credential}}},
+        }
+    ) == {
+        "kind": "run.started",
+        "payload": {"subject": {"application": {"build": "<redacted:credential>"}}},
     }
 
 

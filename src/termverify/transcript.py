@@ -202,6 +202,17 @@ def _validate_lifecycle(records: list[Record]) -> None:
     started_payload = records[0]["payload"]
     if not isinstance(started_payload, dict):
         raise TranscriptValidationError("run.started payload must be an object")
+    if any(
+        key not in {"config", "subject"} and not key.startswith("x-")
+        for key in started_payload
+    ):
+        raise TranscriptValidationError("run.started members are invalid")
+    if "config" not in started_payload:
+        raise TranscriptValidationError("run.started config is incomplete")
+    subject = started_payload.get("subject")
+    if not isinstance(subject, dict):
+        raise TranscriptValidationError("run.started subject is missing")
+    _validate_replay_subject(subject)
     config = started_payload.get("config")
     required_config = {
         "seed",
@@ -212,18 +223,27 @@ def _validate_lifecycle(records: list[Record]) -> None:
         "filesystem",
         "network",
     }
-    if not isinstance(config, dict) or not required_config <= config.keys():
+    if (
+        not isinstance(config, dict)
+        or not required_config <= config.keys()
+        or any(
+            key not in required_config and not key.startswith("x-") for key in config
+        )
+    ):
         raise TranscriptValidationError("run.started config is incomplete")
     seed = config["seed"]
     if (
         not isinstance(seed, str)
         or not seed.isascii()
         or not seed.isdecimal()
+        or (len(seed) > 1 and seed.startswith("0"))
         or int(seed) > 2**64 - 1
     ):
         raise TranscriptValidationError("run.started seed is invalid")
     terminal_config = config["terminal"]
-    if not isinstance(terminal_config, dict):
+    if not isinstance(terminal_config, dict) or _has_unknown_generic_members(
+        terminal_config, frozenset({"columns", "rows", "capabilities"})
+    ):
         raise TranscriptValidationError("run.started terminal is invalid")
     terminal_dimensions = (
         terminal_config.get("columns"),
@@ -250,15 +270,19 @@ def _validate_lifecycle(records: list[Record]) -> None:
         raise TranscriptValidationError("run.started network is invalid")
     network_mode = network_config.get("mode")
     if network_mode == "deny":
-        if set(network_config) != {"mode"}:
+        if _has_unknown_generic_members(network_config, frozenset({"mode"})):
             raise TranscriptValidationError("run.started network is invalid")
     elif network_mode == "allow-list":
+        if _has_unknown_generic_members(network_config, frozenset({"mode", "allowed"})):
+            raise TranscriptValidationError("run.started network is invalid")
         allowed = network_config.get("allowed")
         if not isinstance(allowed, list):
             raise TranscriptValidationError("run.started network is invalid")
         allow_pairs: list[tuple[str, int]] = []
         for entry in allowed:
-            if not isinstance(entry, dict):
+            if not isinstance(entry, dict) or _has_unknown_generic_members(
+                entry, frozenset({"host", "port"})
+            ):
                 raise TranscriptValidationError("run.started network is invalid")
             host = entry.get("host")
             port = entry.get("port")
@@ -280,6 +304,9 @@ def _validate_lifecycle(records: list[Record]) -> None:
     filesystem_config = config["filesystem"]
     if (
         not isinstance(filesystem_config, dict)
+        or _has_unknown_generic_members(
+            filesystem_config, frozenset({"mode", "root_id"})
+        )
         or filesystem_config.get("mode") != "sandbox"
         or not isinstance(filesystem_config.get("root_id"), str)
         or not filesystem_config["root_id"]
@@ -384,7 +411,9 @@ def _validate_lifecycle(records: list[Record]) -> None:
             "capability results must precede all body and terminal records"
         )
     clock_config = config["clock"]
-    if not isinstance(clock_config, dict):
+    if not isinstance(clock_config, dict) or _has_unknown_generic_members(
+        clock_config, frozenset({"mode", "initial_ms"})
+    ):
         raise TranscriptValidationError("run.started clock is invalid")
     manual_time = clock_config.get("initial_ms")
     if (
@@ -635,3 +664,58 @@ def _json_equivalent(left: JsonValue, right: JsonValue) -> bool:
             _json_equivalent(left[key], right[key]) for key in left
         )
     return left == right
+
+
+def _validate_replay_subject(subject: dict[str, JsonValue]) -> None:
+    if subject.get("format") != "termverify.replay-subject/v1":
+        raise TranscriptValidationError("run.started subject format is invalid")
+    required = {
+        "format",
+        "application",
+        "fixture",
+        "adapter",
+        "normalizer",
+        "state_schema",
+    }
+    if not required <= subject.keys() or any(
+        key not in required | {"platform"} and not key.startswith("x-")
+        for key in subject
+    ):
+        raise TranscriptValidationError("run.started subject members are incomplete")
+    application = subject["application"]
+    if not isinstance(application, dict) or not _has_exact_selector_members(
+        application, frozenset({"id", "version", "build"})
+    ):
+        raise TranscriptValidationError("run.started subject application is invalid")
+    for name in ("fixture", "adapter", "normalizer", "state_schema"):
+        selector = subject[name]
+        if not isinstance(selector, dict) or not _has_exact_selector_members(
+            selector, frozenset({"id", "version"})
+        ):
+            raise TranscriptValidationError(f"run.started subject {name} is invalid")
+    if "platform" in subject:
+        platform = subject["platform"]
+        if not isinstance(platform, dict) or not _has_exact_selector_members(
+            platform, frozenset({"os", "architecture"})
+        ):
+            raise TranscriptValidationError("run.started subject platform is invalid")
+
+
+def _has_exact_selector_members(
+    value: dict[str, JsonValue], required: frozenset[str]
+) -> bool:
+    return (
+        required <= value.keys()
+        and all(
+            isinstance(value[key], str)
+            and _IDENTIFIER_PATTERN.fullmatch(cast(str, value[key])) is not None
+            for key in required
+        )
+        and not any(key not in required and not key.startswith("x-") for key in value)
+    )
+
+
+def _has_unknown_generic_members(
+    value: dict[str, JsonValue], allowed: frozenset[str]
+) -> bool:
+    return any(key not in allowed and not key.startswith("x-") for key in value)

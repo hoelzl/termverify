@@ -98,8 +98,12 @@ revalidates the sanitized transcript, and only then creates the destination and
 writes canonical JSONL. Safe mode redacts text input, clipboard values,
 application state, event data, frame lines, diagnostic messages/details,
 sandbox identity, network hosts, path/credential-shaped values, unknown semantic
-members, and every `x-` extension value. Structural fields required for replay
-remain intact.
+members, and every `x-` extension value. The closed replay-subject selectors are
+caller-declared structural identities and remain intact; their grammar excludes
+raw paths, command lines, environments, and hostnames. If a structural selector
+matches a recognized credential shape, safe persistence rejects the transcript
+before creating the destination because redacting that selector would corrupt
+replay identity. Other structural fields required for replay remain intact.
 
 Sensitive persistence is intentionally rejected because per-user access,
 outside-repository containment, bounded lifetime, and cleanup are not yet
