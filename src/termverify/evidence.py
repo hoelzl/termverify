@@ -24,10 +24,16 @@ _SENSITIVE_KEY_PARTS = frozenset(
 _PATH_KEY_PARTS = frozenset({"cwd", "directory", "file", "path"})
 _CREDENTIAL_PATTERNS = (
     re.compile(r"\bBearer\s+\S+", re.IGNORECASE),
+    re.compile(r"\bAuthorization\s*:\s*Basic\s+\S+", re.IGNORECASE),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b"),
-    re.compile(r"\bsk-[A-Za-z0-9]{20,}\b"),
+    re.compile(r"\bsk-[A-Za-z0-9-]{20,}\b"),
+    re.compile(
+        r"\b(?:api[_-]?key|credential|password|secret|token)\s*[:=]\s*\S+",
+        re.IGNORECASE,
+    ),
+    re.compile(r"-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----"),
 )
-_ABSOLUTE_PATH_PATTERN = re.compile(r"(?:[A-Za-z]:[\\/]|/)")
+_CAMEL_CASE_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 
 
 def redact_evidence(value: JsonValue) -> JsonValue:
@@ -37,7 +43,9 @@ def redact_evidence(value: JsonValue) -> JsonValue:
             key: _redaction_marker(key)
             if _is_sensitive_key(key)
             else _redaction_marker("path")
-            if _is_path_key(key) and isinstance(item, str) and _is_absolute_path(item)
+            if _is_path_key(key)
+            else _redact_clipboard_payload(item)
+            if key == "payload" and value.get("kind") == "input.clipboard_set"
             else redact_evidence(item)
             for key, item in value.items()
         }
@@ -52,28 +60,45 @@ def redact_evidence(value: JsonValue) -> JsonValue:
 
 def write_sanitized_evidence(destination: Path, evidence: JsonValue) -> None:
     """Redact *evidence* before writing canonical JSON to any destination."""
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(
-        json.dumps(
-            redact_evidence(evidence), ensure_ascii=False, indent=2, sort_keys=True
+    try:
+        serialized = json.dumps(
+            redact_evidence(evidence),
+            allow_nan=False,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
         )
-        + "\n",
-        encoding="utf-8",
-    )
+    except ValueError as error:
+        raise ValueError("evidence contains a non-finite JSON number") from error
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(serialized + "\n", encoding="utf-8")
 
 
 def _is_sensitive_key(key: str) -> bool:
-    key_parts = re.split(r"[^a-z0-9]+", key.casefold())
-    return any(part in _SENSITIVE_KEY_PARTS for part in key_parts)
+    return any(part in _SENSITIVE_KEY_PARTS for part in _key_parts(key))
 
 
 def _is_path_key(key: str) -> bool:
-    key_parts = re.split(r"[^a-z0-9]+", key.casefold())
-    return any(part in _PATH_KEY_PARTS for part in key_parts)
+    return any(part in _PATH_KEY_PARTS for part in _key_parts(key))
 
 
-def _is_absolute_path(value: str) -> bool:
-    return _ABSOLUTE_PATH_PATTERN.match(value) is not None
+def _key_parts(key: str) -> list[str]:
+    separated = _CAMEL_CASE_BOUNDARY.sub("_", key)
+    return re.split(r"[^a-z0-9]+", separated.casefold())
+
+
+def _redact_clipboard_payload(value: JsonValue) -> JsonValue:
+    if not isinstance(value, dict):
+        return _redaction_marker("clipboard")
+    return {
+        key: redact_evidence(item)
+        if key == "at_ms"
+        and isinstance(item, int)
+        and not isinstance(item, bool)
+        and item >= 0
+        else _redaction_marker("clipboard")
+        for key, item in value.items()
+    }
 
 
 def _redaction_marker(reason: str) -> str:

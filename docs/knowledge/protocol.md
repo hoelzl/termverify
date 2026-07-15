@@ -8,10 +8,10 @@ tags: [protocol, jsonl, terminal, observations, determinism]
 # TermVerify JSONL transcript protocol
 
 This document defines the reviewed **design** for the first externally consumed
-protocol: `termverify.transcript/v1`. It is not yet a committed schema or a
-runtime implementation. Phase 1 must add schemas, valid and invalid fixtures,
-and serialization/compatibility tests that make this contract executable before
-an adapter is accepted.
+protocol: `termverify.transcript/v1`. The repository contains an initial schema,
+canonical codec, semantic validator, and small fixture corpus, but these do not
+yet constitute a complete conformance contract. Phase 1 must reconcile schema,
+runtime, fixtures, and compatibility tests before a public adapter is accepted.
 
 Each UTF-8 JSON Lines file is one transcript for one verified run. A line ends
 with exactly one LF (`\n`); a final LF is required. Blank lines, comments, and
@@ -193,11 +193,10 @@ v1 member names.
 ## Compatibility and evolution
 
 `termverify.transcript/v1` readers must reject a different `protocol` value.
-Within v1, only optional `x-` extension members and new optional record payload
-members with a documented default are additive. Adding a required member,
-changing a member type or meaning, changing canonicalization, changing ordering
-rules, or changing a stable error code is incompatible and requires a new
-protocol version.
+Within v1, only optional `x-` extension members are additive. New generic
+semantic members, whether required or optional, require a new protocol version,
+as do changes to a member's type or meaning, canonicalization, ordering rules,
+or stable error codes.
 
 A new version supplies its own fixtures and migration/replay policy. A v1
 reader may preserve unknown `x-` members when rewriting a transcript, but must

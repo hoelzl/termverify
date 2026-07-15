@@ -1,5 +1,7 @@
+from importlib.metadata import version
+
 from termverify import __version__
 
 
-def test_exposes_initial_public_version() -> None:
-    assert __version__ == "0.1.0"
+def test_exposes_installed_package_version() -> None:
+    assert __version__ == version("termverify")

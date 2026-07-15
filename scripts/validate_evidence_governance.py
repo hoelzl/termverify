@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import cast
+from urllib.parse import urlsplit
 
 BASELINE_ROOT = Path("tests/fixtures/baselines")
 APPROVAL_FORMAT = "termverify.baseline-approval/v1"
@@ -17,6 +18,7 @@ APPROVAL_FIELDS = frozenset(
         "format",
         "baseline_sha256",
         "rationale",
+        "review_mode",
         "proposed_by",
         "reviewed_by",
         "reviewed_at",
@@ -25,6 +27,16 @@ APPROVAL_FIELDS = frozenset(
     }
 )
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
+_HTTPS_HOST_PATTERN = re.compile(
+    r"(?=.{1,253}\Z)"
+    r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*"
+)
+_GITHUB_REVIEW_PATH_PATTERN = re.compile(
+    r"/[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?"
+    r"/(?!(?:\.{1,2})/)[A-Za-z0-9._-]{1,100}"
+    r"/(?:pull|issues)/[1-9][0-9]*"
+)
 
 
 def validate_evidence_governance(repository_root: Path) -> list[str]:
@@ -133,12 +145,24 @@ def _validate_approval(
         errors.append(f"{path}: proposed_by must be non-empty")
     if not _is_non_empty_string(approval["reviewed_by"]):
         errors.append(f"{path}: reviewed_by must be non-empty")
-    if approval["proposed_by"] == approval["reviewed_by"]:
-        errors.append(f"{path}: proposer and reviewer must differ")
+    review_mode = approval["review_mode"]
+    identities_match = approval["proposed_by"] == approval["reviewed_by"]
+    if review_mode not in {"independent", "maintainer-self-review"}:
+        errors.append(f"{path}: review_mode is invalid")
+    elif review_mode == "independent" and identities_match:
+        errors.append(
+            f"{path}: proposer and reviewer must differ for independent review"
+        )
+    elif review_mode == "maintainer-self-review" and not identities_match:
+        errors.append(
+            f"{path}: proposer and reviewer must match for maintainer self-review"
+        )
     if not _is_rfc3339_utc(approval["reviewed_at"]):
         errors.append(f"{path}: reviewed_at must be a UTC RFC 3339 timestamp")
-    if not _is_https_url(approval["review_url"]):
-        errors.append(f"{path}: review_url must be an HTTPS URL")
+    if not _is_review_url(approval["review_url"]):
+        errors.append(
+            f"{path}: review_url must identify a GitHub pull request or issue"
+        )
     if not _is_sha256(approval["review_diff_sha256"]):
         errors.append(f"{path}: review_diff_sha256 must be a SHA-256 digest")
     if (
@@ -184,8 +208,29 @@ def _is_sha256(value: object) -> bool:
     return isinstance(value, str) and _SHA256_PATTERN.fullmatch(value) is not None
 
 
-def _is_https_url(value: object) -> bool:
-    return isinstance(value, str) and value.startswith("https://")
+def _is_review_url(value: object) -> bool:
+    if not isinstance(value, str) or any(
+        character.isspace() or ord(character) < 32 or ord(character) == 127
+        for character in value
+    ):
+        return False
+    try:
+        parsed = urlsplit(value)
+        hostname = parsed.hostname
+        port = parsed.port
+        return (
+            parsed.scheme == "https"
+            and hostname is not None
+            and _HTTPS_HOST_PATTERN.fullmatch(hostname) is not None
+            and hostname.casefold() == "github.com"
+            and parsed.username is None
+            and parsed.password is None
+            and port in {None, 443}
+            and parsed.netloc.casefold() in {"github.com", "github.com:443"}
+            and _GITHUB_REVIEW_PATH_PATTERN.fullmatch(parsed.path) is not None
+        )
+    except ValueError:
+        return False
 
 
 def _is_rfc3339_utc(value: object) -> bool:

@@ -83,6 +83,12 @@ bypass redaction.
 
 ## Baseline proposal and approval
 
+This section governs behavioral baselines committed to the TermVerify
+repository. It does not prescribe approval or branch-protection policy for
+downstream projects using TermVerify. Downstream projects retain ownership of
+their own baseline governance; future reusable tooling must keep those policies
+configurable.
+
 No baseline files are committed until this design is accepted and its validator
 is implemented. The designated baseline root is `tests/fixtures/baselines/`.
 Once enabled, every baseline under that root must have a nearby
@@ -98,10 +104,11 @@ approval format version. The sidecar has exactly these required members:
 | `format` | Exactly `termverify.baseline-approval/v1`. |
 | `baseline_sha256` | SHA-256 of the canonical baseline bytes. |
 | `rationale` | Non-empty human-readable reason for the expected behavior. |
+| `review_mode` | Exactly `independent` or `maintainer-self-review`. |
 | `proposed_by` | Non-empty author identity. |
-| `reviewed_by` | Non-empty human reviewer identity that differs from `proposed_by`. |
+| `reviewed_by` | Non-empty human reviewer identity. It differs from `proposed_by` for `independent` review and equals it for `maintainer-self-review`. |
 | `reviewed_at` | UTC RFC 3339 timestamp. |
-| `review_url` | HTTPS URL to the PR, issue, or review record. |
+| `review_url` | HTTPS GitHub URL identifying a pull request or issue. |
 | `review_diff_sha256` | SHA-256 of the adjacent readable-diff record. |
 
 The readable-diff record starts with `before_sha256` (or `null` for a new
@@ -113,9 +120,13 @@ bytes. The baseline path, sidecar path, readable-diff record, canonical digest,
 and approval record are a single validation unit. The validator rejects a
 missing, malformed, stale, or orphan sidecar or readable-diff record; it
 rejects a baseline outside the designated baseline root; it verifies both
-digests and the `after_sha256` binding; and it rejects equal proposer/reviewer
-identities. A PR still requires the repository's normal branch-protection
-review; metadata does not substitute for a human review.
+digests and the `after_sha256` binding; and it enforces the identity rule for the
+selected review mode. Agents and automation may prepare a proposal but cannot
+be the approving identity. Maintainer self-review requires a separate explicit
+human approval action after inspecting the digest-bound readable diff and
+successful required checks. The durable PR or issue URL records that action;
+metadata does not itself substitute for human review. Independent review is
+preferred whenever another qualified human is reasonably available.
 
 ## Enforcement and ownership
 
@@ -130,5 +141,6 @@ Before enabling baselines or artifacts, CI and local pre-commit must run the
 same evidence-governance validator. The validator's tests must cover valid
 redaction of nested transcript fields/extensions, nested fixture and artifact
 paths, sensitive-retention boundary failure, missing/stale approval metadata or
-readable-diff records, proposer self-approval, and rejection of a changed
-baseline without matching approval and readable-diff digests.
+readable-diff records, invalid identity combinations for each review mode, and
+rejection of a changed baseline without matching approval and readable-diff
+digests.

@@ -304,3 +304,7 @@ format verification, strict mypy, both pre-commit stages, package build, and
 any Phase 1 adapter-runtime implementation must begin in a new focused issue
 and handover, preserving the accepted protocol and evidence-governance
 boundaries.
+
+Historical clarification: the completed local pre-push stage contained tests,
+mypy, and package build checks. Workflow-policy and dependency-vulnerability
+security checks were implemented as CI-only controls, not local pre-push hooks.
