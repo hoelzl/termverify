@@ -7,11 +7,26 @@ tags: [protocol, jsonl, terminal, observations, determinism]
 
 # TermVerify JSONL transcript protocol
 
-This document defines the reviewed **design** for the first externally consumed
+This document defines the reviewed **design** for the first intended external
 protocol: `termverify.transcript/v1`. The repository contains an initial schema,
 canonical codec, semantic validator, and small fixture corpus, but these do not
 yet constitute a complete conformance contract. Phase 1 must reconcile schema,
 runtime, fixtures, and compatibility tests before a public adapter is accepted.
+
+## Schema and runtime authority
+
+The standard Draft 2020-12 schema is a non-exhaustive structural and
+record-local validation aid. Executable schema tests verify the metaschema,
+canonical records, closed member sets, and the local constraints encoded for the
+current inception slice. Schema acceptance is not a conformance verdict: the
+Python validator remains authoritative for complete protocol acceptance,
+including record kinds and representable rules not yet encoded in the schema,
+cross-record lifecycle, canonical ordering, and uniqueness projected onto
+selected fields. In particular, terminal capabilities must be sorted and
+network entries must be sorted and unique by `(host, port)` even though standard
+schema-only validation cannot fully enforce those rules. Exhaustive per-kind
+schema coverage or a custom vocabulary/validator is a separate compatibility and
+distribution workstream, not part of this replay-identity slice.
 
 Each UTF-8 JSON Lines file is one transcript for one verified run. A line ends
 with exactly one LF (`\n`); a final LF is required. Blank lines, comments, and
@@ -80,6 +95,31 @@ the requested user action; `observation` records contain the resulting
 structured evidence; `diagnostic` carries non-oracle information such as a
 normalized process warning.
 
+`run.started.payload` is closed except for `x-` extensions and requires exactly
+`config` plus `subject`. `subject` is a versioned replay selector with this v1
+shape:
+
+```json
+{
+  "format": "termverify.replay-subject/v1",
+  "application": {"id": "example.app", "version": "1", "build": "build-1"},
+  "fixture": {"id": "basic", "version": "1"},
+  "adapter": {"id": "example.direct", "version": "1"},
+  "normalizer": {"id": "example.identity", "version": "1"},
+  "state_schema": {"id": "example.state", "version": "1"}
+}
+```
+
+Every selector value uses the same lowercase ASCII identifier grammar as
+`run_id`. Application identity separates its application version from the exact
+build selector. Fixture identity selects the registered invocation without
+embedding a raw command line or environment. Adapter, normalizer, and state
+schema identities bind the interpretation needed for replay. An optional
+`platform` object has exactly normalized `os` and `architecture` selectors.
+Volatile hostname, account, absolute path, raw `argv`, and environment details
+are not replay selectors and are forbidden as generic subject members. Every
+subject and nested selector is closed except for uninterpreted `x-` extensions.
+
 Terminal record payloads are:
 
 | Kind | Required payload members |
@@ -98,13 +138,18 @@ v1 reserves `adapter-start-failed`, `adapter-runtime-failed`,
 
 | Member | Required shape and v1 rule |
 | --- | --- |
-| `seed` | decimal string representing an unsigned 64-bit integer |
+| `seed` | canonical decimal string representing an unsigned 64-bit integer: `"0"` or a nonzero digit followed by digits, with no leading zeroes |
 | `clock` | `{"mode": "manual", "initial_ms": non-negative integer}` |
 | `locale` | BCP 47 language tag, or `"C"` |
 | `timezone` | IANA time-zone identifier, or `"UTC"` |
 | `terminal` | `columns` and `rows` positive integers; `capabilities` sorted unique strings |
 | `filesystem` | `{"mode": "sandbox", "root_id": string}` |
 | `network` | `{"mode": "deny"}` or `{"mode": "allow-list", "allowed": [{"host": string, "port": integer 1–65535}]}`; `allowed` is sorted by host then port and has no duplicates |
+
+The configuration object and each defined nested object are closed except for
+uninterpreted `x-` extensions. Raw command lines, environment variables, host
+paths, and other invocation or machine identity are not deterministic-constraint
+members and cannot be added as generic configuration fields at any nesting level.
 
 The configuration requests a constraint; it does not itself prove enforcement.
 The adapter-facing contract is:
@@ -193,11 +238,19 @@ v1 member names.
 ## Compatibility and evolution
 
 `termverify.transcript/v1` readers must reject a different `protocol` value.
-Within v1, only optional `x-` extension members are additive. New generic
-semantic members, whether required or optional, require a new protocol version,
-as do changes to a member's type or meaning, canonicalization, ordering rules,
-or stable error codes.
+During the repository's inception phase there are no external clients or
+supported transcript artifacts. Reviewed contract corrections, including the
+required replay subject above, therefore update v1 in place rather than creating
+fictional compatibility history. Existing repository fixtures are migrated in
+the same reviewed change. The first declared real client or supported external
+artifact freezes this inception policy: after that boundary, only optional `x-`
+extensions are additive within a version, and new generic semantics, member
+types or meanings, canonicalization, ordering rules, or stable error codes
+require a new protocol version.
 
-A new version supplies its own fixtures and migration/replay policy. A v1
-reader may preserve unknown `x-` members when rewriting a transcript, but must
-not manufacture or interpret them.
+An inception transcript without `subject` is invalid and no tool may guess its
+identity from ambient or undocumented out-of-band context. A caller with the
+required stable selectors may explicitly reconstruct a current v1 transcript;
+automatic migration is outside the codec. A future new version supplies its own
+fixtures and migration/replay policy. A reader may preserve unknown `x-`
+members when rewriting a transcript, but must not manufacture or interpret them.

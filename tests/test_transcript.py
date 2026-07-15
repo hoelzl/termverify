@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -43,6 +45,209 @@ def test_serialize_transcript_emits_canonical_fixture_bytes() -> None:
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
 
     assert serialize_transcript(parse_transcript(fixture)) == fixture
+
+
+def test_parse_transcript_rejects_missing_replay_subject() -> None:
+    lines = (FIXTURES / "valid" / "basic.jsonl").read_bytes().splitlines()
+    started = json.loads(lines[0])
+    started["payload"].pop("subject")
+    lines[0] = json.dumps(
+        started, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    ).encode()
+
+    with pytest.raises(TranscriptValidationError, match="subject"):
+        parse_transcript(b"\n".join(lines) + b"\n")
+
+
+def test_serialize_transcript_rejects_wrong_replay_subject_format() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[0]["payload"]
+    assert isinstance(payload, dict)
+    subject = payload["subject"]
+    assert isinstance(subject, dict)
+    subject["format"] = "termverify.replay-subject/v2"
+
+    with pytest.raises(TranscriptValidationError, match="subject format"):
+        serialize_transcript(transcript)
+
+
+def test_serialize_transcript_requires_each_replay_subject_selector() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[0]["payload"]
+    assert isinstance(payload, dict)
+    subject = payload["subject"]
+    assert isinstance(subject, dict)
+    subject.pop("application")
+
+    with pytest.raises(TranscriptValidationError, match="subject members"):
+        serialize_transcript(transcript)
+
+
+def test_serialize_transcript_rejects_unknown_replay_subject_member() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[0]["payload"]
+    assert isinstance(payload, dict)
+    subject = payload["subject"]
+    assert isinstance(subject, dict)
+    subject["hostname"] = "developer-machine"
+
+    with pytest.raises(TranscriptValidationError, match="subject members"):
+        serialize_transcript(transcript)
+
+
+def test_serialize_transcript_requires_application_build_identity() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[0]["payload"]
+    assert isinstance(payload, dict)
+    subject = payload["subject"]
+    assert isinstance(subject, dict)
+    application = subject["application"]
+    assert isinstance(application, dict)
+    application.pop("build")
+
+    with pytest.raises(TranscriptValidationError, match="application"):
+        serialize_transcript(transcript)
+
+
+def test_serialize_transcript_rejects_unstable_application_identity() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[0]["payload"]
+    assert isinstance(payload, dict)
+    subject = payload["subject"]
+    assert isinstance(subject, dict)
+    application = subject["application"]
+    assert isinstance(application, dict)
+    application["id"] = "Developer App"
+
+    with pytest.raises(TranscriptValidationError, match="application"):
+        serialize_transcript(transcript)
+
+
+@pytest.mark.parametrize(
+    "selector", ["fixture", "adapter", "normalizer", "state_schema"]
+)
+def test_serialize_transcript_requires_versioned_replay_selector(selector: str) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[0]["payload"]
+    assert isinstance(payload, dict)
+    subject = payload["subject"]
+    assert isinstance(subject, dict)
+    selected = subject[selector]
+    assert isinstance(selected, dict)
+    selected.pop("version")
+
+    with pytest.raises(TranscriptValidationError, match=selector):
+        serialize_transcript(transcript)
+
+
+def test_serialize_transcript_accepts_normalized_platform_identity() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[0]["payload"]
+    assert isinstance(payload, dict)
+    subject = payload["subject"]
+    assert isinstance(subject, dict)
+    subject["platform"] = {"architecture": "x86_64", "os": "windows"}
+
+    serialized = serialize_transcript(transcript)
+
+    assert parse_transcript(serialized) == transcript
+
+
+def test_serialize_transcript_rejects_volatile_platform_identity() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[0]["payload"]
+    assert isinstance(payload, dict)
+    subject = payload["subject"]
+    assert isinstance(subject, dict)
+    subject["platform"] = {
+        "architecture": "x86_64",
+        "hostname": "developer-machine",
+        "os": "windows",
+    }
+
+    with pytest.raises(TranscriptValidationError, match="platform"):
+        serialize_transcript(transcript)
+
+
+def test_serialize_transcript_rejects_unknown_run_started_member() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[0]["payload"]
+    assert isinstance(payload, dict)
+    payload["invocation"] = {"argv": ["private-command"]}
+
+    with pytest.raises(TranscriptValidationError, match="run.started members"):
+        serialize_transcript(transcript)
+
+
+def test_serialize_transcript_rejects_volatile_config_member() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[0]["payload"]
+    assert isinstance(payload, dict)
+    config = payload["config"]
+    assert isinstance(config, dict)
+    config["argv"] = ["C:/Users/example/private/app.exe", "--token=secret"]
+
+    with pytest.raises(TranscriptValidationError, match="config"):
+        serialize_transcript(transcript)
+
+
+def test_serialize_transcript_rejects_noncanonical_leading_zero_seed() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[0]["payload"]
+    assert isinstance(payload, dict)
+    config = payload["config"]
+    assert isinstance(config, dict)
+    config["seed"] = "00"
+    capability_payload = transcript[1]["payload"]
+    assert isinstance(capability_payload, dict)
+    capability_payload["effective"] = "00"
+
+    with pytest.raises(TranscriptValidationError, match="seed"):
+        serialize_transcript(transcript)
+
+
+@pytest.mark.parametrize(
+    ("constraint", "member"),
+    [
+        ("clock", "argv"),
+        ("terminal", "environment"),
+        ("filesystem", "path"),
+        ("network-entry", "argv"),
+    ],
+)
+def test_serialize_transcript_rejects_nested_volatile_config_member(
+    constraint: str, member: str
+) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    started_payload = transcript[0]["payload"]
+    assert isinstance(started_payload, dict)
+    config = started_payload["config"]
+    assert isinstance(config, dict)
+    capability_constraint = constraint
+    if constraint == "network-entry":
+        capability_constraint = "network"
+        config["network"] = {
+            "allowed": [{"host": "example.invalid", "port": 443, member: ["secret"]}],
+            "mode": "allow-list",
+        }
+    else:
+        target = config[constraint]
+        assert isinstance(target, dict)
+        target[member] = ["secret"]
+    for record in transcript:
+        payload = record["payload"]
+        if (
+            record["kind"] == "capability.result"
+            and isinstance(payload, dict)
+            and payload.get("constraint") == capability_constraint
+        ):
+            payload["effective"] = deepcopy(config[capability_constraint])
+            break
+
+    with pytest.raises(
+        TranscriptValidationError, match=f"run.started {capability_constraint}"
+    ):
+        serialize_transcript(transcript)
 
 
 @pytest.mark.parametrize(

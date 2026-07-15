@@ -38,7 +38,7 @@ _CREDENTIAL_PATTERNS = (
 )
 _CAMEL_CASE_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _PAYLOAD_MEMBERS = {
-    "run.started": frozenset({"config"}),
+    "run.started": frozenset({"config", "subject"}),
     "capability.result": frozenset({"constraint", "status", "effective", "reason"}),
     "input.key": frozenset({"at_ms", "keys"}),
     "input.text": frozenset({"at_ms", "text"}),
@@ -93,8 +93,13 @@ def persist_transcript_evidence(
     # Validate one stable snapshot so malformed input cannot become valid merely
     # because a sensitive value is replaced or through concurrent mutation.
     serialize_transcript(sanitized)
+    started_payload = sanitized[0].get("payload")
+    if isinstance(started_payload, dict) and _contains_credential_shaped_selector(
+        started_payload.get("subject")
+    ):
+        raise ValueError("replay subject contains a credential-shaped selector")
     for index, record in enumerate(sanitized):
-        redacted = redact_evidence(record)
+        redacted = _redact_validated_transcript_record(record)
         if not isinstance(redacted, dict):
             raise TypeError("transcript record redaction must produce an object")
         sanitized[index] = redacted
@@ -102,6 +107,19 @@ def persist_transcript_evidence(
     serialized = serialize_transcript(sanitized)
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_bytes(serialized)
+
+
+def _contains_credential_shaped_selector(value: JsonValue) -> bool:
+    if isinstance(value, dict):
+        return any(
+            not key.startswith("x-") and _contains_credential_shaped_selector(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return any(_contains_credential_shaped_selector(item) for item in value)
+    return isinstance(value, str) and any(
+        pattern.search(value) for pattern in _CREDENTIAL_PATTERNS
+    )
 
 
 def _redact_transcript_record(record: Record) -> None:
@@ -300,6 +318,29 @@ def _redact_clipboard_payload(value: JsonValue) -> JsonValue:
         and item >= 0
         else _redaction_marker("clipboard")
         for key, item in value.items()
+    }
+
+
+def _redact_run_started_payload(value: JsonValue) -> JsonValue:
+    if not isinstance(value, dict):
+        return redact_evidence(value)
+    return {
+        key: item if key == "subject" else redact_evidence(item)
+        for key, item in value.items()
+    }
+
+
+def _redact_validated_transcript_record(record: Record) -> dict[str, JsonValue]:
+    if record.get("kind") != "run.started":
+        redacted = redact_evidence(record)
+        if not isinstance(redacted, dict):
+            raise TypeError("transcript record redaction must produce an object")
+        return redacted
+    return {
+        key: _redact_run_started_payload(item)
+        if key == "payload"
+        else redact_evidence(item)
+        for key, item in record.items()
     }
 
 

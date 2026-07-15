@@ -184,26 +184,44 @@ applicable prose and executable tests.
    defects and missing replay metadata may be corrected in place before the
    first supported external release, or whether any required wire-shape change
    must introduce `termverify.transcript/v2`.
-   - **Accepted disposition:** treat v1 as pre-release but preserve all already
-     valid canonical fixtures where possible; correct validation bugs in place.
-     Introduce v2 only if required replay/subject metadata cannot be additive.
+   - **Accepted disposition, clarified for inception:** no real client or
+     supported external artifact currently exists, so correct v1 in place even
+     when a correction is wire-incompatible. Incrementing a version now would
+     falsely imply that a supported v1 existed. Preserve canonical fixtures when
+     they remain valid and migrate repository-owned inception fixtures when they
+     do not. Freeze this policy when the first real client or supported external
+     artifact is declared; incompatible changes after that boundary require a
+     new protocol version.
 2. **V1 extension/evolution rule.** Decide whether generic optional members may
    be added within v1.
-   - **Accepted disposition:** v1 generic members are closed; only `x-` members
-     are additive. Any new generic semantic member requires a new protocol
-     version.
+   - **Accepted disposition:** v1 generic members are closed; after the inception
+     policy in decision 1 freezes, only `x-` members are additive and any new
+     generic semantic member requires a new protocol version. Until that freeze,
+     an explicitly reviewed inception correction may revise v1 in place under
+     decision 1; ordinary unreviewed additions remain prohibited.
 3. **Normative schema and distribution contract.** Decide whether the JSON
    Schema is a complete normative per-record contract or only an envelope aid,
    and how installed/external consumers obtain it.
-   - **Accepted disposition:** make per-kind schema validation normative for
-     record-local structure, keep Python lifecycle validation normative for
-     cross-record semantics, package the schema, test wheel contents, and use a
-     resolvable canonical `$id` before public release.
+   - **Accepted disposition:** use standard Draft 2020-12 JSON Schema as a
+     non-exhaustive structural and local-validation aid, with executable
+     metaschema and instance tests. Schema acceptance is not conformance; Python
+     runtime validation remains authoritative for complete protocol acceptance,
+     including record kinds and local rules not yet encoded, canonical ordering,
+     projected uniqueness, and cross-record semantics. Exhaustive per-kind
+     schema coverage, a custom vocabulary/validator, and their distribution
+     contract require a separate approved workstream. Package the standard
+     schema, test wheel contents, and use a resolvable canonical `$id` before
+     public release.
 4. **Replay subject and normalizer identity.** Decide which application, build,
    invocation, adapter, platform, and normalizer metadata is required in-band.
-   - **Accepted disposition:** require a versioned subject descriptor sufficient
-     to select the application/fixture and normalizer; keep volatile host details
-     normalized or optional. Do not rely on undocumented out-of-band context.
+   - **Accepted disposition:** require `termverify.replay-subject/v1` in
+     `run.started`, with stable application/version/build, fixture/version,
+     adapter/version, normalizer/version, and state-schema/version selectors.
+     Permit only normalized OS/architecture as optional platform identity. Raw
+     argv, environment, hostname, account, and paths remain outside the subject.
+     Safe persistence preserves these closed structural selectors and redacts
+     extensions and other evidence. Do not rely on undocumented out-of-band
+     context or guess missing identity during migration.
 5. **Evidence codec versus persistence boundary.** Decide whether canonical
    transcript serialization may remain a pure in-memory codec for restricted
    data, with a separate mandatory sanitized writer, or whether every public
@@ -306,14 +324,14 @@ implementing the production adapter prematurely.
 
 ### 3. Make schema and fixtures genuinely executable
 
-**Objective:** give independent implementations a portable conformance corpus
-that agrees with runtime behavior.
+**Objective:** evolve the non-exhaustive schema aid and fixtures toward a portable
+conformance corpus without treating schema acceptance as protocol acceptance.
 
 **Actions:**
 
 1. Apply owner decision 3 to the schema title, documentation, and normative role.
-2. Define every record-local kind/payload shape with `$defs`/`oneOf` if the
-   schema remains normative.
+2. Define and test each additional record-local kind/payload shape with
+   `$defs`/`oneOf`; exhaustive per-kind coverage is work in this separate stream.
 3. Validate the schema against its metaschema and run it over all applicable
    valid and invalid fixture records.
 4. Expand canonical fixtures for all terminal outcomes, unsupported positions,
@@ -328,7 +346,8 @@ bless behavior still under repair.
 
 **Acceptance criteria:**
 
-- schema, runtime, and fixture verdicts agree for every record-local rule;
+- schema and runtime verdicts agree for every rule the schema encodes; schema
+  acceptance alone does not imply runtime acceptance;
 - cross-record invalid fixtures are rejected by the semantic validator;
 - fixture bytes round-trip canonically;
 - consumers can obtain the exact schema identified by the documentation;
