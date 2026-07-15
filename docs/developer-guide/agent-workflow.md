@@ -25,6 +25,62 @@ AGENTS.md
 
 Do not paste architecture dumps, old handovers, generated wiki pages, or volatile issue state into `AGENTS.md`.
 
+## Parallel worktrees
+
+Use Git worktrees when independent, reviewable changes can proceed without
+editing the same public API or test fixture. The default layout is external
+sibling worktrees, not nested copies inside this repository:
+
+```text
+C:\Users\<user>\Programming\Python\Projects\termverify        # clean integration checkout
+C:\Users\<user>\Programming\Python\Worktrees\termverify\
+  adapter-contracts\
+  conpty-spike\
+  docs-phase1-reconciliation\
+```
+
+An external layout prevents recursive repository scans, editor indexing, test
+discovery, and agent context retrieval from crossing into other working copies.
+Git still stores the worktree metadata in the primary checkout's `.git`
+directory. A tool-specific nested location such as `.claude/worktrees/` is
+allowed for that tool, but is not the repository's canonical layout.
+
+Create worktrees from an updated integration checkout and keep all Windows
+worktrees on the same volume:
+
+```bash
+git fetch origin
+git worktree add -b feat/adapter-contracts \
+  /c/Users/<user>/Programming/Python/Worktrees/termverify/adapter-contracts \
+  origin/main
+```
+
+Rules:
+
+1. Assign exactly one writing agent and one branch to each worktree.
+2. Give every agent an explicit working directory; do not let it edit the
+   integration checkout or another agent's worktree.
+3. Keep the integration checkout on `main` and clean except while integrating
+   a reviewed change. Do not develop directly in it.
+4. Run `uv --no-config sync --all-groups --locked` in each new worktree before
+   development. The shared uv download cache is safe; generated outputs remain
+   isolated by worktree.
+5. Do not parallelize competing edits to public API/types, shared fixtures, or
+   the same test modules. Sequence dependent work behind an accepted contract.
+6. Give each worktree a focused issue, PR, and validation evidence. A worktree
+   is not a substitute for a branch or review boundary.
+7. After merge, remove the physical worktree before deleting its local branch:
+
+   ```bash
+   git worktree remove /c/Users/<user>/Programming/Python/Worktrees/termverify/adapter-contracts
+   git branch -d feat/adapter-contracts
+   git worktree prune
+   ```
+
+Worktree-specific agent prompts live under `docs/agent/prompts/`; use them as
+starting context, then inspect the current issue, branch, and source before
+editing.
+
 ## Handover lifecycle
 
 Handover documents preserve the verified context needed to transfer a bounded
