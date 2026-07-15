@@ -715,6 +715,51 @@ def test_serialize_transcript_rejects_clock_advance_with_wrong_time() -> None:
         serialize_transcript(transcript)
 
 
+@pytest.mark.parametrize("kind", ["diagnostic", "observation"])
+def test_transcript_rejects_evidence_time_that_differs_from_manual_clock(
+    kind: str,
+) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[9]["payload"]
+    assert isinstance(payload, dict)
+    payload["at_ms"] = 1
+    if kind == "diagnostic":
+        transcript[9]["kind"] = kind
+        transcript[9]["payload"] = {
+            "at_ms": 1,
+            "code": "synthetic",
+            "message": "synthetic",
+        }
+
+    with pytest.raises(TranscriptValidationError, match="manual clock"):
+        serialize_transcript(transcript)
+
+    encoded = (
+        b"\n".join(
+            json.dumps(
+                record, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+            ).encode()
+            for record in transcript
+        )
+        + b"\n"
+    )
+    with pytest.raises(TranscriptValidationError, match="manual clock"):
+        parse_transcript(encoded)
+
+
+def test_transcript_accepts_evidence_at_explicitly_advanced_manual_time() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    transcript[8]["kind"] = "input.clock_advanced"
+    transcript[8]["payload"] = {"at_ms": 1, "delta_ms": 1}
+    observation = transcript[9]["payload"]
+    assert isinstance(observation, dict)
+    observation["at_ms"] = 1
+
+    encoded = serialize_transcript(transcript)
+
+    assert parse_transcript(encoded) == transcript
+
+
 def test_serialize_transcript_rejects_clipboard_input_without_text() -> None:
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
     transcript = parse_transcript(fixture)
@@ -861,6 +906,10 @@ def _transcript_with_payload_kind(kind: str) -> tuple[list[dict[str, JsonValue]]
     if kind in body_payloads:
         transcript[8]["kind"] = kind
         transcript[8]["payload"] = body_payloads[kind]
+        if kind == "input.clock_advanced":
+            observation = transcript[9]["payload"]
+            assert isinstance(observation, dict)
+            observation["at_ms"] = 1
         return transcript, 8
     if kind == "run.started":
         return transcript, 0
