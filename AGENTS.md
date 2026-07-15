@@ -58,6 +58,14 @@ uv --no-config build
 
 Run the narrowest relevant command during development, then the appropriate wider gate before a commit. Keep changes focused; use a fresh reviewer context for nontrivial code changes.
 
+## Parallel Worktrees
+
+For concurrent work, use one branch and one external sibling worktree per
+agent; keep the primary checkout as the clean integration point. Always give an
+agent its assigned worktree as its working directory. Read
+`docs/developer-guide/agent-workflow.md` before creating, sharing, or removing
+worktrees; it defines the required isolation, setup, and cleanup rules.
+
 ## Agent-Harness Compatibility
 
 This file is portable by design. Do not rely on a vendor-specific instruction import, plugin, model, or tool. Hermes-specific or other harness-specific conveniences belong in optional integrations, never in the required build/test path.
