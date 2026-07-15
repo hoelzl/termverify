@@ -157,8 +157,8 @@ no generic v1 meaning.
 For `input.mouse`, `button` and `delta` are forbidden for `move`; `delta` is
 forbidden for `press` and `release`; and `button` is forbidden for `scroll`.
 Clipboard values are sensitive evidence and their
-[capture/redaction policy](evidence-governance.md) remains a Workstream 4
-prerequisite.
+[capture/redaction policy](evidence-governance.md) requires persistence through
+the evidence-aware writer; the raw codec is non-persistent.
 
 `diagnostic` has required `at_ms`, non-empty string `code`, and string
 `message` members; optional `details` holds a JSON value. It is non-oracle

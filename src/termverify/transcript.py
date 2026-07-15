@@ -81,7 +81,7 @@ def parse_transcript(data: bytes) -> list[Record]:
 
 
 def serialize_transcript(records: list[Record]) -> bytes:
-    """Validate *records* and emit their canonical UTF-8 JSONL representation."""
+    """Validate and encode *records* for in-memory use, not safe persistence."""
     try:
         for sequence, record in enumerate(records):
             _validate_json_numbers(record)

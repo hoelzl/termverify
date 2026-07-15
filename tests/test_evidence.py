@@ -1,45 +1,302 @@
 from __future__ import annotations
 
-import json
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
 
-from termverify.evidence import JsonValue, redact_evidence, write_sanitized_evidence
+from termverify.evidence import (
+    JsonValue,
+    persist_transcript_evidence,
+    redact_evidence,
+)
+from termverify.transcript import TranscriptValidationError, parse_transcript
+
+TRANSCRIPT_FIXTURE = Path("tests/fixtures/transcripts/v1/valid/basic.jsonl")
 
 
-def test_write_sanitized_evidence_redacts_nested_values_at_any_destination(
+def test_persist_transcript_evidence_redacts_text_before_canonical_write(
     tmp_path: Path,
 ) -> None:
-    destination = tmp_path / "artifacts" / "nested" / "evidence.json"
+    records = parse_transcript(TRANSCRIPT_FIXTURE.read_bytes())
+    input_payload = records[8]["payload"]
+    assert isinstance(input_payload, dict)
+    input_payload["text"] = "password=hunter2"
+    destination = tmp_path / "artifacts" / "nested" / "transcript.jsonl"
 
-    write_sanitized_evidence(
-        destination,
+    persist_transcript_evidence(destination, records)
+
+    persisted = parse_transcript(destination.read_bytes())
+    assert persisted[8]["payload"] == {
+        "at_ms": 0,
+        "text": "<redacted:input-text>",
+    }
+    assert input_payload["text"] == "password=hunter2"
+
+
+def test_persist_transcript_evidence_redacts_semantic_evidence_fields(
+    tmp_path: Path,
+) -> None:
+    records = parse_transcript(TRANSCRIPT_FIXTURE.read_bytes())
+    input_record = records[8]
+    input_record["kind"] = "input.clipboard_set"
+    input_payload = input_record["payload"]
+    assert isinstance(input_payload, dict)
+    input_payload["text"] = "copied secret"
+    observation = records[9]
+    observation["x-private"] = {"value": "extension secret"}
+    observation_payload = observation["payload"]
+    assert isinstance(observation_payload, dict)
+    observation_payload.update(
+        {
+            "state": {"account": "private"},
+            "events": [{"type": "saved", "data": {"value": "private"}}],
+            "frame": {"columns": 80, "rows": 1, "lines": ["private frame"]},
+            "x-private": {"value": "payload secret"},
+        }
+    )
+    terminal_payload = records[-1]["payload"]
+    assert isinstance(terminal_payload, dict)
+    records[-1]["kind"] = "run.failed"
+    terminal_payload.clear()
+    terminal_payload["error"] = {
+        "code": "adapter-runtime-failed",
+        "message": "private diagnostic",
+        "details": {"trace": "private trace"},
+    }
+    destination = tmp_path / "nested" / "transcript.jsonl"
+
+    persist_transcript_evidence(destination, records)
+
+    persisted = parse_transcript(destination.read_bytes())
+    assert persisted[8]["payload"] == {
+        "at_ms": 0,
+        "text": "<redacted:clipboard>",
+    }
+    persisted_observation = persisted[9]
+    assert persisted_observation["x-private"] == "<redacted:extension>"
+    assert persisted_observation["payload"] == {
+        "at_ms": 0,
+        "events": [{"type": "saved", "data": "<redacted:event-data>"}],
+        "frame": {
+            "columns": 80,
+            "rows": 1,
+            "lines": ["<redacted:frame>"],
+        },
+        "state": "<redacted:state>",
+        "ui": {
+            "cursor": {"column": 0, "row": 0, "visible": False},
+            "focus": None,
+            "mode": None,
+            "regions": [],
+        },
+        "x-private": "<redacted:extension>",
+    }
+    assert persisted[-1]["payload"] == {
+        "error": {
+            "code": "adapter-runtime-failed",
+            "message": "<redacted:diagnostic>",
+            "details": "<redacted:diagnostic>",
+        }
+    }
+
+
+def test_persist_transcript_evidence_redacts_sandbox_and_network_identity(
+    tmp_path: Path,
+) -> None:
+    records = parse_transcript(TRANSCRIPT_FIXTURE.read_bytes())
+    started_payload = records[0]["payload"]
+    assert isinstance(started_payload, dict)
+    config = started_payload["config"]
+    assert isinstance(config, dict)
+    config["filesystem"] = {
+        "mode": "sandbox",
+        "root_id": "C:/Users/example/private",
+    }
+    config["network"] = {
+        "mode": "allow-list",
+        "allowed": [
+            {"host": "a.internal.example", "port": 443},
+            {"host": "z.internal.example", "port": 443},
+        ],
+    }
+    filesystem_result = records[6]["payload"]
+    network_result = records[7]["payload"]
+    assert isinstance(filesystem_result, dict)
+    assert isinstance(network_result, dict)
+    filesystem_result["effective"] = deepcopy(config["filesystem"])
+    network_result["effective"] = deepcopy(config["network"])
+    destination = tmp_path / "transcript.jsonl"
+
+    persist_transcript_evidence(destination, records)
+
+    persisted = parse_transcript(destination.read_bytes())
+    persisted_started = persisted[0]["payload"]
+    assert isinstance(persisted_started, dict)
+    persisted_config = persisted_started["config"]
+    assert isinstance(persisted_config, dict)
+    assert persisted_config["filesystem"] == {
+        "mode": "sandbox",
+        "root_id": "<redacted:sandbox-root>",
+    }
+    assert persisted_config["network"] == {
+        "mode": "allow-list",
+        "allowed": [
+            {"host": "<redacted:network-host-0000>", "port": 443},
+            {"host": "<redacted:network-host-0001>", "port": 443},
+        ],
+    }
+    assert persisted[6]["payload"] == {
+        "constraint": "filesystem",
+        "effective": persisted_config["filesystem"],
+        "status": "enforced",
+    }
+    assert persisted[7]["payload"] == {
+        "constraint": "network",
+        "effective": persisted_config["network"],
+        "status": "enforced",
+    }
+
+
+def test_persist_transcript_evidence_redacts_unknown_semantic_members(
+    tmp_path: Path,
+) -> None:
+    records = parse_transcript(TRANSCRIPT_FIXTURE.read_bytes())
+    started_payload = records[0]["payload"]
+    assert isinstance(started_payload, dict)
+    config = started_payload["config"]
+    assert isinstance(config, dict)
+    terminal = config["terminal"]
+    assert isinstance(terminal, dict)
+    config["private"] = "unclassified config"
+    terminal["private"] = "unclassified terminal"
+    terminal_result = records[5]["payload"]
+    assert isinstance(terminal_result, dict)
+    terminal_result["effective"] = deepcopy(terminal)
+    observation_payload = records[9]["payload"]
+    assert isinstance(observation_payload, dict)
+    observation_payload["private"] = "unclassified observation"
+    events = observation_payload["events"]
+    ui = observation_payload["ui"]
+    assert isinstance(events, list)
+    assert isinstance(ui, dict)
+    events.append(
+        {
+            "type": "synthetic",
+            "data": None,
+            "private": "unclassified event",
+        }
+    )
+    ui["private"] = "unclassified ui"
+    finished_payload = records[-1]["payload"]
+    assert isinstance(finished_payload, dict)
+    finished_payload["private"] = "unclassified terminal result"
+    finished_exit = finished_payload["exit"]
+    assert isinstance(finished_exit, dict)
+    finished_exit["private"] = "unclassified exit"
+    destination = tmp_path / "transcript.jsonl"
+
+    persist_transcript_evidence(destination, records)
+
+    persisted = parse_transcript(destination.read_bytes())
+    persisted_started = persisted[0]["payload"]
+    persisted_observation = persisted[9]["payload"]
+    persisted_finished = persisted[-1]["payload"]
+    assert isinstance(persisted_started, dict)
+    assert isinstance(persisted_observation, dict)
+    assert isinstance(persisted_finished, dict)
+    persisted_config = persisted_started["config"]
+    assert isinstance(persisted_config, dict)
+    persisted_terminal = persisted_config["terminal"]
+    assert isinstance(persisted_terminal, dict)
+    assert persisted_config["private"] == "<redacted:unknown>"
+    assert persisted_terminal["private"] == "<redacted:unknown>"
+    assert persisted_observation["private"] == "<redacted:unknown>"
+    persisted_events = persisted_observation["events"]
+    persisted_ui = persisted_observation["ui"]
+    assert isinstance(persisted_events, list)
+    assert isinstance(persisted_events[0], dict)
+    assert isinstance(persisted_ui, dict)
+    assert persisted_events[0]["private"] == "<redacted:unknown>"
+    assert persisted_ui["private"] == "<redacted:unknown>"
+    assert persisted_finished["private"] == "<redacted:unknown>"
+    persisted_exit = persisted_finished["exit"]
+    assert isinstance(persisted_exit, dict)
+    assert persisted_exit["private"] == "<redacted:unknown>"
+
+
+def test_persist_transcript_evidence_redacts_unsupported_capability_details(
+    tmp_path: Path,
+) -> None:
+    records = parse_transcript(TRANSCRIPT_FIXTURE.read_bytes())
+    unsupported_result = records[1]
+    result_payload = unsupported_result["payload"]
+    assert isinstance(result_payload, dict)
+    result_payload.update(
+        {
+            "status": "unsupported",
+            "reason": "private capability reason",
+            "effective": {"private": "unclassified effective value"},
+        }
+    )
+    terminal = deepcopy(records[-1])
+    terminal.update({"seq": 2, "id": "record-002", "kind": "run.unsupported"})
+    terminal["payload"] = {
+        "constraint": "seed",
+        "code": "seed-not-enforceable",
+        "message": "private unsupported message",
+        "details": {"private": "unsupported details"},
+    }
+    records = records[:2] + [terminal]
+    destination = tmp_path / "transcript.jsonl"
+
+    persist_transcript_evidence(destination, records)
+
+    persisted = parse_transcript(destination.read_bytes())
+    assert persisted[1]["payload"] == {
+        "constraint": "seed",
+        "status": "unsupported",
+        "reason": "<redacted:diagnostic>",
+        "effective": "<redacted:unknown>",
+    }
+    assert persisted[-1]["payload"] == {
+        "constraint": "seed",
+        "code": "seed-not-enforceable",
+        "message": "<redacted:diagnostic>",
+        "details": "<redacted:diagnostic>",
+    }
+
+
+def test_persist_transcript_evidence_rejects_sensitive_retention(
+    tmp_path: Path,
+) -> None:
+    records = parse_transcript(TRANSCRIPT_FIXTURE.read_bytes())
+    destination = tmp_path / "sensitive" / "transcript.jsonl"
+
+    with pytest.raises(ValueError, match="sensitive persistence"):
+        persist_transcript_evidence(destination, records, mode="sensitive")
+
+    assert not destination.exists()
+
+
+def test_redact_evidence_redacts_nested_values() -> None:
+    assert redact_evidence(
         {
             "state": {"api_token": "super-secret"},
             "events": [{"data": {"clipboard": "copied-secret"}}],
             "x-application": {"authorization": "Bearer confidential"},
-        },
-    )
-
-    assert json.loads(destination.read_text(encoding="utf-8")) == {
+        }
+    ) == {
         "state": {"api_token": "<redacted:api_token>"},
         "events": [{"data": {"clipboard": "<redacted:clipboard>"}}],
         "x-application": {"authorization": "<redacted:authorization>"},
     }
 
 
-def test_write_sanitized_evidence_redacts_absolute_paths(tmp_path: Path) -> None:
-    destination = tmp_path / "fixtures" / "nested" / "evidence.json"
-
-    write_sanitized_evidence(
-        destination,
-        {"process": {"working_directory": "C:/Users/example/private"}},
-    )
-
-    assert json.loads(destination.read_text(encoding="utf-8")) == {
-        "process": {"working_directory": "<redacted:path>"}
-    }
+def test_redact_evidence_redacts_absolute_paths() -> None:
+    assert redact_evidence(
+        {"process": {"working_directory": "C:/Users/example/private"}}
+    ) == {"process": {"working_directory": "<redacted:path>"}}
 
 
 def test_redact_evidence_normalizes_camel_case_sensitive_keys() -> None:
@@ -147,10 +404,14 @@ def test_redact_evidence_redacts_credentials_in_free_text(text: str) -> None:
     assert redact_evidence(text) == "<redacted:credential>"
 
 
-def test_write_sanitized_evidence_rejects_non_finite_numbers(tmp_path: Path) -> None:
-    destination = tmp_path / "evidence.json"
+def test_persist_transcript_evidence_rejects_non_finite_numbers(tmp_path: Path) -> None:
+    records = parse_transcript(TRANSCRIPT_FIXTURE.read_bytes())
+    observation_payload = records[9]["payload"]
+    assert isinstance(observation_payload, dict)
+    observation_payload["state"] = {"value": float("nan")}
+    destination = tmp_path / "transcript.jsonl"
 
-    with pytest.raises(ValueError, match="JSON"):
-        write_sanitized_evidence(destination, {"value": float("nan")})
+    with pytest.raises(TranscriptValidationError, match="finite"):
+        persist_transcript_evidence(destination, records)
 
     assert not destination.exists()

@@ -11,7 +11,16 @@ from pathlib import Path
 from typing import cast
 from urllib.parse import urlsplit
 
+import yaml
+
+from termverify.evidence import JsonValue, redact_evidence
+
 BASELINE_ROOT = Path("tests/fixtures/baselines")
+TRANSCRIPT_FIXTURE_ROOT = Path("tests/fixtures/transcripts")
+DISABLED_PERSISTENT_ROOTS = (Path("artifacts"), Path("reports"))
+WORKFLOW_ROOT = Path(".github/workflows")
+FIXTURE_CLASSIFICATION_SCHEMA = "termverify.fixture-evidence/v1"
+FIXTURE_CLASSIFICATION_SUFFIX = ".jsonl.evidence.json"
 APPROVAL_FORMAT = "termverify.baseline-approval/v1"
 APPROVAL_FIELDS = frozenset(
     {
@@ -39,11 +48,18 @@ _GITHUB_REVIEW_PATH_PATTERN = re.compile(
 )
 
 
+class _RestrictedEvidence(ValueError):
+    pass
+
+
 def validate_evidence_governance(repository_root: Path) -> list[str]:
     """Return evidence-governance violations below *repository_root*."""
+    errors = _validate_transcript_fixtures(repository_root / TRANSCRIPT_FIXTURE_ROOT)
+    errors.extend(_validate_disabled_persistent_roots(repository_root))
+    errors.extend(_validate_workflows(repository_root / WORKFLOW_ROOT))
     root = repository_root / BASELINE_ROOT
     if not root.exists():
-        return []
+        return errors
 
     baselines = sorted(
         path
@@ -52,7 +68,6 @@ def validate_evidence_governance(repository_root: Path) -> list[str]:
         and not path.name.endswith(".approval.json")
         and not path.name.endswith(".review.md")
     )
-    errors: list[str] = []
     expected_sidecars: set[Path] = set()
 
     for baseline in baselines:
@@ -71,6 +86,142 @@ def validate_evidence_governance(repository_root: Path) -> list[str]:
             errors.append(f"{sidecar}: orphan approval or readable-diff record")
 
     return errors
+
+
+def _validate_transcript_fixtures(root: Path) -> list[str]:
+    errors: list[str] = []
+    if not root.exists():
+        return errors
+    for fixture in sorted(path for path in root.rglob("*") if path.is_file()):
+        if fixture.name.endswith(FIXTURE_CLASSIFICATION_SUFFIX):
+            target = fixture.with_name(fixture.name[: -len(".evidence.json")])
+            if not target.is_file():
+                errors.append(f"{fixture}: orphan transcript fixture classification")
+            continue
+        if fixture.suffix != ".jsonl":
+            errors.append(f"{fixture}: unsupported transcript fixture extension")
+            continue
+        errors.extend(_validate_fixture_classification(fixture))
+        try:
+            text = fixture.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            errors.append(f"{fixture}: transcript fixture must be UTF-8 text")
+            continue
+        if redact_evidence(text) != text:
+            errors.append(f"{fixture}: transcript fixture contains restricted evidence")
+            continue
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            try:
+                value = cast(
+                    JsonValue,
+                    json.loads(
+                        line,
+                        parse_constant=_reject_constant,
+                        object_pairs_hook=_safety_object,
+                    ),
+                )
+            except _RestrictedEvidence:
+                errors.append(
+                    f"{fixture}:{line_number}: transcript fixture contains "
+                    "restricted evidence"
+                )
+                continue
+            except (ValueError, json.JSONDecodeError):
+                errors.append(
+                    f"{fixture}:{line_number}: transcript fixture is not finite JSON"
+                )
+                continue
+            if redact_evidence(value) != value:
+                errors.append(
+                    f"{fixture}:{line_number}: transcript fixture contains "
+                    "restricted evidence"
+                )
+    return errors
+
+
+def _validate_fixture_classification(fixture: Path) -> list[str]:
+    classification_path = fixture.with_name(f"{fixture.name}.evidence.json")
+    if not classification_path.is_file():
+        return [f"{fixture}: missing public-synthetic classification"]
+    try:
+        classification = json.loads(
+            classification_path.read_text(encoding="utf-8"),
+            parse_constant=_reject_constant,
+            object_pairs_hook=_safety_object,
+        )
+    except (OSError, UnicodeDecodeError, ValueError) as error:
+        return [f"{classification_path}: invalid fixture classification: {error}"]
+    expected = {
+        "schema": FIXTURE_CLASSIFICATION_SCHEMA,
+        "classification": "public-synthetic",
+        "fixture": fixture.name,
+    }
+    if classification != expected:
+        return [
+            f"{classification_path}: fixture classification must equal {expected!r}"
+        ]
+    return []
+
+
+def _validate_disabled_persistent_roots(repository_root: Path) -> list[str]:
+    errors: list[str] = []
+    for relative_root in DISABLED_PERSISTENT_ROOTS:
+        root = repository_root / relative_root
+        for evidence in sorted(path for path in root.rglob("*") if path.is_file()):
+            errors.append(f"{evidence}: persistent evidence root is disabled")
+    return errors
+
+
+def _validate_workflows(root: Path) -> list[str]:
+    errors: list[str] = []
+    for pattern in ("*.yml", "*.yaml"):
+        for workflow in sorted(path for path in root.rglob(pattern) if path.is_file()):
+            try:
+                text = workflow.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                errors.append(f"{workflow}: workflow must be readable UTF-8 text")
+                continue
+            try:
+                document = yaml.safe_load(text)
+            except yaml.YAMLError as error:
+                errors.append(f"{workflow}: cannot parse workflow YAML: {error}")
+                continue
+            if _contains_artifact_upload(document):
+                errors.append(f"{workflow}: CI artifact upload is disabled")
+    return errors
+
+
+def _contains_artifact_upload(value: object) -> bool:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if (
+                isinstance(key, str)
+                and key.casefold() == "uses"
+                and isinstance(item, str)
+                and item.strip().casefold().startswith("actions/upload-artifact@")
+            ):
+                return True
+            if _contains_artifact_upload(item):
+                return True
+    elif isinstance(value, list):
+        return any(_contains_artifact_upload(item) for item in value)
+    return False
+
+
+def _reject_constant(value: str) -> None:
+    raise ValueError(f"non-finite JSON constant: {value}")
+
+
+def _safety_object(pairs: list[tuple[str, JsonValue]]) -> dict[str, JsonValue]:
+    result: dict[str, JsonValue] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate object member: {key}")
+        candidate: dict[str, JsonValue] = {key: value}
+        if redact_evidence(candidate) != candidate:
+            raise _RestrictedEvidence
+        result[key] = value
+    return result
 
 
 def _validate_baseline(baseline: Path, approval: Path, review: Path) -> list[str]:

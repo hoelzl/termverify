@@ -125,9 +125,11 @@ review contexts. No tracked repository files were modified by the review.
 - Filesystem `root_id` and network allow-list enforcement omit containment,
   cleanup, symlink/reparse-point, DNS, redirect, proxy, address-normalization,
   and subprocess-inheritance semantics.
-- `write_sanitized_evidence()` can emit non-standard JSON `NaN`; camelCase
-  sensitive keys, UNC/device paths, traversal-shaped relative paths, modern
-  credential forms, and secrets in free text can bypass current redaction.
+- The former `write_sanitized_evidence()` helper could emit non-standard JSON
+  `NaN`; camelCase sensitive keys, UNC/device paths, traversal-shaped relative
+  paths, modern credential forms, and secrets in free text could bypass its
+  redaction. It has been replaced by the fail-closed transcript persistence
+  boundary described in `docs/knowledge/evidence-governance.md`.
 - Baseline approval validates self-authored metadata, not an independent review;
   `https://` without a host passes the current URL check.
 - The fixture corpus and schema tests are too small to substantiate the claimed
