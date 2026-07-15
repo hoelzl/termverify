@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://termverify.dev/schemas/termverify.transcript/v1.schema.json",
+  "title": "TermVerify transcript v1 record",
+  "description": "A single UTF-8 JSONL record. Cross-record lifecycle rules are enforced by termverify.transcript.",
+  "type": "object",
+  "required": ["protocol", "run_id", "seq", "id", "kind", "payload"],
+  "properties": {
+    "protocol": {"const": "termverify.transcript/v1"},
+    "run_id": {"type": "string", "minLength": 1},
+    "seq": {"type": "integer", "minimum": 0},
+    "id": {"type": "string", "minLength": 1},
+    "kind": {"type": "string", "minLength": 1},
+    "payload": {"type": "object"}
+  },
+  "patternProperties": {
+    "^x-": true
+  },
+  "additionalProperties": false
+}
