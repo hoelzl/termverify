@@ -21,10 +21,12 @@ TermVerify provides a common foundation for:
 
 The repository is in its foundation phase. The reviewed transcript design has
 an initial codec, semantic validator, mandatory safe transcript-persistence
-boundary, and immutable producer-side adapter contract. The direct runtime and
-terminal implementation remain blocked on their focused Phase 1 verification
-workstreams; configuration values or receipt construction alone do not prove
-constraint enforcement.
+boundary, immutable producer-side adapter contract, and deterministic in-process
+direct runtime. A narrow Windows ConPTY spike validates basic child creation,
+independent channel servicing, resize, and binding-level process termination and
+exit observation. Native pseudoconsole close/drain remains unproven, and no
+production terminal adapter or containment boundary exists yet. Configuration
+values or receipt construction alone do not prove constraint enforcement.
 
 ## Design principles
 
