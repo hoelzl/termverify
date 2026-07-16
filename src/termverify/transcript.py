@@ -128,11 +128,11 @@ def serialize_transcript(records: list[Record]) -> bytes:
     """Validate and encode *records* for in-memory use, not safe persistence."""
     try:
         raw_records: object = records
-        if not isinstance(raw_records, list):
+        if type(raw_records) is not list:
             raise TranscriptValidationError("transcript records must be a list")
         validated_records: list[Record] = []
         for sequence, value in enumerate(raw_records):
-            if not isinstance(value, dict):
+            if type(value) is not dict:
                 raise TranscriptValidationError("transcript record must be an object")
             _validate_json_value(value)
             record = cast(Record, value)
@@ -157,11 +157,11 @@ def _validate_json_value(value: object) -> None:
         if not math.isfinite(value):
             raise TranscriptValidationError("JSON number must be finite")
         return
-    if isinstance(value, list):
+    if type(value) is list:
         for item in value:
             _validate_json_value(item)
         return
-    if isinstance(value, dict):
+    if type(value) is dict:
         for key, item in value.items():
             if type(key) is not str:
                 raise TranscriptValidationError("JSON object keys must be strings")

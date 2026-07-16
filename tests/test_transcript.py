@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 from pathlib import Path
-from typing import cast
+from typing import Never, cast
 
 import pytest
 
@@ -64,6 +64,16 @@ MALFORMED_LOCALES = (
     "en--US",
     "én-US",
 )
+
+
+class _ExplodingList(list[object]):
+    def __iter__(self) -> Never:
+        raise RuntimeError("list subclass iteration must not run")
+
+
+class _ExplodingDict(dict[object, object]):
+    def items(self) -> Never:
+        raise RuntimeError("dict subclass items must not run")
 
 
 def test_parse_transcript_accepts_canonical_valid_fixture() -> None:
@@ -508,6 +518,33 @@ def test_serialize_transcript_rejects_non_list_record_collection() -> None:
     records = cast(list[dict[str, JsonValue]], tuple(transcript))
 
     with pytest.raises(TranscriptValidationError, match="records must be a list"):
+        serialize_transcript(records)
+
+
+@pytest.mark.parametrize(
+    "location",
+    ["record-collection", "record", "nested-list", "nested-object"],
+)
+def test_serialize_transcript_rejects_container_subclass_without_invoking_it(
+    location: str,
+) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    records = transcript
+    if location == "record-collection":
+        records = cast(list[dict[str, JsonValue]], _ExplodingList(transcript))
+    elif location == "record":
+        records[0] = cast(dict[str, JsonValue], _ExplodingDict(records[0]))
+    else:
+        payload = transcript[OBSERVATION_INDEX]["payload"]
+        assert isinstance(payload, dict)
+        value: object
+        if location == "nested-list":
+            value = _ExplodingList(["ready"])
+        else:
+            value = _ExplodingDict({"ready": True})
+        cast(dict[str, object], payload)["state"] = value
+
+    with pytest.raises(TranscriptValidationError):
         serialize_transcript(records)
 
 
