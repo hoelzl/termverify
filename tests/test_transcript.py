@@ -1198,6 +1198,42 @@ def test_serialize_transcript_rejects_ui_without_required_members() -> None:
         serialize_transcript(transcript)
 
 
+@pytest.mark.parametrize("member", ["regions", "focus", "cursor", "mode"])
+def test_transcript_rejects_ui_without_required_member(member: str) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[9]["payload"]
+    assert isinstance(payload, dict)
+    ui = payload["ui"]
+    assert isinstance(ui, dict)
+    del ui[member]
+
+    with pytest.raises(TranscriptValidationError, match="ui"):
+        serialize_transcript(transcript)
+
+    encoded = b"".join(
+        json.dumps(
+            record, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        ).encode()
+        + b"\n"
+        for record in transcript
+    )
+    with pytest.raises(TranscriptValidationError, match="ui"):
+        parse_transcript(encoded)
+
+
+def test_transcript_accepts_nullable_ui_members_with_extension() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[9]["payload"]
+    assert isinstance(payload, dict)
+    ui = payload["ui"]
+    assert isinstance(ui, dict)
+    ui["focus"] = None
+    ui["mode"] = None
+    ui["x-synthetic"] = {"uninterpreted": True}
+
+    assert parse_transcript(serialize_transcript(transcript)) == transcript
+
+
 def test_serialize_transcript_rejects_ui_focus_not_in_regions() -> None:
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
     transcript = parse_transcript(fixture)
