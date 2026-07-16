@@ -771,6 +771,27 @@ def test_serialize_transcript_rejects_boolean_effective_integer() -> None:
         serialize_transcript(transcript)
 
 
+@pytest.mark.parametrize("status", [[], {}, "pending"])
+def test_transcript_rejects_invalid_capability_status(status: JsonValue) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[1]["payload"]
+    assert isinstance(payload, dict)
+    payload["status"] = status
+
+    with pytest.raises(TranscriptValidationError, match="status"):
+        serialize_transcript(transcript)
+
+    encoded = b"".join(
+        json.dumps(
+            record, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        ).encode()
+        + b"\n"
+        for record in transcript
+    )
+    with pytest.raises(TranscriptValidationError, match="status"):
+        parse_transcript(encoded)
+
+
 def test_serialize_transcript_rejects_input_without_manual_time() -> None:
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
     transcript = parse_transcript(fixture)
@@ -846,6 +867,60 @@ def test_serialize_transcript_rejects_mouse_press_without_button() -> None:
 
     with pytest.raises(TranscriptValidationError, match="input.mouse"):
         serialize_transcript(transcript)
+
+
+@pytest.mark.parametrize("action", [[], {}, "drag"])
+def test_transcript_rejects_invalid_mouse_action(action: JsonValue) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    transcript[8]["kind"] = "input.mouse"
+    transcript[8]["payload"] = {
+        "action": action,
+        "at_ms": 0,
+        "column": 0,
+        "row": 0,
+    }
+
+    with pytest.raises(TranscriptValidationError, match="action"):
+        serialize_transcript(transcript)
+
+    encoded = b"".join(
+        json.dumps(
+            record, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        ).encode()
+        + b"\n"
+        for record in transcript
+    )
+    with pytest.raises(TranscriptValidationError, match="action"):
+        parse_transcript(encoded)
+
+
+@pytest.mark.parametrize("action", ["press", "release"])
+@pytest.mark.parametrize("button", [[], {}, "primary"])
+def test_transcript_rejects_invalid_mouse_button(
+    action: str, button: JsonValue
+) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    transcript[8]["kind"] = "input.mouse"
+    transcript[8]["payload"] = {
+        "action": action,
+        "at_ms": 0,
+        "button": button,
+        "column": 0,
+        "row": 0,
+    }
+
+    with pytest.raises(TranscriptValidationError, match="button"):
+        serialize_transcript(transcript)
+
+    encoded = b"".join(
+        json.dumps(
+            record, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        ).encode()
+        + b"\n"
+        for record in transcript
+    )
+    with pytest.raises(TranscriptValidationError, match="button"):
+        parse_transcript(encoded)
 
 
 def test_serialize_transcript_rejects_boolean_mouse_scroll_delta() -> None:
