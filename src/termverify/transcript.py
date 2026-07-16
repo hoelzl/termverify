@@ -127,28 +127,47 @@ def parse_transcript(data: bytes) -> list[Record]:
 def serialize_transcript(records: list[Record]) -> bytes:
     """Validate and encode *records* for in-memory use, not safe persistence."""
     try:
-        for sequence, record in enumerate(records):
-            _validate_json_numbers(record)
+        raw_records: object = records
+        if type(raw_records) is not list:
+            raise TranscriptValidationError("transcript records must be a list")
+        validated_records: list[Record] = []
+        for sequence, value in enumerate(raw_records):
+            if type(value) is not dict:
+                raise TranscriptValidationError("transcript record must be an object")
+            _validate_json_value(value)
+            record = cast(Record, value)
             _validate_envelope(record, sequence)
-        _validate_lifecycle(records)
-        return b"".join(_canonical_record(record) + b"\n" for record in records)
+            validated_records.append(record)
+        _validate_lifecycle(validated_records)
+        return b"".join(
+            _canonical_record(record) + b"\n" for record in validated_records
+        )
     except RecursionError as error:
         raise TranscriptValidationError(
             "transcript JSON nesting exceeds the supported depth"
         ) from error
 
 
-def _validate_json_numbers(value: object) -> None:
-    if isinstance(value, tuple):
+def _validate_json_value(value: object) -> None:
+    if value is None or type(value) in {bool, int, str}:
+        return
+    if type(value) is tuple:
         raise TranscriptValidationError("JSON arrays must use lists")
-    if isinstance(value, float) and not math.isfinite(value):
-        raise TranscriptValidationError("JSON number must be finite")
-    if isinstance(value, list):
+    if type(value) is float:
+        if not math.isfinite(value):
+            raise TranscriptValidationError("JSON number must be finite")
+        return
+    if type(value) is list:
         for item in value:
-            _validate_json_numbers(item)
-    elif isinstance(value, dict):
-        for item in value.values():
-            _validate_json_numbers(item)
+            _validate_json_value(item)
+        return
+    if type(value) is dict:
+        for key, item in value.items():
+            if type(key) is not str:
+                raise TranscriptValidationError("JSON object keys must be strings")
+            _validate_json_value(item)
+        return
+    raise TranscriptValidationError("unsupported JSON value type")
 
 
 def _canonical_record(record: Record) -> bytes:
@@ -173,7 +192,7 @@ def _parse_line(line: bytes, number: int) -> Record:
     if not isinstance(raw, dict):
         raise TranscriptValidationError(f"line {number + 1}: record must be an object")
     record = cast(Record, raw)
-    _validate_json_numbers(record)
+    _validate_json_value(record)
     if _canonical_record(record) != line:
         raise TranscriptValidationError(
             f"line {number + 1}: record is not canonical JSON"
@@ -926,16 +945,18 @@ def _is_well_formed_language_tag(value: str) -> bool:
 
 
 def _json_equivalent(left: JsonValue, right: JsonValue) -> bool:
-    if isinstance(left, bool) or isinstance(right, bool):
-        return isinstance(left, bool) and isinstance(right, bool) and left == right
-    if isinstance(left, list) and isinstance(right, list):
-        return len(left) == len(right) and all(
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, list):
+        right_list = cast(list[JsonValue], right)
+        return len(left) == len(right_list) and all(
             _json_equivalent(left_item, right_item)
-            for left_item, right_item in zip(left, right, strict=True)
+            for left_item, right_item in zip(left, right_list, strict=True)
         )
-    if isinstance(left, dict) and isinstance(right, dict):
-        return left.keys() == right.keys() and all(
-            _json_equivalent(left[key], right[key]) for key in left
+    if isinstance(left, dict):
+        right_dict = cast(dict[str, JsonValue], right)
+        return left.keys() == right_dict.keys() and all(
+            _json_equivalent(left[key], right_dict[key]) for key in left
         )
     return left == right
 
