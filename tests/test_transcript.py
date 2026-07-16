@@ -495,6 +495,55 @@ def test_serialize_transcript_rejects_invalid_record_envelope(
         serialize_transcript(transcript)
 
 
+@pytest.mark.parametrize("record", [[], "record", 1, None])
+def test_serialize_transcript_rejects_non_object_record(record: object) -> None:
+    records = cast(list[dict[str, JsonValue]], [record])
+
+    with pytest.raises(TranscriptValidationError, match="record must be an object"):
+        serialize_transcript(records)
+
+
+def test_serialize_transcript_rejects_non_list_record_collection() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    records = cast(list[dict[str, JsonValue]], tuple(transcript))
+
+    with pytest.raises(TranscriptValidationError, match="records must be a list"):
+        serialize_transcript(records)
+
+
+@pytest.mark.parametrize(
+    "location",
+    ["envelope", "config", "nested-protocol", "extension", "application-data"],
+)
+def test_serialize_transcript_rejects_non_string_json_object_key(
+    location: str,
+) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    started = transcript[0]["payload"]
+    observation = transcript[OBSERVATION_INDEX]["payload"]
+    assert isinstance(started, dict)
+    assert isinstance(observation, dict)
+    config = started["config"]
+    assert isinstance(config, dict)
+    if location == "envelope":
+        target: object = transcript[0]
+    elif location == "config":
+        target = config
+    elif location == "nested-protocol":
+        target = config["terminal"]
+    elif location == "extension":
+        observation["x-data"] = {}
+        target = observation["x-data"]
+    else:
+        observation["state"] = {}
+        target = observation["state"]
+    assert isinstance(target, dict)
+    cast(dict[object, object], target)[1] = "invalid"
+
+    with pytest.raises(TranscriptValidationError, match="keys must be strings"):
+        serialize_transcript(transcript)
+
+
 def test_serialize_transcript_rejects_boolean_sequence() -> None:
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
     transcript[0]["seq"] = False
@@ -906,6 +955,20 @@ def test_serialize_transcript_rejects_tuple_json_value(location: str) -> None:
         serialize_transcript(transcript)
 
 
+@pytest.mark.parametrize("location", ["state", "extension"])
+def test_serialize_transcript_rejects_unsupported_host_json_value(
+    location: str,
+) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[OBSERVATION_INDEX]["payload"]
+    assert isinstance(payload, dict)
+    key = "state" if location == "state" else "x-host-value"
+    cast(dict[str, object], payload)[key] = object()
+
+    with pytest.raises(TranscriptValidationError, match="unsupported JSON value"):
+        serialize_transcript(transcript)
+
+
 def test_serialize_transcript_preserves_list_json_value() -> None:
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
     payload = transcript[10]["payload"]
@@ -1017,6 +1080,128 @@ def test_serialize_transcript_rejects_boolean_effective_integer() -> None:
 
     with pytest.raises(TranscriptValidationError, match="effective"):
         serialize_transcript(transcript)
+
+
+@pytest.mark.parametrize(
+    ("constraint", "member"),
+    [
+        ("clock", "initial_ms"),
+        ("terminal", "columns"),
+        ("terminal", "rows"),
+        ("network", "port"),
+    ],
+)
+def test_serialize_transcript_rejects_integral_float_effective_integer(
+    constraint: str,
+    member: str,
+) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    started = transcript[0]["payload"]
+    assert isinstance(started, dict)
+    config = started["config"]
+    assert isinstance(config, dict)
+    result_index = {
+        "clock": 2,
+        "terminal": 5,
+        "network": 7,
+    }[constraint]
+    result = transcript[result_index]["payload"]
+    assert isinstance(result, dict)
+    effective = result["effective"]
+    assert isinstance(effective, dict)
+    if constraint == "network":
+        network: dict[str, JsonValue] = {
+            "mode": "allow-list",
+            "allowed": [{"host": "example.test", "port": 443}],
+        }
+        config["network"] = network
+        result["effective"] = deepcopy(network)
+        effective = result["effective"]
+        assert isinstance(effective, dict)
+        allowed = effective["allowed"]
+        assert isinstance(allowed, list)
+        endpoint = allowed[0]
+        assert isinstance(endpoint, dict)
+        endpoint[member] = 443.0
+    else:
+        effective[member] = float(cast(int, effective[member]))
+
+    with pytest.raises(TranscriptValidationError, match="effective"):
+        serialize_transcript(transcript)
+
+
+def test_serialize_transcript_rejects_nested_numeric_category_mismatch() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    started = transcript[0]["payload"]
+    result = transcript[5]["payload"]
+    assert isinstance(started, dict)
+    assert isinstance(result, dict)
+    config = started["config"]
+    effective = result["effective"]
+    assert isinstance(config, dict)
+    assert isinstance(effective, dict)
+    terminal = config["terminal"]
+    assert isinstance(terminal, dict)
+    terminal["x-thresholds"] = [1, {"value": 2}]
+    effective["x-thresholds"] = [1, {"value": 2.0}]
+
+    with pytest.raises(TranscriptValidationError, match="effective"):
+        serialize_transcript(transcript)
+
+
+@pytest.mark.parametrize(
+    "location",
+    ["input", "diagnostic", "observation", "process-exit", "terminal-exit"],
+)
+def test_serialize_transcript_rejects_integral_float_protocol_integer(
+    location: str,
+) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    if location == "input":
+        payload = transcript[INPUT_INDEX]["payload"]
+        assert isinstance(payload, dict)
+        payload["at_ms"] = 0.0
+    elif location == "diagnostic":
+        diagnostic = deepcopy(transcript[INPUT_INDEX])
+        diagnostic["kind"] = "diagnostic"
+        diagnostic["payload"] = {
+            "at_ms": 0.0,
+            "code": "synthetic",
+            "message": "synthetic",
+        }
+        transcript.insert(INPUT_INDEX, diagnostic)
+        for sequence, record in enumerate(transcript):
+            record["id"] = f"record-{sequence:03d}"
+            record["seq"] = sequence
+    elif location == "observation":
+        payload = transcript[OBSERVATION_INDEX]["payload"]
+        assert isinstance(payload, dict)
+        payload["at_ms"] = 0.0
+    elif location == "process-exit":
+        payload = transcript[OBSERVATION_INDEX]["payload"]
+        assert isinstance(payload, dict)
+        payload["process"] = {
+            "state": "exited",
+            "exit": {"kind": "code", "value": 0.0},
+        }
+    else:
+        payload = transcript[-1]["payload"]
+        assert isinstance(payload, dict)
+        exit_value = payload["exit"]
+        assert isinstance(exit_value, dict)
+        exit_value["value"] = 0.0
+
+    with pytest.raises(TranscriptValidationError):
+        serialize_transcript(transcript)
+
+
+def test_serialize_transcript_preserves_application_defined_finite_float() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[OBSERVATION_INDEX]["payload"]
+    assert isinstance(payload, dict)
+    payload["state"] = {"progress": 1.5}
+
+    assert parse_transcript(serialize_transcript(transcript)) == transcript
 
 
 @pytest.mark.parametrize("status", [[], {}, "pending"])
