@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from threading import Lock
-from typing import Literal, Protocol, cast
+from typing import Literal, NamedTuple, Protocol, cast
 
 from termverify.adapter import (
     AdapterFailure,
@@ -51,6 +51,27 @@ _State = Literal[
     "stopping",
     "terminal",
 ]
+
+
+class _ResultFailureMessages(NamedTuple):
+    invalid_epoch: str
+    invalid_terminal_outcome: str
+    invalid_terminal_evidence: str
+    unexpected: str
+
+
+_EPOCH_RESULT_MESSAGES = _ResultFailureMessages(
+    invalid_epoch="application returned invalid epoch evidence",
+    invalid_terminal_outcome="application returned invalid terminal outcome",
+    invalid_terminal_evidence="application returned invalid terminal evidence",
+    unexpected="application did not report quiescence or termination",
+)
+_STOP_RESULT_MESSAGES = _ResultFailureMessages(
+    invalid_epoch="application did not report termination",
+    invalid_terminal_outcome="application returned invalid terminal outcome",
+    invalid_terminal_evidence="application returned invalid terminal evidence",
+    unexpected="application did not report termination",
+)
 
 
 class DirectApplication(
@@ -138,6 +159,15 @@ def _terminal_time_is_valid(result: TerminalResult, at_ms: ManualTime) -> bool:
     )
 
 
+def _with_abort_failure(failure: AdapterFailure) -> AdapterFailure:
+    """Preserve opaque application details under a collision-safe namespace."""
+    return AdapterFailure(
+        failure.code,
+        failure.message,
+        {"application": failure.details, "abort": "failed"},
+    )
+
+
 class DirectAdapter:
     """Drive one deterministic application through synchronous single-flight epochs."""
 
@@ -170,11 +200,7 @@ class DirectAdapter:
     ) -> AdapterFailure:
         if self._abort_application(at_ms):
             return failure
-        return AdapterFailure(
-            failure.code,
-            failure.message,
-            {"abort": "failed"},
-        )
+        return _with_abort_failure(failure)
 
     def _abort_runtime(
         self,
@@ -185,13 +211,37 @@ class DirectAdapter:
         if failure is None:
             failure = AdapterFailure("adapter-runtime-failed", message)
         if not self._abort_application(at_ms):
-            failure = AdapterFailure(
-                "adapter-runtime-failed",
-                message,
-                {"abort": "failed"},
-            )
+            failure = _with_abort_failure(failure)
         self._set_time_and_state(at_ms, "terminal")
         return TerminalResult(None, RunFailed(failure))
+
+    def _classify_runtime_result(
+        self,
+        result: object,
+        at_ms: ManualTime,
+        *,
+        allow_epoch: bool,
+        messages: _ResultFailureMessages,
+    ) -> EpochResult:
+        if type(result) is EpochCompleted:
+            if not allow_epoch:
+                return self._abort_runtime(messages.unexpected, at_ms)
+            if result.observation.at_ms != at_ms or any(
+                diagnostic.at_ms != at_ms for diagnostic in result.diagnostics
+            ):
+                return self._abort_runtime(messages.invalid_epoch, at_ms)
+            self._set_time_and_state(at_ms, "idle")
+            return result
+        if type(result) is TerminalResult:
+            if type(result.outcome) is not RunFinished:
+                return self._abort_runtime(messages.invalid_terminal_outcome, at_ms)
+            if not _terminal_time_is_valid(result, at_ms):
+                return self._abort_runtime(messages.invalid_terminal_evidence, at_ms)
+            self._set_time_and_state(at_ms, "terminal")
+            return result
+        if type(result) is AdapterFailure and result.code == "adapter-runtime-failed":
+            return self._abort_runtime(result.message, at_ms, result)
+        return self._abort_runtime(messages.unexpected, at_ms)
 
     def start(self, run_id: str, configuration: RunConfiguration) -> StartResult:
         if type(configuration) is not RunConfiguration:
@@ -356,11 +406,27 @@ class DirectAdapter:
                 tuple(receipts),
                 failure,
             )
-        started = Started(
-            constraints=constraints,
-            observation=initialized.observation,
-            diagnostics=initialized.diagnostics,
-        )
+        try:
+            started = Started(
+                constraints=constraints,
+                observation=initialized.observation,
+                diagnostics=initialized.diagnostics,
+            )
+        except Exception:
+            failure = self._abort_start(
+                AdapterFailure(
+                    "adapter-start-failed",
+                    "application returned invalid initial evidence",
+                ),
+                initial_ms,
+            )
+            self._set_state("terminal")
+            return StartFailed(
+                run_id,
+                configuration,
+                tuple(receipts),
+                failure,
+            )
         self._set_time_and_state(started.observation.at_ms, "idle")
         return started
 
@@ -377,31 +443,11 @@ class DirectAdapter:
             result = self._application.dispatch(input_event)
         except Exception:
             return self._abort_runtime("application dispatch failed", input_event.at_ms)
-        if type(result) is EpochCompleted:
-            if result.observation.at_ms != input_event.at_ms or any(
-                diagnostic.at_ms != input_event.at_ms
-                for diagnostic in result.diagnostics
-            ):
-                return self._abort_runtime(
-                    "application returned invalid epoch evidence", input_event.at_ms
-                )
-            self._set_time_and_state(input_event.at_ms, "idle")
-            return result
-        if type(result) is TerminalResult:
-            if type(result.outcome) is not RunFinished:
-                return self._abort_runtime(
-                    "application returned invalid terminal outcome", input_event.at_ms
-                )
-            if not _terminal_time_is_valid(result, input_event.at_ms):
-                return self._abort_runtime(
-                    "application returned invalid terminal evidence", input_event.at_ms
-                )
-            self._set_time_and_state(input_event.at_ms, "terminal")
-            return result
-        if type(result) is AdapterFailure and result.code == "adapter-runtime-failed":
-            return self._abort_runtime(result.message, input_event.at_ms, result)
-        return self._abort_runtime(
-            "application did not report quiescence or termination", input_event.at_ms
+        return self._classify_runtime_result(
+            result,
+            input_event.at_ms,
+            allow_epoch=True,
+            messages=_EPOCH_RESULT_MESSAGES,
         )
 
     def advance_clock(self, input_event: ClockAdvance) -> EpochResult:
@@ -422,31 +468,11 @@ class DirectAdapter:
             return self._abort_runtime(
                 "application clock advance failed", input_event.at_ms
             )
-        if type(result) is EpochCompleted:
-            if result.observation.at_ms != input_event.at_ms or any(
-                diagnostic.at_ms != input_event.at_ms
-                for diagnostic in result.diagnostics
-            ):
-                return self._abort_runtime(
-                    "application returned invalid epoch evidence", input_event.at_ms
-                )
-            self._set_time_and_state(input_event.at_ms, "idle")
-            return result
-        if type(result) is TerminalResult:
-            if type(result.outcome) is not RunFinished:
-                return self._abort_runtime(
-                    "application returned invalid terminal outcome", input_event.at_ms
-                )
-            if not _terminal_time_is_valid(result, input_event.at_ms):
-                return self._abort_runtime(
-                    "application returned invalid terminal evidence", input_event.at_ms
-                )
-            self._set_time_and_state(input_event.at_ms, "terminal")
-            return result
-        if type(result) is AdapterFailure and result.code == "adapter-runtime-failed":
-            return self._abort_runtime(result.message, input_event.at_ms, result)
-        return self._abort_runtime(
-            "application did not report quiescence or termination", input_event.at_ms
+        return self._classify_runtime_result(
+            result,
+            input_event.at_ms,
+            allow_epoch=True,
+            messages=_EPOCH_RESULT_MESSAGES,
         )
 
     def stop(self, input_event: Stop) -> TerminalResult:
@@ -462,19 +488,12 @@ class DirectAdapter:
             result = self._application.stop(input_event)
         except Exception:
             return self._abort_runtime("application stop failed", input_event.at_ms)
-        if type(result) is TerminalResult:
-            if type(result.outcome) is not RunFinished:
-                return self._abort_runtime(
-                    "application returned invalid terminal outcome", input_event.at_ms
-                )
-            if not _terminal_time_is_valid(result, input_event.at_ms):
-                return self._abort_runtime(
-                    "application returned invalid terminal evidence", input_event.at_ms
-                )
-            self._set_time_and_state(input_event.at_ms, "terminal")
-            return result
-        if type(result) is AdapterFailure and result.code == "adapter-runtime-failed":
-            return self._abort_runtime(result.message, input_event.at_ms, result)
-        return self._abort_runtime(
-            "application did not report termination", input_event.at_ms
+        return cast(
+            TerminalResult,
+            self._classify_runtime_result(
+                result,
+                input_event.at_ms,
+                allow_epoch=False,
+                messages=_STOP_RESULT_MESSAGES,
+            ),
         )
