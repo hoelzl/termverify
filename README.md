@@ -20,11 +20,11 @@ TermVerify provides a common foundation for:
 ## Project status
 
 The repository is in its foundation phase. The reviewed transcript design has
-an initial codec, semantic validator, and mandatory safe transcript-persistence
-boundary, but conformance hardening is incomplete.
-Public adapter/runtime implementation remains blocked on the Phase 1 readiness
-prerequisite workstreams. The eight owner decision gates are accepted; their
-executable contract and governance consequences are still being implemented.
+an initial codec, semantic validator, mandatory safe transcript-persistence
+boundary, and immutable producer-side adapter contract. The direct runtime and
+terminal implementation remain blocked on their focused Phase 1 verification
+workstreams; configuration values or receipt construction alone do not prove
+constraint enforcement.
 
 ## Design principles
 
