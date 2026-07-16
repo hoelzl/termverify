@@ -761,6 +761,24 @@ def test_serialize_transcript_rejects_non_finite_json_number() -> None:
         serialize_transcript(transcript)
 
 
+@pytest.mark.parametrize("location", ["state", "extension"])
+@pytest.mark.parametrize("magnitude", ["ordinary", "oversized"])
+def test_serialize_transcript_rejects_out_of_domain_python_integer_cleanly(
+    location: str, magnitude: str
+) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[9]["payload"]
+    assert isinstance(payload, dict)
+    value = 2**53 if magnitude == "ordinary" else 10**4_999
+    if location == "state":
+        payload["state"] = {"value": value}
+    else:
+        payload["x-large-integer"] = value
+
+    with pytest.raises(TranscriptValidationError, match="canonicalized"):
+        serialize_transcript(transcript)
+
+
 def test_parse_transcript_rejects_non_finite_json_number() -> None:
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_text(encoding="utf-8")
     data = fixture.replace('"text":"hello"', '"text":NaN').encode("utf-8")
