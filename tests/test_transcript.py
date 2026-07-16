@@ -15,6 +15,9 @@ from termverify.transcript import (
 )
 
 FIXTURES = Path("tests/fixtures/transcripts/v1")
+READINESS_INDEX = 8
+INPUT_INDEX = 9
+OBSERVATION_INDEX = 10
 GRANDFATHERED_LOCALES = (
     "art-lojban",
     "cel-gaulish",
@@ -75,10 +78,121 @@ def test_parse_transcript_accepts_canonical_valid_fixture() -> None:
         "capability.result",
         "capability.result",
         "capability.result",
+        "observation",
         "input.text",
         "observation",
         "run.finished",
     ]
+
+
+def test_parse_transcript_requires_initial_readiness_observation() -> None:
+    records = [
+        json.loads(line)
+        for line in (FIXTURES / "valid" / "basic.jsonl").read_bytes().splitlines()
+    ]
+    del records[READINESS_INDEX]
+    for sequence, record in enumerate(records):
+        record["id"] = f"record-{sequence:03d}"
+        record["seq"] = sequence
+    fixture = b"".join(
+        json.dumps(
+            record, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        ).encode()
+        + b"\n"
+        for record in records
+    )
+
+    with pytest.raises(TranscriptValidationError, match="initial readiness"):
+        parse_transcript(fixture)
+
+
+def test_serialize_transcript_rejects_overlapping_input_epochs() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    overlapping_input = deepcopy(transcript[INPUT_INDEX])
+    transcript.insert(OBSERVATION_INDEX, overlapping_input)
+    for sequence, record in enumerate(transcript):
+        record["id"] = f"record-{sequence:03d}"
+        record["seq"] = sequence
+
+    with pytest.raises(TranscriptValidationError, match="input epoch"):
+        serialize_transcript(transcript)
+
+
+def test_serialize_transcript_rejects_unsolicited_idle_observation() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    transcript.insert(INPUT_INDEX, deepcopy(transcript[READINESS_INDEX]))
+    for sequence, record in enumerate(transcript):
+        record["id"] = f"record-{sequence:03d}"
+        record["seq"] = sequence
+
+    with pytest.raises(TranscriptValidationError, match="idle"):
+        serialize_transcript(transcript)
+
+
+def test_serialize_transcript_rejects_unsolicited_idle_diagnostic() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    diagnostic = deepcopy(transcript[READINESS_INDEX])
+    diagnostic["kind"] = "diagnostic"
+    diagnostic["payload"] = {
+        "at_ms": 0,
+        "code": "synthetic",
+        "message": "synthetic",
+    }
+    transcript.insert(INPUT_INDEX, diagnostic)
+    for sequence, record in enumerate(transcript):
+        record["id"] = f"record-{sequence:03d}"
+        record["seq"] = sequence
+
+    with pytest.raises(TranscriptValidationError, match="idle"):
+        serialize_transcript(transcript)
+
+
+def test_serialize_transcript_rejects_input_after_stop() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    later_input = deepcopy(transcript[INPUT_INDEX])
+    transcript[INPUT_INDEX]["kind"] = "input.stop"
+    transcript[INPUT_INDEX]["payload"] = {"at_ms": 0}
+    transcript.insert(-1, later_input)
+    for sequence, record in enumerate(transcript):
+        record["id"] = f"record-{sequence:03d}"
+        record["seq"] = sequence
+
+    with pytest.raises(TranscriptValidationError, match="after input.stop"):
+        serialize_transcript(transcript)
+
+
+def test_serialize_transcript_rejects_body_after_process_exit_observation() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    observation_payload = transcript[OBSERVATION_INDEX]["payload"]
+    assert isinstance(observation_payload, dict)
+    observation_payload["process"] = {
+        "state": "exited",
+        "exit": {"kind": "code", "value": 0},
+    }
+    transcript.insert(OBSERVATION_INDEX + 1, deepcopy(transcript[INPUT_INDEX]))
+    for sequence, record in enumerate(transcript):
+        record["id"] = f"record-{sequence:03d}"
+        record["seq"] = sequence
+
+    with pytest.raises(TranscriptValidationError, match="process exit observation"):
+        serialize_transcript(transcript)
+
+
+def test_transcript_accepts_adapter_failure_before_capability_results() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    failed = deepcopy(transcript[-1])
+    failed["kind"] = "run.failed"
+    failed["payload"] = {
+        "error": {"code": "adapter-start-failed", "message": "synthetic"}
+    }
+    transcript = [transcript[0], failed]
+    for sequence, record in enumerate(transcript):
+        record["id"] = f"record-{sequence:03d}"
+        record["seq"] = sequence
+
+    encoded = serialize_transcript(transcript)
+
+    assert parse_transcript(encoded) == transcript
 
 
 def test_parse_transcript_rejects_wrong_protocol_fixture() -> None:
@@ -402,8 +516,8 @@ def test_serialize_transcript_rejects_identifier_outside_v1_grammar(
 
 def test_serialize_transcript_rejects_repeated_run_started() -> None:
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
-    transcript[8]["kind"] = "run.started"
-    transcript[8]["payload"] = transcript[0]["payload"]
+    transcript[9]["kind"] = "run.started"
+    transcript[9]["payload"] = transcript[0]["payload"]
 
     with pytest.raises(TranscriptValidationError, match="run.started"):
         serialize_transcript(transcript)
@@ -411,8 +525,8 @@ def test_serialize_transcript_rejects_repeated_run_started() -> None:
 
 def test_serialize_transcript_rejects_intermediate_terminal_record() -> None:
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
-    transcript[8]["kind"] = "run.failed"
-    transcript[8]["payload"] = {
+    transcript[9]["kind"] = "run.failed"
+    transcript[9]["payload"] = {
         "error": {"code": "adapter-runtime-failed", "message": "failed"}
     }
 
@@ -422,7 +536,7 @@ def test_serialize_transcript_rejects_intermediate_terminal_record() -> None:
 
 def test_serialize_transcript_rejects_record_after_terminal() -> None:
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
-    record = transcript[8].copy()
+    record = transcript[9].copy()
     record["seq"] = len(transcript)
     record["id"] = "record-after-terminal"
     transcript.append(record)
@@ -754,7 +868,7 @@ def test_parse_transcript_rejects_non_well_formed_locale(locale: str) -> None:
 def test_serialize_transcript_rejects_non_finite_json_number() -> None:
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
     transcript = parse_transcript(fixture)
-    payload = transcript[9]["payload"]
+    payload = transcript[10]["payload"]
     assert isinstance(payload, dict)
     payload["state"] = {"value": float("nan")}
 
@@ -768,7 +882,7 @@ def test_serialize_transcript_rejects_out_of_domain_python_integer_cleanly(
     location: str, magnitude: str
 ) -> None:
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
-    payload = transcript[9]["payload"]
+    payload = transcript[10]["payload"]
     assert isinstance(payload, dict)
     value = 2**53 if magnitude == "ordinary" else 10**4_999
     if location == "state":
@@ -783,7 +897,7 @@ def test_serialize_transcript_rejects_out_of_domain_python_integer_cleanly(
 @pytest.mark.parametrize("location", ["state", "extension"])
 def test_serialize_transcript_rejects_tuple_json_value(location: str) -> None:
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
-    payload = transcript[9]["payload"]
+    payload = transcript[10]["payload"]
     assert isinstance(payload, dict)
     key = "state" if location == "state" else "x-array"
     cast(dict[str, object], payload)[key] = ("ready",)
@@ -794,7 +908,7 @@ def test_serialize_transcript_rejects_tuple_json_value(location: str) -> None:
 
 def test_serialize_transcript_preserves_list_json_value() -> None:
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
-    payload = transcript[9]["payload"]
+    payload = transcript[10]["payload"]
     assert isinstance(payload, dict)
     payload["state"] = ["ready"]
 
@@ -848,7 +962,7 @@ def test_parse_transcript_converts_excessive_nesting_to_validation_error() -> No
 
 def test_serialize_transcript_converts_excessive_nesting_to_validation_error() -> None:
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
-    payload = transcript[9]["payload"]
+    payload = transcript[10]["payload"]
     assert isinstance(payload, dict)
     nested: list[JsonValue] = []
     root = nested
@@ -865,7 +979,7 @@ def test_serialize_transcript_converts_excessive_nesting_to_validation_error() -
 def test_serialize_transcript_uses_rfc_8785_number_rendering() -> None:
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
     transcript = parse_transcript(fixture)
-    payload = transcript[9]["payload"]
+    payload = transcript[10]["payload"]
     assert isinstance(payload, dict)
     payload["state"] = {"value": 1.0}
 
@@ -929,7 +1043,7 @@ def test_transcript_rejects_invalid_capability_status(status: JsonValue) -> None
 def test_serialize_transcript_rejects_input_without_manual_time() -> None:
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
     transcript = parse_transcript(fixture)
-    transcript[8]["payload"] = {"text": "hello"}
+    transcript[9]["payload"] = {"text": "hello"}
 
     with pytest.raises(TranscriptValidationError, match="at_ms"):
         serialize_transcript(transcript)
@@ -938,7 +1052,7 @@ def test_serialize_transcript_rejects_input_without_manual_time() -> None:
 def test_serialize_transcript_rejects_text_input_without_text() -> None:
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
     transcript = parse_transcript(fixture)
-    transcript[8]["payload"] = {"at_ms": 0}
+    transcript[9]["payload"] = {"at_ms": 0}
 
     with pytest.raises(TranscriptValidationError, match="input.text"):
         serialize_transcript(transcript)
@@ -947,7 +1061,7 @@ def test_serialize_transcript_rejects_text_input_without_text() -> None:
 def test_serialize_transcript_rejects_unknown_v1_input_kind() -> None:
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
     transcript = parse_transcript(fixture)
-    transcript[8]["kind"] = "input.unknown"
+    transcript[9]["kind"] = "input.unknown"
 
     with pytest.raises(TranscriptValidationError, match="input kind"):
         serialize_transcript(transcript)
@@ -956,7 +1070,7 @@ def test_serialize_transcript_rejects_unknown_v1_input_kind() -> None:
 def test_serialize_transcript_rejects_unknown_v1_record_kind() -> None:
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
     transcript = parse_transcript(fixture)
-    transcript[9]["kind"] = "observation.unknown"
+    transcript[10]["kind"] = "observation.unknown"
 
     with pytest.raises(TranscriptValidationError, match="record kind"):
         serialize_transcript(transcript)
@@ -965,7 +1079,7 @@ def test_serialize_transcript_rejects_unknown_v1_record_kind() -> None:
 def test_serialize_transcript_rejects_unknown_generic_input_member() -> None:
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
     transcript = parse_transcript(fixture)
-    payload = transcript[8]["payload"]
+    payload = transcript[9]["payload"]
     assert isinstance(payload, dict)
     payload["unexpected"] = True
 
@@ -976,8 +1090,8 @@ def test_serialize_transcript_rejects_unknown_generic_input_member() -> None:
 def test_serialize_transcript_rejects_key_input_without_normalized_keys() -> None:
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
     transcript = parse_transcript(fixture)
-    transcript[8]["kind"] = "input.key"
-    transcript[8]["payload"] = {"at_ms": 0, "keys": []}
+    transcript[9]["kind"] = "input.key"
+    transcript[9]["payload"] = {"at_ms": 0, "keys": []}
 
     with pytest.raises(TranscriptValidationError, match="input.key"):
         serialize_transcript(transcript)
@@ -986,8 +1100,8 @@ def test_serialize_transcript_rejects_key_input_without_normalized_keys() -> Non
 def test_serialize_transcript_rejects_resize_with_non_positive_dimensions() -> None:
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
     transcript = parse_transcript(fixture)
-    transcript[8]["kind"] = "input.resize"
-    transcript[8]["payload"] = {"at_ms": 0, "columns": 0, "rows": 24}
+    transcript[9]["kind"] = "input.resize"
+    transcript[9]["payload"] = {"at_ms": 0, "columns": 0, "rows": 24}
 
     with pytest.raises(TranscriptValidationError, match="input.resize"):
         serialize_transcript(transcript)
@@ -996,8 +1110,8 @@ def test_serialize_transcript_rejects_resize_with_non_positive_dimensions() -> N
 def test_serialize_transcript_rejects_mouse_press_without_button() -> None:
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
     transcript = parse_transcript(fixture)
-    transcript[8]["kind"] = "input.mouse"
-    transcript[8]["payload"] = {"action": "press", "at_ms": 0, "column": 0, "row": 0}
+    transcript[9]["kind"] = "input.mouse"
+    transcript[9]["payload"] = {"action": "press", "at_ms": 0, "column": 0, "row": 0}
 
     with pytest.raises(TranscriptValidationError, match="input.mouse"):
         serialize_transcript(transcript)
@@ -1006,8 +1120,8 @@ def test_serialize_transcript_rejects_mouse_press_without_button() -> None:
 @pytest.mark.parametrize("action", [[], {}, "drag"])
 def test_transcript_rejects_invalid_mouse_action(action: JsonValue) -> None:
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
-    transcript[8]["kind"] = "input.mouse"
-    transcript[8]["payload"] = {
+    transcript[9]["kind"] = "input.mouse"
+    transcript[9]["payload"] = {
         "action": action,
         "at_ms": 0,
         "column": 0,
@@ -1034,8 +1148,8 @@ def test_transcript_rejects_invalid_mouse_button(
     action: str, button: JsonValue
 ) -> None:
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
-    transcript[8]["kind"] = "input.mouse"
-    transcript[8]["payload"] = {
+    transcript[9]["kind"] = "input.mouse"
+    transcript[9]["payload"] = {
         "action": action,
         "at_ms": 0,
         "button": button,
@@ -1059,8 +1173,8 @@ def test_transcript_rejects_invalid_mouse_button(
 
 def test_serialize_transcript_rejects_boolean_mouse_scroll_delta() -> None:
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
-    transcript[8]["kind"] = "input.mouse"
-    transcript[8]["payload"] = {
+    transcript[9]["kind"] = "input.mouse"
+    transcript[9]["payload"] = {
         "action": "scroll",
         "at_ms": 0,
         "column": 0,
@@ -1077,7 +1191,7 @@ def test_serialize_transcript_rejects_forbidden_member_for_mouse_move(
     member: str,
 ) -> None:
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
-    transcript[8]["kind"] = "input.mouse"
+    transcript[9]["kind"] = "input.mouse"
     payload: dict[str, JsonValue] = {
         "action": "move",
         "at_ms": 0,
@@ -1085,7 +1199,7 @@ def test_serialize_transcript_rejects_forbidden_member_for_mouse_move(
         "row": 0,
     }
     payload[member] = None
-    transcript[8]["payload"] = payload
+    transcript[9]["payload"] = payload
 
     with pytest.raises(TranscriptValidationError, match="mouse move"):
         serialize_transcript(transcript)
@@ -1096,8 +1210,8 @@ def test_serialize_transcript_rejects_delta_member_for_mouse_button_action(
     action: str,
 ) -> None:
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
-    transcript[8]["kind"] = "input.mouse"
-    transcript[8]["payload"] = {
+    transcript[9]["kind"] = "input.mouse"
+    transcript[9]["payload"] = {
         "action": action,
         "at_ms": 0,
         "button": "left",
@@ -1112,8 +1226,8 @@ def test_serialize_transcript_rejects_delta_member_for_mouse_button_action(
 
 def test_serialize_transcript_rejects_button_member_for_mouse_scroll() -> None:
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
-    transcript[8]["kind"] = "input.mouse"
-    transcript[8]["payload"] = {
+    transcript[9]["kind"] = "input.mouse"
+    transcript[9]["payload"] = {
         "action": "scroll",
         "at_ms": 0,
         "button": None,
@@ -1161,8 +1275,8 @@ def test_parse_transcript_rejects_action_forbidden_mouse_member(
     payload: dict[str, JsonValue],
 ) -> None:
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
-    transcript[8]["kind"] = "input.mouse"
-    transcript[8]["payload"] = payload
+    transcript[9]["kind"] = "input.mouse"
+    transcript[9]["payload"] = payload
     encoded = b"".join(
         json.dumps(
             record, ensure_ascii=False, separators=(",", ":"), sort_keys=True
@@ -1201,8 +1315,8 @@ def test_mouse_action_with_extension_round_trips(
 ) -> None:
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
     payload["x-synthetic"] = {"uninterpreted": True}
-    transcript[8]["kind"] = "input.mouse"
-    transcript[8]["payload"] = payload
+    transcript[9]["kind"] = "input.mouse"
+    transcript[9]["payload"] = payload
 
     assert parse_transcript(serialize_transcript(transcript)) == transcript
 
@@ -1210,8 +1324,8 @@ def test_mouse_action_with_extension_round_trips(
 def test_serialize_transcript_rejects_clock_advance_with_wrong_time() -> None:
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
     transcript = parse_transcript(fixture)
-    transcript[8]["kind"] = "input.clock_advanced"
-    transcript[8]["payload"] = {"at_ms": 0, "delta_ms": 1}
+    transcript[9]["kind"] = "input.clock_advanced"
+    transcript[9]["payload"] = {"at_ms": 0, "delta_ms": 1}
 
     with pytest.raises(TranscriptValidationError, match="input.clock_advanced"):
         serialize_transcript(transcript)
@@ -1222,12 +1336,12 @@ def test_transcript_rejects_evidence_time_that_differs_from_manual_clock(
     kind: str,
 ) -> None:
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
-    payload = transcript[9]["payload"]
+    payload = transcript[10]["payload"]
     assert isinstance(payload, dict)
     payload["at_ms"] = 1
     if kind == "diagnostic":
-        transcript[9]["kind"] = kind
-        transcript[9]["payload"] = {
+        transcript[10]["kind"] = kind
+        transcript[10]["payload"] = {
             "at_ms": 1,
             "code": "synthetic",
             "message": "synthetic",
@@ -1254,14 +1368,14 @@ def test_transcript_accepts_evidence_at_explicitly_advanced_manual_time(
     kind: str,
 ) -> None:
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
-    transcript[8]["kind"] = "input.clock_advanced"
-    transcript[8]["payload"] = {"at_ms": 1, "delta_ms": 1}
-    evidence = transcript[9]["payload"]
+    transcript[9]["kind"] = "input.clock_advanced"
+    transcript[9]["payload"] = {"at_ms": 1, "delta_ms": 1}
+    evidence = transcript[10]["payload"]
     assert isinstance(evidence, dict)
     evidence["at_ms"] = 1
     if kind == "diagnostic":
-        transcript[9]["kind"] = kind
-        transcript[9]["payload"] = {
+        transcript[10]["kind"] = kind
+        transcript[10]["payload"] = {
             "at_ms": 1,
             "code": "synthetic",
             "message": "synthetic",
@@ -1275,8 +1389,8 @@ def test_transcript_accepts_evidence_at_explicitly_advanced_manual_time(
 def test_serialize_transcript_rejects_clipboard_input_without_text() -> None:
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
     transcript = parse_transcript(fixture)
-    transcript[8]["kind"] = "input.clipboard_set"
-    transcript[8]["payload"] = {"at_ms": 0}
+    transcript[9]["kind"] = "input.clipboard_set"
+    transcript[9]["payload"] = {"at_ms": 0}
 
     with pytest.raises(TranscriptValidationError, match="input.clipboard_set"):
         serialize_transcript(transcript)
@@ -1285,8 +1399,8 @@ def test_serialize_transcript_rejects_clipboard_input_without_text() -> None:
 def test_serialize_transcript_rejects_stop_input_with_extra_member() -> None:
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
     transcript = parse_transcript(fixture)
-    transcript[8]["kind"] = "input.stop"
-    transcript[8]["payload"] = {"at_ms": 0, "reason": "unexpected"}
+    transcript[9]["kind"] = "input.stop"
+    transcript[9]["payload"] = {"at_ms": 0, "reason": "unexpected"}
 
     with pytest.raises(TranscriptValidationError, match="input.stop"):
         serialize_transcript(transcript)
@@ -1295,8 +1409,8 @@ def test_serialize_transcript_rejects_stop_input_with_extra_member() -> None:
 def test_serialize_transcript_rejects_diagnostic_without_code() -> None:
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
     transcript = parse_transcript(fixture)
-    transcript[9]["kind"] = "diagnostic"
-    transcript[9]["payload"] = {"at_ms": 0, "message": "missing code"}
+    transcript[10]["kind"] = "diagnostic"
+    transcript[10]["payload"] = {"at_ms": 0, "message": "missing code"}
 
     with pytest.raises(TranscriptValidationError, match="diagnostic"):
         serialize_transcript(transcript)
@@ -1315,7 +1429,7 @@ def test_serialize_transcript_rejects_failed_run_without_structured_error() -> N
 def test_serialize_transcript_rejects_observation_without_required_members() -> None:
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
     transcript = parse_transcript(fixture)
-    transcript[9]["payload"] = {"at_ms": 0}
+    transcript[10]["payload"] = {"at_ms": 0}
 
     with pytest.raises(TranscriptValidationError, match="observation"):
         serialize_transcript(transcript)
@@ -1324,7 +1438,7 @@ def test_serialize_transcript_rejects_observation_without_required_members() -> 
 def test_serialize_transcript_rejects_ui_without_required_members() -> None:
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
     transcript = parse_transcript(fixture)
-    payload = transcript[9]["payload"]
+    payload = transcript[10]["payload"]
     assert isinstance(payload, dict)
     payload["ui"] = {}
 
@@ -1335,7 +1449,7 @@ def test_serialize_transcript_rejects_ui_without_required_members() -> None:
 @pytest.mark.parametrize("member", ["regions", "focus", "cursor", "mode"])
 def test_transcript_rejects_ui_without_required_member(member: str) -> None:
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
-    payload = transcript[9]["payload"]
+    payload = transcript[10]["payload"]
     assert isinstance(payload, dict)
     ui = payload["ui"]
     assert isinstance(ui, dict)
@@ -1357,7 +1471,7 @@ def test_transcript_rejects_ui_without_required_member(member: str) -> None:
 
 def test_transcript_accepts_nullable_ui_members_with_extension() -> None:
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
-    payload = transcript[9]["payload"]
+    payload = transcript[10]["payload"]
     assert isinstance(payload, dict)
     ui = payload["ui"]
     assert isinstance(ui, dict)
@@ -1371,7 +1485,7 @@ def test_transcript_accepts_nullable_ui_members_with_extension() -> None:
 def test_serialize_transcript_rejects_ui_focus_not_in_regions() -> None:
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
     transcript = parse_transcript(fixture)
-    payload = transcript[9]["payload"]
+    payload = transcript[10]["payload"]
     assert isinstance(payload, dict)
     ui = payload["ui"]
     assert isinstance(ui, dict)
@@ -1384,7 +1498,7 @@ def test_serialize_transcript_rejects_ui_focus_not_in_regions() -> None:
 def test_serialize_transcript_rejects_observation_event_without_type() -> None:
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
     transcript = parse_transcript(fixture)
-    payload = transcript[9]["payload"]
+    payload = transcript[10]["payload"]
     assert isinstance(payload, dict)
     payload["events"] = [{"data": None}]
 
@@ -1395,7 +1509,7 @@ def test_serialize_transcript_rejects_observation_event_without_type() -> None:
 def test_serialize_transcript_rejects_frame_with_wrong_line_count() -> None:
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
     transcript = parse_transcript(fixture)
-    payload = transcript[9]["payload"]
+    payload = transcript[10]["payload"]
     assert isinstance(payload, dict)
     payload["frame"] = {"columns": 80, "lines": [""], "rows": 2}
 
@@ -1406,7 +1520,7 @@ def test_serialize_transcript_rejects_frame_with_wrong_line_count() -> None:
 def test_serialize_transcript_rejects_exited_process_without_exit() -> None:
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
     transcript = parse_transcript(fixture)
-    payload = transcript[9]["payload"]
+    payload = transcript[10]["payload"]
     assert isinstance(payload, dict)
     payload["process"] = {"state": "exited"}
 
@@ -1416,7 +1530,7 @@ def test_serialize_transcript_rejects_exited_process_without_exit() -> None:
 
 def test_transcript_rejects_exited_process_code_that_differs_from_finished() -> None:
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
-    payload = transcript[9]["payload"]
+    payload = transcript[10]["payload"]
     assert isinstance(payload, dict)
     payload["process"] = {
         "exit": {"kind": "code", "value": 99},
@@ -1441,7 +1555,7 @@ def test_transcript_rejects_exited_process_code_that_differs_from_finished() -> 
 
 def test_transcript_rejects_exited_process_signal_that_differs_from_finished() -> None:
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
-    observation = transcript[9]["payload"]
+    observation = transcript[10]["payload"]
     terminal = transcript[-1]["payload"]
     assert isinstance(observation, dict)
     assert isinstance(terminal, dict)
@@ -1478,7 +1592,7 @@ def test_transcript_accepts_exited_process_that_matches_finished(
     exit_value: dict[str, JsonValue],
 ) -> None:
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
-    observation = transcript[9]["payload"]
+    observation = transcript[10]["payload"]
     terminal = transcript[-1]["payload"]
     assert isinstance(observation, dict)
     assert isinstance(terminal, dict)
@@ -1490,52 +1604,9 @@ def test_transcript_accepts_exited_process_that_matches_finished(
     assert parse_transcript(encoded) == transcript
 
 
-def test_transcript_rejects_one_mismatched_exit_among_multiple_observations() -> None:
-    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
-    first_observation = transcript[9]["payload"]
-    assert isinstance(first_observation, dict)
-    first_observation["process"] = {
-        "exit": {"kind": "code", "value": 0},
-        "state": "exited",
-    }
-    second_observation = deepcopy(transcript[9])
-    second_observation["id"] = "record-second-observation"
-    second_observation["seq"] = 10
-    second_payload = second_observation["payload"]
-    assert isinstance(second_payload, dict)
-    second_payload["process"] = {
-        "exit": {"kind": "code", "value": 99},
-        "state": "exited",
-    }
-    transcript.insert(-1, second_observation)
-    transcript[-1]["seq"] = 11
-
-    with pytest.raises(TranscriptValidationError, match="process exit"):
-        serialize_transcript(transcript)
-
-
-def test_transcript_accepts_multiple_matching_exited_process_observations() -> None:
-    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
-    first_observation = transcript[9]["payload"]
-    assert isinstance(first_observation, dict)
-    first_observation["process"] = {
-        "exit": {"kind": "code", "value": 0},
-        "state": "exited",
-    }
-    second_observation = deepcopy(transcript[9])
-    second_observation["id"] = "record-second-observation"
-    second_observation["seq"] = 10
-    transcript.insert(-1, second_observation)
-    transcript[-1]["seq"] = 11
-
-    encoded = serialize_transcript(transcript)
-
-    assert parse_transcript(encoded) == transcript
-
-
 def test_transcript_exit_coherence_ignores_uninterpreted_extensions() -> None:
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
-    observation = transcript[9]["payload"]
+    observation = transcript[10]["payload"]
     terminal = transcript[-1]["payload"]
     assert isinstance(observation, dict)
     assert isinstance(terminal, dict)
@@ -1593,14 +1664,25 @@ def _transcript_with_payload_kind(kind: str) -> tuple[list[dict[str, JsonValue]]
             },
         },
     }
-    if kind in body_payloads:
-        transcript[8]["kind"] = kind
-        transcript[8]["payload"] = body_payloads[kind]
+    if kind.startswith("input."):
+        transcript[INPUT_INDEX]["kind"] = kind
+        transcript[INPUT_INDEX]["payload"] = body_payloads[kind]
         if kind == "input.clock_advanced":
-            observation = transcript[9]["payload"]
+            observation = transcript[OBSERVATION_INDEX]["payload"]
             assert isinstance(observation, dict)
             observation["at_ms"] = 1
-        return transcript, 8
+        return transcript, INPUT_INDEX
+    if kind == "diagnostic":
+        diagnostic = deepcopy(transcript[INPUT_INDEX])
+        diagnostic["kind"] = kind
+        diagnostic["payload"] = body_payloads[kind]
+        transcript.insert(OBSERVATION_INDEX, diagnostic)
+        for sequence, record in enumerate(transcript):
+            record["id"] = f"record-{sequence:03d}"
+            record["seq"] = sequence
+        return transcript, OBSERVATION_INDEX
+    if kind == "observation":
+        return transcript, OBSERVATION_INDEX
     if kind == "run.started":
         return transcript, 0
     if kind == "capability.result":
@@ -1624,14 +1706,14 @@ def _transcript_with_payload_kind(kind: str) -> tuple[list[dict[str, JsonValue]]
                 "status": "unsupported",
             }
         )
-        transcript[8]["kind"] = kind
-        transcript[8]["payload"] = {
+        transcript[READINESS_INDEX]["kind"] = kind
+        transcript[READINESS_INDEX]["payload"] = {
             "code": "constraint-unsupported",
             "constraint": "network",
             "message": "synthetic",
         }
-        del transcript[9:]
-        return transcript, 8
+        del transcript[READINESS_INDEX + 1 :]
+        return transcript, READINESS_INDEX
     raise AssertionError(f"unsupported test kind: {kind}")
 
 

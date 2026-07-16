@@ -19,7 +19,7 @@ def test_persist_transcript_evidence_redacts_text_before_canonical_write(
     tmp_path: Path,
 ) -> None:
     records = parse_transcript(TRANSCRIPT_FIXTURE.read_bytes())
-    input_payload = records[8]["payload"]
+    input_payload = records[9]["payload"]
     assert isinstance(input_payload, dict)
     input_payload["text"] = "password=hunter2"
     destination = tmp_path / "artifacts" / "nested" / "transcript.jsonl"
@@ -27,7 +27,7 @@ def test_persist_transcript_evidence_redacts_text_before_canonical_write(
     persist_transcript_evidence(destination, records)
 
     persisted = parse_transcript(destination.read_bytes())
-    assert persisted[8]["payload"] == {
+    assert persisted[9]["payload"] == {
         "at_ms": 0,
         "text": "<redacted:input-text>",
     }
@@ -136,12 +136,12 @@ def test_persist_transcript_evidence_redacts_semantic_evidence_fields(
     tmp_path: Path,
 ) -> None:
     records = parse_transcript(TRANSCRIPT_FIXTURE.read_bytes())
-    input_record = records[8]
+    input_record = records[9]
     input_record["kind"] = "input.clipboard_set"
     input_payload = input_record["payload"]
     assert isinstance(input_payload, dict)
     input_payload["text"] = "copied secret"
-    observation = records[9]
+    observation = records[10]
     observation["x-private"] = {"value": "extension secret"}
     observation_payload = observation["payload"]
     assert isinstance(observation_payload, dict)
@@ -167,11 +167,11 @@ def test_persist_transcript_evidence_redacts_semantic_evidence_fields(
     persist_transcript_evidence(destination, records)
 
     persisted = parse_transcript(destination.read_bytes())
-    assert persisted[8]["payload"] == {
+    assert persisted[9]["payload"] == {
         "at_ms": 0,
         "text": "<redacted:clipboard>",
     }
-    persisted_observation = persisted[9]
+    persisted_observation = persisted[10]
     assert persisted_observation["x-private"] == "<redacted:extension>"
     assert persisted_observation["payload"] == {
         "at_ms": 0,
@@ -262,7 +262,7 @@ def test_persist_transcript_evidence_rejects_unknown_semantic_members(
     records = parse_transcript(TRANSCRIPT_FIXTURE.read_bytes())
     started_payload = records[0]["payload"]
     assert isinstance(started_payload, dict)
-    observation_payload = records[9]["payload"]
+    observation_payload = records[10]["payload"]
     assert isinstance(observation_payload, dict)
     observation_payload["private"] = "unclassified observation"
     events = observation_payload["events"]
@@ -475,7 +475,7 @@ def test_redact_evidence_redacts_credentials_in_free_text(text: str) -> None:
 
 def test_persist_transcript_evidence_rejects_non_finite_numbers(tmp_path: Path) -> None:
     records = parse_transcript(TRANSCRIPT_FIXTURE.read_bytes())
-    observation_payload = records[9]["payload"]
+    observation_payload = records[10]["payload"]
     assert isinstance(observation_payload, dict)
     observation_payload["state"] = {"value": float("nan")}
     destination = tmp_path / "transcript.jsonl"

@@ -1,7 +1,9 @@
 # Phase 1 Adapter Execution Contract
 
 - **Status:** accepted by the maintainer on 2026-07-16; executable lifecycle
-  enforcement and public adapter types remain follow-up work.
+  enforcement and canonical fixtures are tracked by
+  [#44](https://github.com/hoelzl/termverify/issues/44), while public adapter
+  types remain follow-up work.
 - **Issue:** [#42](https://github.com/hoelzl/termverify/issues/42)
 - **Date:** 2026-07-16
 - **Scope:** API-neutral execution semantics for the fake/direct adapter and the
@@ -22,9 +24,9 @@ model. It preserves deterministic replay and leaves explicit concurrent
 correlation for a later protocol version if a real application requires it.
 This decision authorizes an inception-v1 lifecycle correction under the
 accepted pre-client compatibility policy. It requires no new record member or
-kind, but it does not change the executable v1 corpus by itself: the normative
-protocol prose, fixtures, validator, and property model must migrate together
-in the follow-up contract PR.
+kind. Issue #44 migrates the normative protocol prose, fixtures, validator, and
+property model together; public adapter implementation remains outside this
+decision document.
 
 ## Decision
 
@@ -241,13 +243,10 @@ to enforce:
 8. no unsolicited direct-adapter body records while idle.
 
 These are accepted inception-v1 lifecycle corrections. They add no generic
-member and do not authorize exhaustive schema work. This design PR deliberately
-does not edit the normative lifecycle or migrate the canonical fixture ahead of
-its validator: the follow-up executable-contract PR must update protocol prose,
-fixtures, validator, and property model as one reviewed candidate. Until that
-candidate is accepted, the current Python validator and committed fixture
-remain authoritative for transcript acceptance and the public adapter/runtime
-entry gate remains closed.
+member and do not authorize exhaustive schema work. Issue #44 updates protocol
+prose, fixtures, validator, and property model as one reviewed candidate. The
+public adapter/runtime entry gate remains closed until immutable contract types
+and enforcement receipts are implemented and reviewed.
 
 ## Deferred decisions
 
@@ -264,16 +263,17 @@ This contract intentionally does not decide:
 
 Each requires a focused issue and independently reviewable acceptance evidence.
 
-## Acceptance evidence for follow-up implementation
+## Acceptance evidence
 
-The contract becomes executable only when model-based tests demonstrate every
-legal transition and reject input before readiness, overlapping epochs, idle
-unsolicited records, input after stop, false enforcement receipts, unsupported
-body records, and records after terminal. Canonical fixtures must cover startup
-failure, unsupported negotiation positions, initial readiness, successful
-input epochs, natural subject exit, stop and drain, and failure during an open
-epoch. The terminal feasibility slice must use a harmless synthetic child and
-must distinguish EOF/exit evidence from quiet-period timing.
+Issue #44 supplies model-based lifecycle tests that demonstrate legal
+transitions and reject input before readiness, overlapping epochs, idle
+unsolicited records, input after stop, unsupported body records, body after
+process exit, and records after terminal. Canonical fixtures cover startup
+failure, unsupported negotiation, initial readiness, successful input epochs,
+natural subject exit, and stop/drain. False enforcement receipts remain an
+adapter-contract test requirement. The terminal feasibility slice must use a
+harmless synthetic child and distinguish EOF/exit evidence from quiet-period
+timing.
 
 ## References
 

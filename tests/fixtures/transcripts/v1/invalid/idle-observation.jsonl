@@ -7,6 +7,7 @@
 {"id":"record-006","kind":"capability.result","payload":{"constraint":"filesystem","effective":{"mode":"sandbox","root_id":"fixture-root"},"status":"enforced"},"protocol":"termverify.transcript/v1","run_id":"run-basic","seq":6}
 {"id":"record-007","kind":"capability.result","payload":{"constraint":"network","effective":{"mode":"deny"},"status":"enforced"},"protocol":"termverify.transcript/v1","run_id":"run-basic","seq":7}
 {"id":"record-008","kind":"observation","payload":{"at_ms":0,"events":[],"state":{},"ui":{"cursor":{"column":0,"row":0,"visible":false},"focus":null,"mode":null,"regions":[]}},"protocol":"termverify.transcript/v1","run_id":"run-basic","seq":8}
-{"id":"record-009","kind":"input.text","payload":{"at_ms":0,"text":"hello"},"protocol":"termverify.transcript/v1","run_id":"run-basic","seq":9}
-{"id":"record-010","kind":"observation","payload":{"at_ms":0,"events":[],"state":{},"ui":{"cursor":{"column":0,"row":0,"visible":false},"focus":null,"mode":null,"regions":[]}},"protocol":"termverify.transcript/v1","run_id":"run-basic","seq":10}
-{"id":"record-011","kind":"run.finished","payload":{"exit":{"kind":"code","value":0}},"protocol":"termverify.transcript/v1","run_id":"run-basic","seq":11}
+{"id":"record-009","kind":"observation","payload":{"at_ms":0,"events":[],"state":{},"ui":{"cursor":{"column":0,"row":0,"visible":false},"focus":null,"mode":null,"regions":[]}},"protocol":"termverify.transcript/v1","run_id":"run-basic","seq":9}
+{"id":"record-010","kind":"input.text","payload":{"at_ms":0,"text":"hello"},"protocol":"termverify.transcript/v1","run_id":"run-basic","seq":10}
+{"id":"record-011","kind":"observation","payload":{"at_ms":0,"events":[],"state":{},"ui":{"cursor":{"column":0,"row":0,"visible":false},"focus":null,"mode":null,"regions":[]}},"protocol":"termverify.transcript/v1","run_id":"run-basic","seq":11}
+{"id":"record-012","kind":"run.finished","payload":{"exit":{"kind":"code","value":0}},"protocol":"termverify.transcript/v1","run_id":"run-basic","seq":12}

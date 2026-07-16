@@ -1,0 +1,5 @@
+{
+  "schema": "termverify.fixture-evidence/v1",
+  "classification": "public-synthetic",
+  "fixture": "idle-observation.jsonl"
+}
