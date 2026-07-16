@@ -863,6 +863,141 @@ def test_serialize_transcript_rejects_boolean_mouse_scroll_delta() -> None:
         serialize_transcript(transcript)
 
 
+@pytest.mark.parametrize("member", ["button", "delta"])
+def test_serialize_transcript_rejects_forbidden_member_for_mouse_move(
+    member: str,
+) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    transcript[8]["kind"] = "input.mouse"
+    payload: dict[str, JsonValue] = {
+        "action": "move",
+        "at_ms": 0,
+        "column": 0,
+        "row": 0,
+    }
+    payload[member] = None
+    transcript[8]["payload"] = payload
+
+    with pytest.raises(TranscriptValidationError, match="mouse move"):
+        serialize_transcript(transcript)
+
+
+@pytest.mark.parametrize("action", ["press", "release"])
+def test_serialize_transcript_rejects_delta_member_for_mouse_button_action(
+    action: str,
+) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    transcript[8]["kind"] = "input.mouse"
+    transcript[8]["payload"] = {
+        "action": action,
+        "at_ms": 0,
+        "button": "left",
+        "column": 0,
+        "delta": None,
+        "row": 0,
+    }
+
+    with pytest.raises(TranscriptValidationError, match="mouse button"):
+        serialize_transcript(transcript)
+
+
+def test_serialize_transcript_rejects_button_member_for_mouse_scroll() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    transcript[8]["kind"] = "input.mouse"
+    transcript[8]["payload"] = {
+        "action": "scroll",
+        "at_ms": 0,
+        "button": None,
+        "column": 0,
+        "delta": 1,
+        "row": 0,
+    }
+
+    with pytest.raises(TranscriptValidationError, match="scroll delta"):
+        serialize_transcript(transcript)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"action": "move", "at_ms": 0, "button": None, "column": 0, "row": 0},
+        {"action": "move", "at_ms": 0, "column": 0, "delta": None, "row": 0},
+        {
+            "action": "press",
+            "at_ms": 0,
+            "button": "left",
+            "column": 0,
+            "delta": None,
+            "row": 0,
+        },
+        {
+            "action": "release",
+            "at_ms": 0,
+            "button": "left",
+            "column": 0,
+            "delta": None,
+            "row": 0,
+        },
+        {
+            "action": "scroll",
+            "at_ms": 0,
+            "button": None,
+            "column": 0,
+            "delta": 1,
+            "row": 0,
+        },
+    ],
+)
+def test_parse_transcript_rejects_action_forbidden_mouse_member(
+    payload: dict[str, JsonValue],
+) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    transcript[8]["kind"] = "input.mouse"
+    transcript[8]["payload"] = payload
+    encoded = b"".join(
+        json.dumps(
+            record, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        ).encode()
+        + b"\n"
+        for record in transcript
+    )
+
+    with pytest.raises(TranscriptValidationError, match="input.mouse"):
+        parse_transcript(encoded)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "action": "press",
+            "at_ms": 0,
+            "button": "left",
+            "column": 0,
+            "row": 0,
+        },
+        {
+            "action": "release",
+            "at_ms": 0,
+            "button": "right",
+            "column": 0,
+            "row": 0,
+        },
+        {"action": "move", "at_ms": 0, "column": 0, "row": 0},
+        {"action": "scroll", "at_ms": 0, "column": 0, "delta": -1, "row": 0},
+    ],
+)
+def test_mouse_action_with_extension_round_trips(
+    payload: dict[str, JsonValue],
+) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload["x-synthetic"] = {"uninterpreted": True}
+    transcript[8]["kind"] = "input.mouse"
+    transcript[8]["payload"] = payload
+
+    assert parse_transcript(serialize_transcript(transcript)) == transcript
+
+
 def test_serialize_transcript_rejects_clock_advance_with_wrong_time() -> None:
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
     transcript = parse_transcript(fixture)

@@ -77,7 +77,7 @@ review contexts. No tracked repository files were modified by the review.
 - `actionlint` was not available locally. GitHub's pinned workflow-security and
   dependency-vulnerability jobs passed and remain the current remote evidence.
 
-### Reconciliation through merged PR #21 and issue #22
+### Reconciliation through merged PR #23 and issue #24
 
 The confirmed-finding lists below preserve the original review baseline. An
 intermediate reconciliation after PRs #12, #13, and #15 on clean `main` at
@@ -105,22 +105,34 @@ prerequisite was filed:
   `run.finished` exit kind and value, completing issue #20. Uninterpreted `x-`
   extensions do not participate, and the relationship to `run.failed` and
   `run.unsupported` remains later decision work.
-- A fresh probe after PR #21 confirmed that malformed locale values including
-  `not a tag!`, `en_US`, and the incomplete private-use singleton `x` remained
-  accepted. Issue [#22](https://github.com/hoelzl/termverify/issues/22) is the
-  next focused prerequisite: accept literal `C` or RFC 5646 well-formed syntax,
-  preserve caller spelling and case, and avoid registry lookup or normalization.
-  Timezone conformance remains separate because its accepted vocabulary and
-  platform-independent registry/version mechanism still require a decision.
+- PR #23 completed issue #22 by requiring literal, case-sensitive `C` or RFC
+  5646 well-formed locale syntax through the shared parser/serializer semantic
+  validator. The codec preserves caller spelling and case and performs no
+  registry lookup, canonicalization, or preferred-value rewriting. Locale
+  enforcement and attestation remain future adapter-contract work; syntax
+  conformance does not prove that a requested locale was applied.
+- A fresh probe after PR #23 reconfirmed that `not/a real timezone`, `../UTC`,
+  and `Mars/Olympus` are accepted by both parser and serializer. The prose says
+  IANA identifier or `UTC`, but does not yet choose a named/versioned tzdb,
+  canonical-versus-alias policy, compatibility/update semantics, or another
+  deterministic membership mechanism. No timezone implementation issue should
+  invent those decisions or depend on ambient `zoneinfo` data.
+- The same probe found an independent local rule with already accepted
+  semantics: action-forbidden `input.mouse` members are accepted when explicitly
+  set to JSON `null`. Issue
+  [#24](https://github.com/hoelzl/termverify/issues/24) is the next focused
+  prerequisite: distinguish member absence from a present null value for
+  `button` and `delta` while preserving `x-` extensions and parser/serializer
+  symmetry.
 
-The adapter-contract entry gate remains closed during and after issue #22.
+The adapter-contract entry gate remains closed during and after issue #24.
 Remaining gates
 include other Workstream 1 local and cross-record rules, the deterministic
 vocabularies and negotiation/attestation semantics in Workstream 2,
 locale enforcement/attestation and timezone conformance, fixture/property
 coverage, resource limits, and the deliberately bounded schema package-access
 criteria in Workstreams 3 and 6.
-Neither issues #16/#18/#20/#22 nor the merged schema slice authorizes
+Neither issues #16/#18/#20/#22/#24 nor the merged schema slice authorizes
 adapter/runtime implementation or exhaustive schema work.
 
 ### Confirmed P0 defects
@@ -147,13 +159,14 @@ adapter/runtime implementation or exhaustive schema work.
 
 ### Confirmed P1 defects and oversights
 
-- Identifier grammar, BCP 47/`C` locale, and IANA/`UTC` timezone rules are not
-  enforced (`docs/knowledge/protocol.md:47-51`, `:101-107` versus
-  `src/termverify/transcript.py:143-148`, `:256-258`).
+- Identifier grammar and RFC 5646/`C` locale syntax are now enforced. IANA/`UTC`
+  timezone conformance remains unresolved because deterministic vocabulary,
+  alias, registry-version, and update semantics are not yet accepted.
 - Required terminal capabilities can be omitted when the echoed effective value
   omits them too; nested configuration objects are not consistently closed.
-- Python `bool` values can satisfy JSON integer/equality rules for `seq`, mouse
-  scroll delta, and capability effective values.
+- At the original review baseline, Python `bool` values could satisfy JSON
+  integer/equality rules for `seq`, mouse scroll delta, and capability effective
+  values; the current validator rejects those cases.
 - Unknown non-`x-` members are rejected for input payloads but accepted in many
   other generic payloads and nested objects.
 - Observation and diagnostic times need only be non-negative and may contradict

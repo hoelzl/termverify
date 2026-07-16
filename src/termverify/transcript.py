@@ -571,11 +571,14 @@ def _validate_lifecycle(records: list[Record]) -> None:
             button = input_payload.get("button")
             delta = input_payload.get("delta")
             if action in {"press", "release"}:
-                if button not in {"left", "middle", "right"} or delta is not None:
+                if (
+                    button not in {"left", "middle", "right"}
+                    or "delta" in input_payload
+                ):
                     raise TranscriptValidationError("input.mouse button is invalid")
             elif action == "scroll":
                 if (
-                    button is not None
+                    "button" in input_payload
                     or not isinstance(delta, int)
                     or isinstance(delta, bool)
                     or not delta
@@ -583,7 +586,7 @@ def _validate_lifecycle(records: list[Record]) -> None:
                     raise TranscriptValidationError(
                         "input.mouse scroll delta is invalid"
                     )
-            elif button is not None or delta is not None:
+            elif "button" in input_payload or "delta" in input_payload:
                 raise TranscriptValidationError(
                     "input.mouse move forbids button and delta"
                 )
