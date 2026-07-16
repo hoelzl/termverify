@@ -34,9 +34,11 @@ quiescent observation or terminal result before another input is accepted.
 Quiescence never depends on wall-clock quiet periods. The accepted
 [adapter execution contract](../agent/design/phase-1-adapter-execution-contract.md)
 defines readiness, causality, stop/drain behavior, and enforcement receipts
-before public adapter types are introduced. The protocol validator, canonical
-fixtures, and generative property model implement these lifecycle semantics;
-public adapter types and enforcement receipts remain follow-up work.
+for the public immutable contracts and direct execution path. The protocol
+validator, canonical fixtures, and generative property model implement the same
+lifecycle semantics. `termverify.direct.DirectAdapter` composes explicit
+constraint and application ports without consulting ambient time, terminal, or
+process state.
 
 The direct adapter is the default for fast unit and property tests. The
 production adapter verifies the real terminal path: input decoding, focus,
