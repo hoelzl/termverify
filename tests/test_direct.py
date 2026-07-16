@@ -389,6 +389,29 @@ def test_invalid_initial_quiescence_becomes_start_failure() -> None:
     assert result.failure.message == "application returned invalid initial evidence"
 
 
+def test_started_construction_failure_aborts_and_becomes_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    application = _Application()
+    adapter = DirectAdapter(application)
+
+    def reject_started(**kwargs: Any) -> Started:
+        del kwargs
+        raise ValueError("post-initialization invariant failed")
+
+    monkeypatch.setattr("termverify.direct.Started", reject_started)
+
+    result = adapter.start("run-direct", _configuration())
+
+    assert isinstance(result, StartFailed)
+    assert result.failure == AdapterFailure(
+        "adapter-start-failed", "application returned invalid initial evidence"
+    )
+    assert application.aborts == [ManualTime(0)]
+    with pytest.raises(RuntimeError, match="already started"):
+        adapter.start("run-again", _configuration())
+
+
 class _RaisingDispatch(_Application):
     def dispatch(
         self, input_event: TextInput | Resize
@@ -449,7 +472,10 @@ def test_abort_lookup_failure_is_recorded_and_terminal_is_absorbing() -> None:
     startup_adapter = DirectAdapter(_StartupAbortLookupFailure())
     startup_result = startup_adapter.start("run-startup", _configuration())
     assert isinstance(startup_result, StartFailed)
-    assert startup_result.failure.details == {"abort": "failed"}
+    assert startup_result.failure.details == {
+        "application": None,
+        "abort": "failed",
+    }
     with pytest.raises(RuntimeError, match="already started"):
         startup_adapter.start("run-again", _configuration())
 
@@ -462,7 +488,7 @@ def test_abort_lookup_failure_is_recorded_and_terminal_is_absorbing() -> None:
             AdapterFailure(
                 "adapter-runtime-failed",
                 "application dispatch failed",
-                {"abort": "failed"},
+                {"application": None, "abort": "failed"},
             )
         ),
     )
@@ -474,7 +500,10 @@ def test_malformed_abort_result_is_recorded_for_startup_and_runtime() -> None:
     startup_adapter = DirectAdapter(_MalformedStartupAbort())
     startup_result = startup_adapter.start("run-startup", _configuration())
     assert isinstance(startup_result, StartFailed)
-    assert startup_result.failure.details == {"abort": "failed"}
+    assert startup_result.failure.details == {
+        "application": None,
+        "abort": "failed",
+    }
 
     runtime_adapter = DirectAdapter(_MalformedRuntimeAbort())
     assert isinstance(runtime_adapter.start("run-runtime", _configuration()), Started)
@@ -485,7 +514,7 @@ def test_malformed_abort_result_is_recorded_for_startup_and_runtime() -> None:
             AdapterFailure(
                 "adapter-runtime-failed",
                 "application dispatch failed",
-                {"abort": "failed"},
+                {"application": None, "abort": "failed"},
             )
         ),
     )
@@ -533,7 +562,56 @@ def test_startup_abort_failure_is_recorded_without_losing_original_failure(
     assert isinstance(result, StartFailed)
     assert result.failure.code == "adapter-start-failed"
     assert result.failure.message == message
-    assert result.failure.details == {"abort": "failed"}
+    assert result.failure.details == {"application": None, "abort": "failed"}
+
+
+class _DetailedRuntimeFailureWithFailingAbort(_Application):
+    def __init__(self, details: Any) -> None:
+        super().__init__()
+        self.details = details
+
+    def dispatch(
+        self, input_event: TextInput | Resize
+    ) -> EpochCompleted | TerminalResult | AdapterFailure:
+        del input_event
+        return AdapterFailure(
+            "adapter-runtime-failed",
+            "application reported failure",
+            self.details,
+        )
+
+    def abort(self, input_event: Stop) -> None:
+        self.aborts.append(input_event.at_ms)
+        raise RuntimeError("abort failed")
+
+
+@pytest.mark.parametrize(
+    "details",
+    [
+        {"abort": "application value", "context": "dispatch"},
+        ["non-mapping", 7],
+    ],
+)
+def test_abort_failure_preserves_application_failure_details(details: Any) -> None:
+    application = _DetailedRuntimeFailureWithFailingAbort(details)
+    adapter = DirectAdapter(application)
+    assert isinstance(adapter.start("run-direct", _configuration()), Started)
+
+    result = adapter.dispatch(TextInput(ManualTime(0), "fail"))
+
+    assert result == TerminalResult(
+        None,
+        RunFailed(
+            AdapterFailure(
+                "adapter-runtime-failed",
+                "application reported failure",
+                {"application": details, "abort": "failed"},
+            )
+        ),
+    )
+    assert application.aborts == [ManualTime(0)]
+    with pytest.raises(RuntimeError, match="not idle"):
+        adapter.dispatch(TextInput(ManualTime(0), "absorbed"))
 
 
 def test_abort_exception_remains_a_stable_absorbing_runtime_failure() -> None:
@@ -548,7 +626,7 @@ def test_abort_exception_remains_a_stable_absorbing_runtime_failure() -> None:
             AdapterFailure(
                 "adapter-runtime-failed",
                 "application dispatch failed",
-                {"abort": "failed"},
+                {"application": None, "abort": "failed"},
             )
         ),
     )
@@ -838,6 +916,105 @@ def test_prewrapped_runtime_failure_is_rejected_and_aborted_for_every_operation(
     stop_result = stop_adapter.stop(Stop(ManualTime(0)))
     assert stop_result == expected
     assert stop_application.aborts == [ManualTime(0)]
+
+
+class _ClassificationApplication(_Application):
+    def __init__(self, result: object) -> None:
+        super().__init__()
+        self.result = result
+
+    def dispatch(
+        self, input_event: TextInput | Resize
+    ) -> EpochCompleted | TerminalResult | AdapterFailure:
+        del input_event
+        return cast(EpochCompleted | TerminalResult | AdapterFailure, self.result)
+
+    def advance_clock(
+        self, input_event: ClockAdvance
+    ) -> EpochCompleted | TerminalResult | AdapterFailure:
+        del input_event
+        return cast(EpochCompleted | TerminalResult | AdapterFailure, self.result)
+
+    def stop(self, input_event: Stop) -> TerminalResult | AdapterFailure:
+        del input_event
+        return cast(TerminalResult | AdapterFailure, self.result)
+
+
+@pytest.mark.parametrize("operation", ["dispatch", "clock", "stop"])
+@pytest.mark.parametrize(
+    "category",
+    [
+        "epoch",
+        "terminal",
+        "failure",
+        "wrong-failure-code",
+        "foreign",
+        "wrong-time",
+        "wrong-terminal-outcome",
+    ],
+)
+def test_runtime_result_classification_matrix(operation: str, category: str) -> None:
+    at_ms = ManualTime(1 if operation == "clock" else 0)
+    if category == "epoch":
+        application_result: object = EpochCompleted(_observation(at_ms))
+    elif category == "terminal":
+        application_result = TerminalResult(_observation(at_ms), RunFinished.code(0))
+    elif category == "failure":
+        application_result = AdapterFailure(
+            "adapter-runtime-failed", "application reported failure"
+        )
+    elif category == "wrong-failure-code":
+        application_result = AdapterFailure(
+            "adapter-start-failed", "wrong failure phase"
+        )
+    elif category == "foreign":
+        application_result = object()
+    elif category == "wrong-time":
+        application_result = TerminalResult(
+            _observation(at_ms + 1), RunFinished.code(0)
+        )
+    else:
+        application_result = TerminalResult(
+            None,
+            RunFailed(AdapterFailure("adapter-runtime-failed", "prewrapped")),
+        )
+    application = _ClassificationApplication(application_result)
+    adapter = DirectAdapter(application)
+    assert isinstance(
+        adapter.start(f"run-{operation}-{category}", _configuration()), Started
+    )
+
+    if operation == "dispatch":
+        result = adapter.dispatch(TextInput(at_ms, "input"))
+    elif operation == "clock":
+        result = adapter.advance_clock(ClockAdvance(at_ms, 1))
+    else:
+        result = adapter.stop(Stop(at_ms))
+
+    if category == "epoch" and operation != "stop":
+        assert result == application_result
+        assert application.aborts == []
+        return
+    if category == "terminal":
+        assert result == application_result
+        assert application.aborts == []
+    else:
+        assert isinstance(result, TerminalResult)
+        assert isinstance(result.outcome, RunFailed)
+        if category == "failure":
+            expected_message = "application reported failure"
+        elif category == "wrong-time":
+            expected_message = "application returned invalid terminal evidence"
+        elif category == "wrong-terminal-outcome":
+            expected_message = "application returned invalid terminal outcome"
+        elif operation == "stop":
+            expected_message = "application did not report termination"
+        else:
+            expected_message = "application did not report quiescence or termination"
+        assert result.outcome.failure.message == expected_message
+        assert application.aborts == [at_ms]
+    with pytest.raises(RuntimeError, match="not idle"):
+        adapter.dispatch(TextInput(at_ms, "absorbed"))
 
 
 class _ReentrantApplication(_Application):
