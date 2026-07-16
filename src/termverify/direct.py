@@ -1,0 +1,480 @@
+"""Synchronous execution for deterministic in-process application ports."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from threading import Lock
+from typing import Literal, Protocol, cast
+
+from termverify.adapter import (
+    AdapterFailure,
+    ClockAdvance,
+    ClockReceipt,
+    ConstraintName,
+    ConstraintPorts,
+    ConstraintUnsupported,
+    DispatchInput,
+    EnforcedConstraints,
+    EnforcementReceipt,
+    EpochCompleted,
+    EpochResult,
+    FilesystemReceipt,
+    LocaleReceipt,
+    ManualTime,
+    NetworkReceipt,
+    Resize,
+    RunConfiguration,
+    RunFailed,
+    RunFinished,
+    SeedReceipt,
+    Started,
+    StartFailed,
+    StartResult,
+    StartTerminated,
+    StartUnsupported,
+    Stop,
+    TerminalReceipt,
+    TerminalResult,
+    TextInput,
+    TimezoneReceipt,
+    _validate_run_id,
+)
+
+__all__ = ["DirectAdapter", "DirectApplication"]
+
+_State = Literal[
+    "created",
+    "negotiating",
+    "initializing",
+    "idle",
+    "active",
+    "stopping",
+    "terminal",
+]
+
+
+class DirectApplication(
+    ConstraintPorts, Protocol
+):  # pragma: no cover - structural declaration
+    """One bound constraint-enforcement and deterministic execution port."""
+
+    def initialize(self) -> EpochCompleted | TerminalResult | AdapterFailure: ...
+
+    def dispatch(
+        self, input_event: TextInput | Resize
+    ) -> EpochCompleted | TerminalResult | AdapterFailure: ...
+
+    def advance_clock(
+        self, input_event: ClockAdvance
+    ) -> EpochCompleted | TerminalResult | AdapterFailure: ...
+
+    def stop(self, input_event: Stop) -> TerminalResult | AdapterFailure: ...
+
+    def abort(self, input_event: Stop) -> None: ...
+
+
+def _start_failure(
+    run_id: str,
+    configuration: RunConfiguration,
+    enforced: tuple[EnforcementReceipt, ...],
+    constraint: ConstraintName,
+) -> StartFailed:
+    return StartFailed(
+        run_id=run_id,
+        requested=configuration,
+        enforced=enforced,
+        failure=AdapterFailure(
+            "adapter-start-failed",
+            "constraint enforcement failed",
+            {"constraint": constraint},
+        ),
+    )
+
+
+def _negotiate_constraint(
+    operation: Callable[[], object],
+    expected_type: type[EnforcementReceipt],
+    expected_value: object,
+    constraint: ConstraintName,
+    run_id: str,
+    configuration: RunConfiguration,
+    enforced: tuple[EnforcementReceipt, ...],
+) -> EnforcementReceipt | StartUnsupported | StartFailed:
+    try:
+        value = operation()
+    except Exception:
+        return _start_failure(run_id, configuration, enforced, constraint)
+
+    if type(value) is expected_type:
+        receipt = value
+        if receipt.run_id == run_id and receipt.effective == expected_value:
+            return receipt
+        return _start_failure(run_id, configuration, enforced, constraint)
+    if type(value) is ConstraintUnsupported:
+        if value.constraint != constraint:
+            return _start_failure(run_id, configuration, enforced, constraint)
+        return StartUnsupported(
+            run_id=run_id,
+            requested=configuration,
+            enforced=enforced,
+            constraint=value.constraint,
+            code=value.code,
+            message=value.message,
+            details=value.details,
+        )
+    if type(value) is AdapterFailure and value.code == "adapter-start-failed":
+        return StartFailed(
+            run_id=run_id,
+            requested=configuration,
+            enforced=enforced,
+            failure=value,
+        )
+    return _start_failure(run_id, configuration, enforced, constraint)
+
+
+def _terminal_time_is_valid(result: TerminalResult, at_ms: ManualTime) -> bool:
+    return (result.observation is None or result.observation.at_ms == at_ms) and all(
+        diagnostic.at_ms == at_ms for diagnostic in result.diagnostics
+    )
+
+
+class DirectAdapter:
+    """Drive one deterministic application through synchronous single-flight epochs."""
+
+    def __init__(self, application: DirectApplication) -> None:
+        self._constraints = application
+        self._application = application
+        self._state: _State = "created"
+        self._manual_time: ManualTime | None = None
+        self._state_lock = Lock()
+
+    def _set_state(self, state: _State) -> None:
+        with self._state_lock:
+            self._state = state
+
+    def _set_time_and_state(self, at_ms: ManualTime, state: _State) -> None:
+        with self._state_lock:
+            self._manual_time = at_ms
+            self._state = state
+
+    def _abort_application(self, at_ms: ManualTime) -> bool:
+        try:
+            abort = cast(Callable[[Stop], object], self._application.abort)
+            result = abort(Stop(at_ms))
+        except Exception:
+            return False
+        return result is None
+
+    def _abort_start(
+        self, failure: AdapterFailure, at_ms: ManualTime
+    ) -> AdapterFailure:
+        if self._abort_application(at_ms):
+            return failure
+        return AdapterFailure(
+            failure.code,
+            failure.message,
+            {"abort": "failed"},
+        )
+
+    def _abort_runtime(
+        self,
+        message: str,
+        at_ms: ManualTime,
+        failure: AdapterFailure | None = None,
+    ) -> TerminalResult:
+        if failure is None:
+            failure = AdapterFailure("adapter-runtime-failed", message)
+        if not self._abort_application(at_ms):
+            failure = AdapterFailure(
+                "adapter-runtime-failed",
+                message,
+                {"abort": "failed"},
+            )
+        self._set_time_and_state(at_ms, "terminal")
+        return TerminalResult(None, RunFailed(failure))
+
+    def start(self, run_id: str, configuration: RunConfiguration) -> StartResult:
+        if type(configuration) is not RunConfiguration:
+            raise TypeError("configuration must be RunConfiguration")
+        _validate_run_id(run_id)
+        with self._state_lock:
+            if self._state != "created":
+                raise RuntimeError("direct adapter has already started")
+            self._state = "negotiating"
+        steps: tuple[
+            tuple[
+                ConstraintName,
+                Callable[[], object],
+                type[EnforcementReceipt],
+                object,
+            ],
+            ...,
+        ] = (
+            (
+                "seed",
+                lambda: self._constraints.enforce_seed(run_id, configuration.seed),
+                SeedReceipt,
+                configuration.seed,
+            ),
+            (
+                "clock",
+                lambda: self._constraints.enforce_clock(run_id, configuration.clock),
+                ClockReceipt,
+                configuration.clock,
+            ),
+            (
+                "locale",
+                lambda: self._constraints.enforce_locale(run_id, configuration.locale),
+                LocaleReceipt,
+                configuration.locale,
+            ),
+            (
+                "timezone",
+                lambda: self._constraints.enforce_timezone(
+                    run_id, configuration.timezone
+                ),
+                TimezoneReceipt,
+                configuration.timezone,
+            ),
+            (
+                "terminal",
+                lambda: self._constraints.enforce_terminal(
+                    run_id, configuration.terminal
+                ),
+                TerminalReceipt,
+                configuration.terminal,
+            ),
+            (
+                "filesystem",
+                lambda: self._constraints.enforce_filesystem(
+                    run_id, configuration.filesystem
+                ),
+                FilesystemReceipt,
+                configuration.filesystem,
+            ),
+            (
+                "network",
+                lambda: self._constraints.enforce_network(
+                    run_id, configuration.network
+                ),
+                NetworkReceipt,
+                configuration.network,
+            ),
+        )
+        receipts: list[EnforcementReceipt] = []
+        for constraint, operation, receipt_type, expected_value in steps:
+            result = _negotiate_constraint(
+                operation,
+                receipt_type,
+                expected_value,
+                constraint,
+                run_id,
+                configuration,
+                tuple(receipts),
+            )
+            if isinstance(result, (StartUnsupported, StartFailed)):
+                self._set_state("terminal")
+                return result
+            receipts.append(result)
+
+        self._set_state("initializing")
+        constraints = EnforcedConstraints(
+            run_id=run_id,
+            requested=configuration,
+            seed=cast(SeedReceipt, receipts[0]),
+            clock=cast(ClockReceipt, receipts[1]),
+            locale=cast(LocaleReceipt, receipts[2]),
+            timezone=cast(TimezoneReceipt, receipts[3]),
+            terminal=cast(TerminalReceipt, receipts[4]),
+            filesystem=cast(FilesystemReceipt, receipts[5]),
+            network=cast(NetworkReceipt, receipts[6]),
+        )
+        initial_ms = ManualTime(configuration.clock.initial_ms)
+        try:
+            initialized = self._application.initialize()
+        except Exception:
+            failure = self._abort_start(
+                AdapterFailure(
+                    "adapter-start-failed", "application initialization failed"
+                ),
+                initial_ms,
+            )
+            self._set_state("terminal")
+            return StartFailed(
+                run_id=run_id,
+                requested=configuration,
+                enforced=tuple(receipts),
+                failure=failure,
+            )
+        if type(initialized) is TerminalResult:
+            if type(initialized.outcome) is RunFinished and _terminal_time_is_valid(
+                initialized, initial_ms
+            ):
+                self._set_state("terminal")
+                return StartTerminated(constraints=constraints, result=initialized)
+            failure = self._abort_start(
+                AdapterFailure(
+                    "adapter-start-failed",
+                    "application returned invalid initial terminal evidence",
+                ),
+                initial_ms,
+            )
+            self._set_state("terminal")
+            return StartFailed(
+                run_id,
+                configuration,
+                tuple(receipts),
+                failure,
+            )
+        if type(initialized) is AdapterFailure:
+            failure = initialized
+            if failure.code != "adapter-start-failed":
+                failure = AdapterFailure(
+                    "adapter-start-failed", "application initialization failed"
+                )
+            failure = self._abort_start(failure, initial_ms)
+            self._set_state("terminal")
+            return StartFailed(run_id, configuration, tuple(receipts), failure)
+        if type(initialized) is not EpochCompleted or (
+            initialized.observation.at_ms != configuration.clock.initial_ms
+            or any(
+                diagnostic.at_ms != configuration.clock.initial_ms
+                for diagnostic in initialized.diagnostics
+            )
+        ):
+            failure = self._abort_start(
+                AdapterFailure(
+                    "adapter-start-failed",
+                    "application returned invalid initial evidence",
+                ),
+                initial_ms,
+            )
+            self._set_state("terminal")
+            return StartFailed(
+                run_id,
+                configuration,
+                tuple(receipts),
+                failure,
+            )
+        started = Started(
+            constraints=constraints,
+            observation=initialized.observation,
+            diagnostics=initialized.diagnostics,
+        )
+        self._set_time_and_state(started.observation.at_ms, "idle")
+        return started
+
+    def dispatch(self, input_event: DispatchInput) -> EpochResult:
+        if type(input_event) not in (TextInput, Resize):
+            raise TypeError("dispatch input must be TextInput or Resize")
+        with self._state_lock:
+            if self._state != "idle":
+                raise RuntimeError("direct adapter is not idle")
+            if input_event.at_ms != self._manual_time:
+                raise ValueError("input must use the current manual time")
+            self._state = "active"
+        try:
+            result = self._application.dispatch(input_event)
+        except Exception:
+            return self._abort_runtime("application dispatch failed", input_event.at_ms)
+        if type(result) is EpochCompleted:
+            if result.observation.at_ms != input_event.at_ms or any(
+                diagnostic.at_ms != input_event.at_ms
+                for diagnostic in result.diagnostics
+            ):
+                return self._abort_runtime(
+                    "application returned invalid epoch evidence", input_event.at_ms
+                )
+            self._set_time_and_state(input_event.at_ms, "idle")
+            return result
+        if type(result) is TerminalResult:
+            if type(result.outcome) is not RunFinished:
+                return self._abort_runtime(
+                    "application returned invalid terminal outcome", input_event.at_ms
+                )
+            if not _terminal_time_is_valid(result, input_event.at_ms):
+                return self._abort_runtime(
+                    "application returned invalid terminal evidence", input_event.at_ms
+                )
+            self._set_time_and_state(input_event.at_ms, "terminal")
+            return result
+        if type(result) is AdapterFailure and result.code == "adapter-runtime-failed":
+            return self._abort_runtime(result.message, input_event.at_ms, result)
+        return self._abort_runtime(
+            "application did not report quiescence or termination", input_event.at_ms
+        )
+
+    def advance_clock(self, input_event: ClockAdvance) -> EpochResult:
+        if type(input_event) is not ClockAdvance:
+            raise TypeError("clock input must be ClockAdvance")
+        with self._state_lock:
+            if self._state != "idle":
+                raise RuntimeError("direct adapter is not idle")
+            if (
+                self._manual_time is None
+                or input_event.at_ms != self._manual_time + input_event.delta_ms
+            ):
+                raise ValueError("clock advance must move the current manual time")
+            self._state = "active"
+        try:
+            result = self._application.advance_clock(input_event)
+        except Exception:
+            return self._abort_runtime(
+                "application clock advance failed", input_event.at_ms
+            )
+        if type(result) is EpochCompleted:
+            if result.observation.at_ms != input_event.at_ms or any(
+                diagnostic.at_ms != input_event.at_ms
+                for diagnostic in result.diagnostics
+            ):
+                return self._abort_runtime(
+                    "application returned invalid epoch evidence", input_event.at_ms
+                )
+            self._set_time_and_state(input_event.at_ms, "idle")
+            return result
+        if type(result) is TerminalResult:
+            if type(result.outcome) is not RunFinished:
+                return self._abort_runtime(
+                    "application returned invalid terminal outcome", input_event.at_ms
+                )
+            if not _terminal_time_is_valid(result, input_event.at_ms):
+                return self._abort_runtime(
+                    "application returned invalid terminal evidence", input_event.at_ms
+                )
+            self._set_time_and_state(input_event.at_ms, "terminal")
+            return result
+        if type(result) is AdapterFailure and result.code == "adapter-runtime-failed":
+            return self._abort_runtime(result.message, input_event.at_ms, result)
+        return self._abort_runtime(
+            "application did not report quiescence or termination", input_event.at_ms
+        )
+
+    def stop(self, input_event: Stop) -> TerminalResult:
+        if type(input_event) is not Stop:
+            raise TypeError("stop input must be Stop")
+        with self._state_lock:
+            if self._state != "idle":
+                raise RuntimeError("direct adapter is not idle")
+            if input_event.at_ms != self._manual_time:
+                raise ValueError("stop must use the current manual time")
+            self._state = "stopping"
+        try:
+            result = self._application.stop(input_event)
+        except Exception:
+            return self._abort_runtime("application stop failed", input_event.at_ms)
+        if type(result) is TerminalResult:
+            if type(result.outcome) is not RunFinished:
+                return self._abort_runtime(
+                    "application returned invalid terminal outcome", input_event.at_ms
+                )
+            if not _terminal_time_is_valid(result, input_event.at_ms):
+                return self._abort_runtime(
+                    "application returned invalid terminal evidence", input_event.at_ms
+                )
+            self._set_time_and_state(input_event.at_ms, "terminal")
+            return result
+        if type(result) is AdapterFailure and result.code == "adapter-runtime-failed":
+            return self._abort_runtime(result.message, input_event.at_ms, result)
+        return self._abort_runtime(
+            "application did not report termination", input_event.at_ms
+        )
