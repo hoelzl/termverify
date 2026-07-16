@@ -7,7 +7,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Literal, Protocol
+from typing import Literal, Protocol, cast
 
 from termverify.transcript import JsonValue, _is_well_formed_language_tag
 
@@ -832,7 +832,7 @@ class Started:
             raise ValueError("readiness cannot contain exited-process evidence")
         if self.observation.at_ms != self.constraints.clock.effective.initial_ms:
             raise ValueError("initial observation must use the effective initial clock")
-        _validate_diagnostics(self.diagnostics)
+        _validate_diagnostics(self.diagnostics, self.observation.at_ms)
 
 
 def _validate_receipt_prefix(
@@ -910,13 +910,23 @@ class StartFailed:
         _validate_diagnostics(self.diagnostics)
         if self.diagnostics and len(self.enforced) != len(_CONSTRAINT_ORDER):
             raise ValueError("startup diagnostics require complete negotiation")
+        if len(self.enforced) == len(_CONSTRAINT_ORDER):
+            clock = cast(ClockReceipt, self.enforced[_CONSTRAINT_ORDER.index("clock")])
+            _validate_diagnostics(self.diagnostics, clock.effective.initial_ms)
 
 
-def _validate_diagnostics(diagnostics: tuple[Diagnostic, ...]) -> None:
+def _validate_diagnostics(
+    diagnostics: tuple[Diagnostic, ...],
+    expected_at_ms: int | None = None,
+) -> None:
     if type(diagnostics) is not tuple or any(
         type(diagnostic) is not Diagnostic for diagnostic in diagnostics
     ):
         raise TypeError("diagnostics must be a tuple of Diagnostic values")
+    if expected_at_ms is not None and any(
+        diagnostic.at_ms != expected_at_ms for diagnostic in diagnostics
+    ):
+        raise ValueError("diagnostic time does not match aggregate time")
 
 
 @dataclass(frozen=True, slots=True)
@@ -932,7 +942,7 @@ class EpochCompleted:
             and self.observation.process.state == "exited"
         ):
             raise ValueError("exited-process observation requires a terminal result")
-        _validate_diagnostics(self.diagnostics)
+        _validate_diagnostics(self.diagnostics, self.observation.at_ms)
 
 
 @dataclass(frozen=True, slots=True)
@@ -971,7 +981,10 @@ class TerminalResult:
             raise ValueError(
                 "failure observations must contain exited-process evidence"
             )
-        _validate_diagnostics(self.diagnostics)
+        _validate_diagnostics(
+            self.diagnostics,
+            self.observation.at_ms if self.observation is not None else None,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -995,6 +1008,10 @@ class StartTerminated:
                 "initialization terminal observation must use the effective "
                 "initial clock"
             )
+        _validate_diagnostics(
+            self.result.diagnostics,
+            self.constraints.clock.effective.initial_ms,
+        )
 
 
 type StartResult = Started | StartTerminated | StartUnsupported | StartFailed
