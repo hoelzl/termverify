@@ -75,11 +75,45 @@ A valid transcript contains exactly this lifecycle shape:
 
 1. `run.started` at `seq: 0`;
 2. `capability.result` records in configuration-table order until all requested
-   constraints are enforced or the first is unsupported;
-3. zero or more input, observation, and diagnostic records after every requested
-   constraint is enforced;
-4. exactly one terminal record: `run.finished`, `run.failed`, or
+   constraints are enforced, the first is unsupported, or an adapter failure
+   terminates negotiation;
+3. if initialization completes, exactly one initial readiness observation;
+4. zero or more single-flight input epochs;
+5. exactly one terminal record: `run.finished`, `run.failed`, or
    `run.unsupported`.
+
+An adapter failure may terminate negotiation before any capability result or
+after any enforced prefix. The transcript then contains only `run.started`, that
+prefix, and `run.failed`. A subject that exits or an adapter that fails after
+negotiation but before readiness may likewise terminate without an initial
+observation. `run.unsupported` remains negotiation-only and has no body records.
+
+### Execution epochs and causality
+
+The initial readiness observation is the first semantic body record after all
+seven capability results. Zero or more startup diagnostics may precede it, but
+no input may. Its position, rather than an additional payload member, declares
+that initialization completed and the subject is ready for input.
+
+After readiness, v1 is single-flight. Each epoch contains:
+
+1. exactly one input record;
+2. zero or more diagnostics caused while handling that input;
+3. exactly one observation that closes the epoch at deterministic quiescence,
+   unless a terminal record closes it first.
+
+The closing observation is the complete normalized evidence available at
+quiescence, not an output chunk. Transcript order supplies causality, so another
+input before that observation is invalid. Observations and diagnostics while
+idle are invalid: diagnostics do not create hidden epochs. `input.stop` is the
+final accepted input. Its drain epoch may contain diagnostics and an optional
+final observation, followed by `run.finished` or `run.failed`; no later input is
+valid.
+
+A terminal record may also occur while idle when the subject exits naturally or
+the adapter fails. This ordered model intentionally excludes unsolicited body
+events in v1. General asynchronous work requires a future explicit polling,
+draining, or correlation contract rather than wall-clock quiet-window polling.
 
 No record follows a terminal record. Input records are ordered by dispatch;
 observations are ordered by the point at which the adapter captured them; event
@@ -254,9 +288,13 @@ v1 member names.
 
 When a transcript ends with `run.finished`, every exited-process observation
 has the same exit `kind` and `value` as `run.finished.payload.exit`.
-Uninterpreted `x-` extensions do not participate in that comparison. The
-relationship between exited-process evidence and `run.failed` or
-`run.unsupported` is not yet defined.
+An exited-process observation is the final body record. Uninterpreted `x-`
+extensions do not participate in the exit comparison. The relationship with
+the other terminal outcomes is asymmetric.
+`run.unsupported` has no body and therefore no process observation. A
+`run.failed` transcript may retain independently captured exited-process
+evidence; that evidence is orthogonal to the adapter or harness failure and has
+no terminal exit value to match.
 
 ## Compatibility and evolution
 

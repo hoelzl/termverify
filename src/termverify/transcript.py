@@ -415,8 +415,6 @@ def _validate_lifecycle(records: list[Record]) -> None:
         if record["kind"] != "capability.result":
             break
         capabilities.append(record)
-    if not capabilities:
-        raise TranscriptValidationError("capability results are missing")
     payloads = [record["payload"] for record in capabilities]
     if not all(isinstance(payload, dict) for payload in payloads):
         raise TranscriptValidationError("capability result payload must be an object")
@@ -476,11 +474,18 @@ def _validate_lifecycle(records: list[Record]) -> None:
                 "run.unsupported constraint or payload is invalid"
             )
     elif len(capabilities) != len(_CONSTRAINTS):
-        raise TranscriptValidationError("capability results are missing")
+        negotiation_failed = (
+            records[-1]["kind"] == "run.failed"
+            and len(records) == len(capabilities) + 2
+        )
+        if not negotiation_failed:
+            raise TranscriptValidationError("capability results are missing")
     elif records[-1]["kind"] == "run.unsupported":
         raise TranscriptValidationError(
             "run.unsupported requires an unsupported capability result"
         )
+    if len(capabilities) == len(_CONSTRAINTS):
+        _validate_execution_epochs(records[len(capabilities) + 1 : -1])
     if any(
         record["kind"] == "capability.result"
         for record in records[len(capabilities) + 1 :]
@@ -785,6 +790,52 @@ def _validate_lifecycle(records: list[Record]) -> None:
         records[len(capabilities) + 1 : -1],
         cast(int, clock_config["initial_ms"]),
     )
+
+
+def _validate_execution_epochs(body: list[Record]) -> None:
+    readiness_observed = False
+    input_epoch_open = False
+    stop_seen = False
+    for index, record in enumerate(body):
+        kind = record["kind"]
+        if not readiness_observed:
+            if kind == "diagnostic":
+                continue
+            if kind != "observation":
+                raise TranscriptValidationError(
+                    "initial readiness observation must precede input"
+                )
+            readiness_observed = True
+        elif isinstance(kind, str) and kind.startswith("input."):
+            if stop_seen:
+                raise TranscriptValidationError("input is not allowed after input.stop")
+            if input_epoch_open:
+                raise TranscriptValidationError(
+                    "input epoch must close before another input"
+                )
+            input_epoch_open = True
+            stop_seen = kind == "input.stop"
+        elif kind == "observation":
+            if not input_epoch_open:
+                raise TranscriptValidationError(
+                    "observation is not allowed while the run is idle"
+                )
+            input_epoch_open = False
+        elif kind == "diagnostic" and not input_epoch_open:
+            raise TranscriptValidationError(
+                "diagnostic is not allowed while the run is idle"
+            )
+        if kind == "observation":
+            payload = record["payload"]
+            process = payload.get("process") if isinstance(payload, dict) else None
+            if (
+                isinstance(process, dict)
+                and process.get("state") == "exited"
+                and index != len(body) - 1
+            ):
+                raise TranscriptValidationError(
+                    "process exit observation must be the final body record"
+                )
 
 
 def _validate_evidence_times(records: list[Record], manual_time: int) -> None:
