@@ -8,10 +8,12 @@ tags: [protocol, jsonl, terminal, observations, determinism]
 # TermVerify JSONL transcript protocol
 
 This document defines the reviewed **design** for the first intended external
-protocol: `termverify.transcript/v1`. The repository contains an initial schema,
-canonical codec, semantic validator, and small fixture corpus, but these do not
-yet constitute a complete conformance contract. Phase 1 must reconcile schema,
-runtime, fixtures, and compatibility tests before a public adapter is accepted.
+protocol: `termverify.transcript/v1`. The repository contains a canonical codec,
+semantic lifecycle validator, non-exhaustive schema aid, and reviewed fixture and
+property coverage. The active Phase 1 handover still requires explicit
+dispositions for resource/fixture scope, installed-schema access, and release
+controls before the protocol and adapter runtime are declared stable or Phase 2
+begins.
 
 ## Schema and runtime authority
 

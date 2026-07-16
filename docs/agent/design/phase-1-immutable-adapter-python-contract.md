@@ -1,7 +1,8 @@
 # Phase 1 Immutable Adapter Python Contract
 
-- **Status:** proposed implementation for issue
-  [#46](https://github.com/hoelzl/termverify/issues/46)
+- **Status:** accepted and implemented by PRs
+  [#47](https://github.com/hoelzl/termverify/pull/47) and
+  [#49](https://github.com/hoelzl/termverify/pull/49)
 - **Date:** 2026-07-16
 - **Depends on:** the accepted
   [execution contract](phase-1-adapter-execution-contract.md)
@@ -82,15 +83,15 @@ likewise retain the active run, request, and only a valid enforced prefix.
 `ConstraintPorts` makes the origin path structural: each `enforce_*` method
 accepts only that constraint's requested value and returns only its matching
 receipt, `ConstraintUnsupported`, or `AdapterFailure`. Strict mypy therefore
-rejects substituting (for example) a clock receipt for a seed receipt before
-the direct adapter exists.
+rejects substituting (for example) a clock receipt for a seed receipt
+independently of the direct adapter implementation.
 
 A receipt value is a typed claim, not an in-process security token. Constructing
-a dataclass does not prove enforcement. The follow-up direct adapter may accept
-a receipt only as the synchronous return from the corresponding application
-port, after the operation completes, for the active run and requested value.
-It must reject a receipt synthesized from requested configuration or returned
-by another path.
+a dataclass does not prove enforcement. `DirectAdapter` accepts a receipt only as
+the synchronous return from the corresponding application port when its exact
+type, active run, and effective value match the request. The port is obligated to
+return only after enforcement, but the adapter cannot determine how the port
+constructed an otherwise matching receipt or prove external enforcement.
 
 The types also encode the currently accepted semantic gates:
 
@@ -113,8 +114,8 @@ This contract does not expose:
 - ambient time, randomness, locale, timezone, filesystem, terminal, or network
   access;
 - arbitrary asynchronous observations while idle;
-- a runner, transcript producer, replay engine, comparator, fake/direct adapter,
-  or PTY implementation.
+- a runner, transcript producer, replay engine, comparator, or PTY implementation.
+  Deterministic direct execution is implemented separately in `termverify.direct`.
 
 Adding another input class or enforcement claim is a compatibility decision,
 not an invitation to pass generic dictionaries through the protocol.
@@ -131,7 +132,7 @@ must create fresh lists.
 
 ## Verification
 
-Focused tests must prove:
+Focused tests prove:
 
 - valid configuration converts to the exact reviewed v1 shape;
 - invalid and mutable-shaped construction is rejected;
