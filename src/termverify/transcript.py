@@ -152,7 +152,7 @@ def _validate_json_numbers(value: JsonValue) -> None:
 def _canonical_record(record: Record) -> bytes:
     try:
         return rfc8785.dumps(record)
-    except rfc8785.CanonicalizationError as error:
+    except (rfc8785.CanonicalizationError, ValueError) as error:
         raise TranscriptValidationError(
             "record cannot be canonicalized as RFC 8785"
         ) from error
