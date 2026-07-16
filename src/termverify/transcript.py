@@ -636,7 +636,8 @@ def _validate_lifecycle(records: list[Record]) -> None:
         assert isinstance(ui, dict)
         cursor = ui.get("cursor")
         if (
-            not isinstance(ui.get("regions"), list)
+            not {"regions", "focus", "cursor", "mode"} <= ui.keys()
+            or not isinstance(ui.get("regions"), list)
             or _has_unknown_generic_members(
                 ui, frozenset({"regions", "focus", "cursor", "mode"})
             )
