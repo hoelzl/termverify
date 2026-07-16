@@ -46,6 +46,14 @@ prompt handling, rendering, resize, and process lifecycle. Browser bridging is
 deferred until a terminal vertical slice proves that a shared abstraction is
 necessary.
 
+An isolated [Windows ConPTY lifecycle spike](../../spikes/conpty-lifecycle/README.md)
+has validated real child creation, independently serviced input/output, resize,
+and binding-level process termination with observable exit on one Windows 11
+host. Direct pseudoconsole close and native output-pipe draining remain
+unproven. This partial feasibility evidence is not a production adapter,
+dependency decision, enforcement receipt, or claim of process, filesystem,
+network, clock, or OS containment.
+
 # Design constraints
 
 - No required model provider, agent harness, web service, or GUI toolkit.
