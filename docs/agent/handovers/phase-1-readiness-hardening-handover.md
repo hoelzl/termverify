@@ -77,7 +77,7 @@ review contexts. No tracked repository files were modified by the review.
 - `actionlint` was not available locally. GitHub's pinned workflow-security and
   dependency-vulnerability jobs passed and remain the current remote evidence.
 
-### Reconciliation through merged PR #31 and issue #32
+### Reconciliation through merged PR #33 and issue #34
 
 The confirmed-finding lists below preserve the original review baseline. An
 intermediate reconciliation after PRs #12, #13, and #15 on clean `main` at
@@ -135,22 +135,26 @@ prerequisite was filed:
   record separators before `bytes.splitlines()` can remove them. Canonical LF
   fixtures and serializer output remain byte-for-byte unchanged, and escaped
   carriage returns inside canonical JSON strings remain valid.
-- A fresh probe after PR #31 confirmed that decimal seed strings above Python's
-  interpreter conversion threshold escape both transcript APIs as raw
-  `ValueError`. Issue [#32](https://github.com/hoelzl/termverify/issues/32) is
-  the next focused prerequisite: validate the existing unsigned-64-bit seed
-  range lexically without adding a broader resource-limit policy or changing
-  Python's global integer conversion settings. The initial focused serializer
-  test reproduced the raw exception before the shared validator was corrected.
+- PR #33 completed issue #32 by validating canonical decimal seed strings
+  lexically against the unsigned-64-bit maximum instead of converting
+  arbitrary input with `int()`. Both APIs now reject oversized and max-plus-one
+  seeds cleanly while preserving zero, the valid maximum, and the existing
+  leading-zero and ASCII-decimal rules.
+- A fresh probe after PR #33 confirmed that a 5,000-digit JSON integer token
+  escapes `parse_transcript()` as Python's raw integer-conversion `ValueError`.
+  Issue [#34](https://github.com/hoelzl/termverify/issues/34) is the next focused
+  prerequisite: normalize decoder `ValueError` at the parser boundary while
+  preserving the specific duplicate-member diagnostic. The initial focused
+  envelope test reproduced the raw exception before the boundary was corrected.
 
-The adapter-contract entry gate remains closed during and after issue #32.
+The adapter-contract entry gate remains closed during and after issue #34.
 Remaining gates
 include other Workstream 1 local and cross-record rules, the deterministic
 vocabularies and negotiation/attestation semantics in Workstream 2,
 locale enforcement/attestation and timezone conformance, fixture/property
 coverage, resource limits, and the deliberately bounded schema package-access
 criteria in Workstreams 3 and 6.
-Neither issues #16/#18/#20/#22/#24/#26/#28/#30/#32 nor the merged schema slice authorizes
+Neither issues #16/#18/#20/#22/#24/#26/#28/#30/#32/#34 nor the merged schema slice authorizes
 adapter/runtime implementation or exhaustive schema work.
 
 ### Confirmed P0 defects
