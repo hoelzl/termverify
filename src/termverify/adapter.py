@@ -50,6 +50,7 @@ __all__ = [
     "StartFailed",
     "Started",
     "StartResult",
+    "StartTerminated",
     "StartUnsupported",
     "Stop",
     "TerminalConfiguration",
@@ -106,20 +107,26 @@ _MAX_SEED = 2**64 - 1
 
 def freeze_json(value: JsonInput) -> FrozenJsonValue:
     """Copy a JSON-compatible value into a transitively immutable representation."""
-    if value is None or isinstance(value, (bool, str)):
+    if value is None:
         return value
-    if isinstance(value, int):
+    if type(value) is bool:
         return value
-    if isinstance(value, float):
+    if type(value) is int:
+        return value
+    if type(value) is float:
         if not math.isfinite(value):
             raise ValueError("JSON numbers must be finite")
         return value
+    if type(value) is str:
+        return value
+    if isinstance(value, (bool, int, float, str)):
+        raise TypeError("JSON scalars must use an exact JSON builtin type")
     if isinstance(value, (list, tuple)):
         return tuple(freeze_json(item) for item in value)
     if isinstance(value, Mapping):
         frozen: dict[str, FrozenJsonValue] = {}
         for key, item in value.items():
-            if not isinstance(key, str):
+            if type(key) is not str:
                 raise TypeError("JSON object keys must be strings")
             frozen[key] = freeze_json(item)
         return MappingProxyType(frozen)
@@ -127,7 +134,7 @@ def freeze_json(value: JsonInput) -> FrozenJsonValue:
 
 
 def _require_plain_int(value: object, name: str, *, positive: bool = False) -> int:
-    if not isinstance(value, int) or isinstance(value, bool):
+    if type(value) is not int:
         raise TypeError(f"{name} must be an integer")
     if positive and value <= 0:
         raise ValueError(f"{name} must be positive")
@@ -137,10 +144,18 @@ def _require_plain_int(value: object, name: str, *, positive: bool = False) -> i
 
 
 def _require_non_empty(value: object, name: str) -> str:
-    if not isinstance(value, str):
+    if type(value) is not str:
         raise TypeError(f"{name} must be a string")
     if not value:
         raise ValueError(f"{name} must be non-empty")
+    return value
+
+
+def _require_choice(value: object, name: str, choices: tuple[str, ...]) -> str:
+    if type(value) is not str:
+        raise TypeError(f"{name} must be a string")
+    if value not in choices:
+        raise ValueError(f"{name} is invalid")
     return value
 
 
@@ -154,7 +169,11 @@ def _validate_run_id(run_id: object) -> str:
 class ManualTime(int):
     """A non-negative manual-clock value in integer milliseconds."""
 
+    __slots__ = ()
+
     def __new__(cls, value: int) -> ManualTime:
+        if type(value) is cls:
+            return value
         return int.__new__(cls, _require_plain_int(value, "time"))
 
 
@@ -179,9 +198,9 @@ class TerminalConfiguration:
     def __post_init__(self) -> None:
         _require_plain_int(self.columns, "columns", positive=True)
         _require_plain_int(self.rows, "rows", positive=True)
-        if not isinstance(self.capabilities, tuple):
+        if type(self.capabilities) is not tuple:
             raise TypeError("capabilities must be a tuple")
-        if any(not isinstance(item, str) or not item for item in self.capabilities):
+        if any(type(item) is not str or not item for item in self.capabilities):
             raise ValueError("capabilities must contain non-empty strings")
         if self.capabilities != tuple(sorted(self.capabilities)):
             raise ValueError("capabilities must be sorted")
@@ -208,7 +227,7 @@ class NetworkEndpoint:
 
     def __post_init__(self) -> None:
         _require_non_empty(self.host, "host")
-        if not isinstance(self.port, int) or isinstance(self.port, bool):
+        if type(self.port) is not int:
             raise TypeError("port must be an integer")
         if not 1 <= self.port <= 65535:
             raise ValueError("port must be between 1 and 65535")
@@ -222,11 +241,10 @@ class NetworkConfiguration:
     allowed: tuple[NetworkEndpoint, ...] = ()
 
     def __post_init__(self) -> None:
-        if self.mode not in ("deny", "allow-list"):
-            raise ValueError("network mode is invalid")
-        if not isinstance(self.allowed, tuple):
+        _require_choice(self.mode, "network mode", ("deny", "allow-list"))
+        if type(self.allowed) is not tuple:
             raise TypeError("allowed endpoints must be a tuple")
-        if any(not isinstance(item, NetworkEndpoint) for item in self.allowed):
+        if any(type(item) is not NetworkEndpoint for item in self.allowed):
             raise TypeError("allowed endpoints must contain NetworkEndpoint values")
         if self.mode == "deny" and self.allowed:
             raise ValueError("deny mode cannot have allowed endpoints")
@@ -241,7 +259,7 @@ class NetworkConfiguration:
 
     @classmethod
     def allow_list(cls, endpoints: tuple[tuple[str, int], ...]) -> NetworkConfiguration:
-        if not isinstance(endpoints, tuple):
+        if type(endpoints) is not tuple:
             raise TypeError("allow-list endpoints must be a tuple")
         return cls(
             mode="allow-list",
@@ -265,18 +283,18 @@ class RunConfiguration:
         _require_plain_int(self.seed, "seed")
         if self.seed > _MAX_SEED:
             raise ValueError("seed must fit an unsigned 64-bit integer")
-        if not isinstance(self.clock, ClockConfiguration):
+        if type(self.clock) is not ClockConfiguration:
             raise TypeError("clock has the wrong type")
-        if not isinstance(self.locale, str) or not _is_well_formed_language_tag(
+        if type(self.locale) is not str or not _is_well_formed_language_tag(
             self.locale
         ):
             raise ValueError("locale is invalid")
         _require_non_empty(self.timezone, "timezone")
-        if not isinstance(self.terminal, TerminalConfiguration):
+        if type(self.terminal) is not TerminalConfiguration:
             raise TypeError("terminal has the wrong type")
-        if not isinstance(self.filesystem, FilesystemConfiguration):
+        if type(self.filesystem) is not FilesystemConfiguration:
             raise TypeError("filesystem has the wrong type")
-        if not isinstance(self.network, NetworkConfiguration):
+        if type(self.network) is not NetworkConfiguration:
             raise TypeError("network has the wrong type")
 
     def to_protocol(self) -> dict[str, JsonValue]:
@@ -332,7 +350,7 @@ class Cursor:
     def __post_init__(self) -> None:
         _require_plain_int(self.column, "cursor column")
         _require_plain_int(self.row, "cursor row")
-        if not isinstance(self.visible, bool):
+        if type(self.visible) is not bool:
             raise TypeError("cursor visible must be a boolean")
 
 
@@ -344,18 +362,20 @@ class UiObservation:
     mode: str | None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.regions, tuple) or any(
-            not isinstance(region, Region) for region in self.regions
+        if type(self.regions) is not tuple or any(
+            type(region) is not Region for region in self.regions
         ):
             raise TypeError("regions must be a tuple of Region values")
         ids = tuple(region.id for region in self.regions)
         if len(ids) != len(set(ids)):
             raise ValueError("region ids must be unique")
-        if self.focus is not None and self.focus not in ids:
+        if self.focus is not None and (
+            type(self.focus) is not str or self.focus not in ids
+        ):
             raise ValueError("focus must name a region")
-        if not isinstance(self.cursor, Cursor):
+        if type(self.cursor) is not Cursor:
             raise TypeError("cursor has the wrong type")
-        if self.mode is not None and not isinstance(self.mode, str):
+        if self.mode is not None and type(self.mode) is not str:
             raise TypeError("mode must be a string or None")
 
 
@@ -366,8 +386,8 @@ class Frame:
     rows: int
 
     def __post_init__(self) -> None:
-        if not isinstance(self.lines, tuple) or any(
-            not isinstance(line, str) for line in self.lines
+        if type(self.lines) is not tuple or any(
+            type(line) is not str for line in self.lines
         ):
             raise TypeError("frame lines must be a tuple of strings")
         _require_plain_int(self.columns, "frame columns", positive=True)
@@ -392,11 +412,10 @@ class ProcessObservation:
     exit: ExitStatus | None = None
 
     def __post_init__(self) -> None:
-        if self.state not in ("running", "exited"):
-            raise ValueError("process observation state is invalid")
+        _require_choice(self.state, "process observation state", ("running", "exited"))
         if self.state == "running" and self.exit is not None:
             raise ValueError("running process observation cannot have exit evidence")
-        if self.state == "exited" and not isinstance(self.exit, ExitStatus):
+        if self.state == "exited" and type(self.exit) is not ExitStatus:
             raise ValueError("exited process observation requires exit evidence")
 
     @classmethod
@@ -426,17 +445,17 @@ class Observation:
         frame: Frame | None = None,
         process: ProcessObservation | None = None,
     ) -> None:
-        if not isinstance(at_ms, ManualTime):
+        if type(at_ms) is not ManualTime:
             raise TypeError("at_ms must be ManualTime")
-        if not isinstance(events, tuple) or any(
-            not isinstance(event, Event) for event in events
+        if type(events) is not tuple or any(
+            type(event) is not Event for event in events
         ):
             raise TypeError("events must be a tuple of Event values")
-        if not isinstance(ui, UiObservation):
+        if type(ui) is not UiObservation:
             raise TypeError("ui has the wrong type")
-        if frame is not None and not isinstance(frame, Frame):
+        if frame is not None and type(frame) is not Frame:
             raise TypeError("frame has the wrong type")
-        if process is not None and not isinstance(process, ProcessObservation):
+        if process is not None and type(process) is not ProcessObservation:
             raise TypeError("process has the wrong type")
         object.__setattr__(self, "at_ms", at_ms)
         object.__setattr__(self, "state", freeze_json(state))
@@ -460,11 +479,11 @@ class Diagnostic:
         message: str,
         details: JsonInput = None,
     ) -> None:
-        if not isinstance(at_ms, ManualTime):
+        if type(at_ms) is not ManualTime:
             raise TypeError("at_ms must be ManualTime")
         object.__setattr__(self, "at_ms", at_ms)
         object.__setattr__(self, "code", _require_non_empty(code, "code"))
-        if not isinstance(message, str):
+        if type(message) is not str:
             raise TypeError("message must be a string")
         object.__setattr__(self, "message", message)
         object.__setattr__(self, "details", freeze_json(details))
@@ -476,9 +495,9 @@ class TextInput:
     text: str
 
     def __post_init__(self) -> None:
-        if not isinstance(self.at_ms, ManualTime):
+        if type(self.at_ms) is not ManualTime:
             raise TypeError("at_ms must be ManualTime")
-        if not isinstance(self.text, str):
+        if type(self.text) is not str:
             raise TypeError("text must be a string")
 
 
@@ -489,7 +508,7 @@ class Resize:
     rows: int
 
     def __post_init__(self) -> None:
-        if not isinstance(self.at_ms, ManualTime):
+        if type(self.at_ms) is not ManualTime:
             raise TypeError("at_ms must be ManualTime")
         _require_plain_int(self.columns, "columns", positive=True)
         _require_plain_int(self.rows, "rows", positive=True)
@@ -501,7 +520,7 @@ class ClockAdvance:
     delta_ms: int
 
     def __post_init__(self) -> None:
-        if not isinstance(self.at_ms, ManualTime):
+        if type(self.at_ms) is not ManualTime:
             raise TypeError("at_ms must be ManualTime")
         _require_plain_int(self.delta_ms, "delta_ms", positive=True)
 
@@ -511,7 +530,7 @@ class Stop:
     at_ms: ManualTime
 
     def __post_init__(self) -> None:
-        if not isinstance(self.at_ms, ManualTime):
+        if type(self.at_ms) is not ManualTime:
             raise TypeError("at_ms must be ManualTime")
 
 
@@ -523,7 +542,7 @@ class AdapterFailure:
 
     def __init__(self, code: str, message: str, details: JsonInput = None) -> None:
         object.__setattr__(self, "code", _require_non_empty(code, "failure code"))
-        if not isinstance(message, str):
+        if type(message) is not str:
             raise TypeError("failure message must be a string")
         object.__setattr__(self, "message", message)
         object.__setattr__(self, "details", freeze_json(details))
@@ -535,14 +554,9 @@ class ExitStatus:
     value: int | str
 
     def __post_init__(self) -> None:
-        valid_code = (
-            self.kind == "code"
-            and isinstance(self.value, int)
-            and not isinstance(self.value, bool)
-        )
-        valid_signal = (
-            self.kind == "signal" and isinstance(self.value, str) and bool(self.value)
-        )
+        kind = _require_choice(self.kind, "exit status kind", ("code", "signal"))
+        valid_code = kind == "code" and type(self.value) is int
+        valid_signal = kind == "signal" and type(self.value) is str and bool(self.value)
         if not valid_code and not valid_signal:
             raise ValueError("exit status is invalid")
 
@@ -552,7 +566,7 @@ class RunFinished:
     exit: ExitStatus
 
     def __post_init__(self) -> None:
-        if not isinstance(self.exit, ExitStatus):
+        if type(self.exit) is not ExitStatus:
             raise TypeError("finished exit has the wrong type")
 
     @classmethod
@@ -569,7 +583,7 @@ class RunFailed:
     failure: AdapterFailure
 
     def __post_init__(self) -> None:
-        if not isinstance(self.failure, AdapterFailure):
+        if type(self.failure) is not AdapterFailure:
             raise TypeError("runtime failure has the wrong type")
         if self.failure.code != "adapter-runtime-failed":
             raise ValueError("runtime failure code must be adapter-runtime-failed")
@@ -594,7 +608,7 @@ class ClockReceipt:
 
     def __post_init__(self) -> None:
         _validate_run_id(self.run_id)
-        if not isinstance(self.effective, ClockConfiguration):
+        if type(self.effective) is not ClockConfiguration:
             raise TypeError("effective clock has the wrong type")
 
 
@@ -605,7 +619,7 @@ class LocaleReceipt:
 
     def __post_init__(self) -> None:
         _validate_run_id(self.run_id)
-        if not isinstance(self.effective, str) or not _is_well_formed_language_tag(
+        if type(self.effective) is not str or not _is_well_formed_language_tag(
             self.effective
         ):
             raise ValueError("effective locale is invalid")
@@ -632,7 +646,7 @@ class TerminalReceipt:
 
     def __post_init__(self) -> None:
         _validate_run_id(self.run_id)
-        if not isinstance(self.effective, TerminalConfiguration):
+        if type(self.effective) is not TerminalConfiguration:
             raise TypeError("effective terminal has the wrong type")
         if self.effective.capabilities:
             raise ValueError(
@@ -647,7 +661,7 @@ class FilesystemReceipt:
 
     def __post_init__(self) -> None:
         _validate_run_id(self.run_id)
-        if not isinstance(self.effective, FilesystemConfiguration):
+        if type(self.effective) is not FilesystemConfiguration:
             raise TypeError("effective filesystem has the wrong type")
 
 
@@ -658,7 +672,7 @@ class NetworkReceipt:
 
     def __post_init__(self) -> None:
         _validate_run_id(self.run_id)
-        if not isinstance(self.effective, NetworkConfiguration):
+        if type(self.effective) is not NetworkConfiguration:
             raise TypeError("effective network has the wrong type")
         if self.effective.mode != "deny":
             raise ValueError("allow-list network enforcement is deferred")
@@ -698,11 +712,13 @@ class ConstraintUnsupported:
         message: str,
         details: JsonInput = None,
     ) -> None:
-        if constraint not in _CONSTRAINT_ORDER:
-            raise ValueError("unsupported constraint is invalid")
-        if code not in ("constraint-unsupported", "constraint-not-enforced"):
-            raise ValueError("unsupported code is invalid")
-        if not isinstance(message, str):
+        _require_choice(constraint, "unsupported constraint", _CONSTRAINT_ORDER)
+        _require_choice(
+            code,
+            "unsupported code",
+            ("constraint-unsupported", "constraint-not-enforced"),
+        )
+        if type(message) is not str:
             raise TypeError("unsupported message must be a string")
         object.__setattr__(self, "constraint", constraint)
         object.__setattr__(self, "code", code)
@@ -744,6 +760,8 @@ class ConstraintPorts(Protocol):  # pragma: no cover - structural declarations
 
 @dataclass(frozen=True, slots=True)
 class EnforcedConstraints:
+    run_id: str
+    requested: RunConfiguration
     seed: SeedReceipt
     clock: ClockReceipt
     locale: LocaleReceipt
@@ -753,6 +771,9 @@ class EnforcedConstraints:
     network: NetworkReceipt
 
     def __post_init__(self) -> None:
+        _validate_run_id(self.run_id)
+        if type(self.requested) is not RunConfiguration:
+            raise TypeError("requested configuration has the wrong type")
         receipts = (
             self.seed,
             self.clock,
@@ -767,8 +788,30 @@ class EnforcedConstraints:
         ):
             if type(receipt) is not receipt_type:
                 raise TypeError(f"{name} receipt has the wrong type")
-        if len({receipt.run_id for receipt in receipts}) != 1:
+        _validate_receipt_binding(self.run_id, self.requested, receipts)
+
+
+def _validate_receipt_binding(
+    run_id: str,
+    requested: RunConfiguration,
+    receipts: tuple[EnforcementReceipt, ...],
+) -> None:
+    expected = (
+        requested.seed,
+        requested.clock,
+        requested.locale,
+        requested.timezone,
+        requested.terminal,
+        requested.filesystem,
+        requested.network,
+    )
+    for name, receipt, requested_value in zip(
+        _CONSTRAINT_ORDER, receipts, expected, strict=False
+    ):
+        if receipt.run_id != run_id:
             raise ValueError("all receipts must belong to the same run")
+        if receipt.effective != requested_value:
+            raise ValueError(f"{name} receipt does not match the requested {name}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -778,29 +821,42 @@ class Started:
     diagnostics: tuple[Diagnostic, ...] = ()
 
     def __post_init__(self) -> None:
-        if not isinstance(self.constraints, EnforcedConstraints):
+        if type(self.constraints) is not EnforcedConstraints:
             raise TypeError("constraints have the wrong type")
-        if not isinstance(self.observation, Observation):
+        if type(self.observation) is not Observation:
             raise TypeError("observation has the wrong type")
+        if (
+            self.observation.process is not None
+            and self.observation.process.state == "exited"
+        ):
+            raise ValueError("readiness cannot contain exited-process evidence")
         if self.observation.at_ms != self.constraints.clock.effective.initial_ms:
             raise ValueError("initial observation must use the effective initial clock")
         _validate_diagnostics(self.diagnostics)
 
 
-def _validate_receipt_prefix(receipts: tuple[EnforcementReceipt, ...]) -> None:
-    if not isinstance(receipts, tuple):
+def _validate_receipt_prefix(
+    run_id: str,
+    requested: RunConfiguration,
+    receipts: tuple[EnforcementReceipt, ...],
+) -> None:
+    _validate_run_id(run_id)
+    if type(requested) is not RunConfiguration:
+        raise TypeError("requested configuration has the wrong type")
+    if type(receipts) is not tuple:
         raise TypeError("enforced receipts must be a tuple")
     if len(receipts) > len(_CONSTRAINT_ORDER):
         raise ValueError("enforced receipt prefix is too long")
     for index, receipt in enumerate(receipts):
         if type(receipt) is not _RECEIPT_TYPES[index]:
             raise ValueError("enforced receipts are out of configuration order")
-    if receipts and len({receipt.run_id for receipt in receipts}) != 1:
-        raise ValueError("enforced receipts must belong to the same run")
+    _validate_receipt_binding(run_id, requested, receipts)
 
 
 @dataclass(frozen=True, slots=True, init=False)
 class StartUnsupported:
+    run_id: str
+    requested: RunConfiguration
     enforced: tuple[EnforcementReceipt, ...]
     constraint: ConstraintName
     code: str
@@ -809,23 +865,29 @@ class StartUnsupported:
 
     def __init__(
         self,
+        run_id: str,
+        requested: RunConfiguration,
         enforced: tuple[EnforcementReceipt, ...],
         constraint: ConstraintName,
         code: str,
         message: str,
         details: JsonInput = None,
     ) -> None:
-        _validate_receipt_prefix(enforced)
-        if constraint not in _CONSTRAINT_ORDER:
-            raise ValueError("unsupported constraint is invalid")
+        _validate_receipt_prefix(run_id, requested, enforced)
+        _require_choice(constraint, "unsupported constraint", _CONSTRAINT_ORDER)
         if len(enforced) != _CONSTRAINT_ORDER.index(constraint):
             raise ValueError("unsupported constraint does not follow receipt order")
+        object.__setattr__(self, "run_id", run_id)
+        object.__setattr__(self, "requested", requested)
         object.__setattr__(self, "enforced", enforced)
         object.__setattr__(self, "constraint", constraint)
-        if code not in ("constraint-unsupported", "constraint-not-enforced"):
-            raise ValueError("unsupported code is invalid")
+        _require_choice(
+            code,
+            "unsupported code",
+            ("constraint-unsupported", "constraint-not-enforced"),
+        )
         object.__setattr__(self, "code", code)
-        if not isinstance(message, str):
+        if type(message) is not str:
             raise TypeError("unsupported message must be a string")
         object.__setattr__(self, "message", message)
         object.__setattr__(self, "details", freeze_json(details))
@@ -833,13 +895,15 @@ class StartUnsupported:
 
 @dataclass(frozen=True, slots=True)
 class StartFailed:
+    run_id: str
+    requested: RunConfiguration
     enforced: tuple[EnforcementReceipt, ...]
     failure: AdapterFailure
     diagnostics: tuple[Diagnostic, ...] = ()
 
     def __post_init__(self) -> None:
-        _validate_receipt_prefix(self.enforced)
-        if not isinstance(self.failure, AdapterFailure):
+        _validate_receipt_prefix(self.run_id, self.requested, self.enforced)
+        if type(self.failure) is not AdapterFailure:
             raise TypeError("failure has the wrong type")
         if self.failure.code != "adapter-start-failed":
             raise ValueError("start failure code must be adapter-start-failed")
@@ -849,8 +913,8 @@ class StartFailed:
 
 
 def _validate_diagnostics(diagnostics: tuple[Diagnostic, ...]) -> None:
-    if not isinstance(diagnostics, tuple) or any(
-        not isinstance(diagnostic, Diagnostic) for diagnostic in diagnostics
+    if type(diagnostics) is not tuple or any(
+        type(diagnostic) is not Diagnostic for diagnostic in diagnostics
     ):
         raise TypeError("diagnostics must be a tuple of Diagnostic values")
 
@@ -861,7 +925,7 @@ class EpochCompleted:
     diagnostics: tuple[Diagnostic, ...] = ()
 
     def __post_init__(self) -> None:
-        if not isinstance(self.observation, Observation):
+        if type(self.observation) is not Observation:
             raise TypeError("observation has the wrong type")
         if (
             self.observation.process is not None
@@ -878,24 +942,62 @@ class TerminalResult:
     diagnostics: tuple[Diagnostic, ...] = ()
 
     def __post_init__(self) -> None:
-        if self.observation is not None and not isinstance(
-            self.observation, Observation
-        ):
+        if self.observation is not None and type(self.observation) is not Observation:
             raise TypeError("terminal observation has the wrong type")
-        if not isinstance(self.outcome, (RunFinished, RunFailed)):
+        if type(self.outcome) not in (RunFinished, RunFailed):
             raise TypeError("terminal outcome has the wrong type")
         if (
-            isinstance(self.outcome, RunFinished)
+            self.observation is not None
+            and self.observation.process is not None
+            and self.observation.process.state != "exited"
+        ):
+            raise ValueError("terminal process evidence must report exit")
+        if (
+            type(self.outcome) is RunFinished
             and self.observation is not None
             and self.observation.process is not None
             and self.observation.process.state == "exited"
             and self.observation.process.exit != self.outcome.exit
         ):
             raise ValueError("process exit evidence must match the finished outcome")
+        if (
+            type(self.outcome) is RunFailed
+            and self.observation is not None
+            and (
+                self.observation.process is None
+                or self.observation.process.state != "exited"
+            )
+        ):
+            raise ValueError(
+                "failure observations must contain exited-process evidence"
+            )
         _validate_diagnostics(self.diagnostics)
 
 
-type StartResult = Started | StartUnsupported | StartFailed
+@dataclass(frozen=True, slots=True)
+class StartTerminated:
+    constraints: EnforcedConstraints
+    result: TerminalResult
+
+    def __post_init__(self) -> None:
+        if type(self.constraints) is not EnforcedConstraints:
+            raise TypeError("constraints have the wrong type")
+        if type(self.result) is not TerminalResult:
+            raise TypeError("terminal result has the wrong type")
+        if type(self.result.outcome) is not RunFinished:
+            raise ValueError("initialization termination must be a subject exit")
+        if (
+            self.result.observation is not None
+            and self.result.observation.at_ms
+            != self.constraints.clock.effective.initial_ms
+        ):
+            raise ValueError(
+                "initialization terminal observation must use the effective "
+                "initial clock"
+            )
+
+
+type StartResult = Started | StartTerminated | StartUnsupported | StartFailed
 type DispatchInput = TextInput | Resize
 type EpochResult = EpochCompleted | TerminalResult
 
