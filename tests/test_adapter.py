@@ -484,6 +484,22 @@ def test_structured_start_outcomes_are_immutable() -> None:
             code="constraint-unsupported",
             message="wrong effective value",
         )
+    with pytest.raises(ValueError, match="same run"):
+        StartUnsupported(
+            run_id="run-contract",
+            requested=_configuration(),
+            enforced=(SeedReceipt("another-run", 42),),
+            constraint="clock",
+            code="constraint-unsupported",
+            message="wrong run",
+        )
+    with pytest.raises(ValueError, match="same run"):
+        StartFailed(
+            run_id="run-contract",
+            requested=_configuration(),
+            enforced=(SeedReceipt("another-run", 42),),
+            failure=AdapterFailure(code="adapter-start-failed", message="failed"),
+        )
     with pytest.raises(ValueError, match="start failure code"):
         StartFailed(
             run_id="run-contract",

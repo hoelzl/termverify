@@ -37,6 +37,15 @@ The module is public but deliberately is not re-exported from the package root.
 Callers import from `termverify.adapter`; the module's explicit `__all__` is the
 compatibility boundary.
 
+Issue #48 deliberately corrects the inception-v1 constructor contract in place:
+`EnforcedConstraints`, `StartUnsupported`, and `StartFailed` now require the
+active `run_id` and requested configuration. This is a breaking change from the
+short-lived shape merged in PR #47, made before any published release or
+supported consumer contract so invalid receipt provenance does not become the
+compatibility baseline. Callers testing against that transient commit must pass
+those two values explicitly. After this correction, `__all__` remains the
+compatibility boundary for subsequent work.
+
 ## Immutable values
 
 All contract records are frozen, slotted dataclasses or attribute-free immutable
