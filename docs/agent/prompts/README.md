@@ -20,6 +20,9 @@ module concurrently.
   — independent stale-documentation correction.
 - [Transcript fixture corpus](transcript-fixture-corpus.md) — independent
   fixture/schema expansion constrained by the accepted v1 protocol.
+- [Adversarial review remediation kickoff](adversarial-review-remediation-kickoff.md)
+  — delivered the highest-priority evidence-security slice in PR #57 and is
+  retained as its execution record; continuation follows the active handover.
 
 The adapter-contract prompt establishes the API boundary. Runner, replay,
 comparator, fake-application, and production-adapter implementation should wait
