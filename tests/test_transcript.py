@@ -266,6 +266,56 @@ def test_serialize_transcript_rejects_noncanonical_leading_zero_seed() -> None:
         serialize_transcript(transcript)
 
 
+@pytest.mark.parametrize("api", ["parse", "serialize"])
+@pytest.mark.parametrize("seed", ["18446744073709551616", "9" * 5_000])
+def test_transcript_rejects_out_of_range_decimal_seed_cleanly(
+    api: str, seed: str
+) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[0]["payload"]
+    assert isinstance(payload, dict)
+    config = payload["config"]
+    assert isinstance(config, dict)
+    config["seed"] = seed
+    capability_payload = transcript[1]["payload"]
+    assert isinstance(capability_payload, dict)
+    capability_payload["effective"] = seed
+
+    with pytest.raises(TranscriptValidationError, match="seed"):
+        if api == "parse":
+            parse_transcript(
+                b"\n".join(
+                    json.dumps(
+                        record,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ).encode()
+                    for record in transcript
+                )
+                + b"\n"
+            )
+        else:
+            serialize_transcript(transcript)
+
+
+def test_transcript_accepts_maximum_unsigned_64_bit_seed() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    maximum_seed = "18446744073709551615"
+    payload = transcript[0]["payload"]
+    assert isinstance(payload, dict)
+    config = payload["config"]
+    assert isinstance(config, dict)
+    config["seed"] = maximum_seed
+    capability_payload = transcript[1]["payload"]
+    assert isinstance(capability_payload, dict)
+    capability_payload["effective"] = maximum_seed
+
+    encoded = serialize_transcript(transcript)
+
+    assert parse_transcript(encoded) == transcript
+
+
 @pytest.mark.parametrize(
     ("constraint", "member"),
     [

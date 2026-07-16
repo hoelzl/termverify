@@ -77,7 +77,7 @@ review contexts. No tracked repository files were modified by the review.
 - `actionlint` was not available locally. GitHub's pinned workflow-security and
   dependency-vulnerability jobs passed and remain the current remote evidence.
 
-### Reconciliation through merged PR #29 and issue #30
+### Reconciliation through merged PR #31 and issue #32
 
 The confirmed-finding lists below preserve the original review baseline. An
 intermediate reconciliation after PRs #12, #13, and #15 on clean `main` at
@@ -131,21 +131,26 @@ prerequisite was filed:
   raises `TranscriptValidationError` instead of raw `KeyError`, missing `mode`
   is no longer accepted, and explicitly present nullable values plus
   uninterpreted `x-` extensions remain valid.
-- A fresh probe after PR #29 confirmed that `parse_transcript()` accepts CRLF,
-  mixed CRLF/LF, and bare-CR record separators because `bytes.splitlines()`
-  removes those bytes before canonical line validation. Issue
-  [#30](https://github.com/hoelzl/termverify/issues/30) is the next focused
-  prerequisite: enforce the existing exactly-one-LF framing rule without adding
-  resource limits or redesigning JSON canonicalization.
+- PR #31 completed issue #30 by rejecting CRLF, mixed CRLF/LF, and bare-CR
+  record separators before `bytes.splitlines()` can remove them. Canonical LF
+  fixtures and serializer output remain byte-for-byte unchanged, and escaped
+  carriage returns inside canonical JSON strings remain valid.
+- A fresh probe after PR #31 confirmed that decimal seed strings above Python's
+  interpreter conversion threshold escape both transcript APIs as raw
+  `ValueError`. Issue [#32](https://github.com/hoelzl/termverify/issues/32) is
+  the next focused prerequisite: validate the existing unsigned-64-bit seed
+  range lexically without adding a broader resource-limit policy or changing
+  Python's global integer conversion settings. The initial focused serializer
+  test reproduced the raw exception before the shared validator was corrected.
 
-The adapter-contract entry gate remains closed during and after issue #30.
+The adapter-contract entry gate remains closed during and after issue #32.
 Remaining gates
 include other Workstream 1 local and cross-record rules, the deterministic
 vocabularies and negotiation/attestation semantics in Workstream 2,
 locale enforcement/attestation and timezone conformance, fixture/property
 coverage, resource limits, and the deliberately bounded schema package-access
 criteria in Workstreams 3 and 6.
-Neither issues #16/#18/#20/#22/#24/#26/#28/#30 nor the merged schema slice authorizes
+Neither issues #16/#18/#20/#22/#24/#26/#28/#30/#32 nor the merged schema slice authorizes
 adapter/runtime implementation or exhaustive schema work.
 
 ### Confirmed P0 defects

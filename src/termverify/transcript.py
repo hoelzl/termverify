@@ -15,6 +15,7 @@ type JsonValue = (
 type Record = dict[str, JsonValue]
 
 _PROTOCOL = "termverify.transcript/v1"
+_MAX_SEED = "18446744073709551615"
 _IDENTIFIER_PATTERN = re.compile(r"[a-z0-9._-]+")
 _GRANDFATHERED_LANGUAGE_TAGS = frozenset(
     {
@@ -290,7 +291,8 @@ def _validate_lifecycle(records: list[Record]) -> None:
         or not seed.isascii()
         or not seed.isdecimal()
         or (len(seed) > 1 and seed.startswith("0"))
-        or int(seed) > 2**64 - 1
+        or len(seed) > len(_MAX_SEED)
+        or (len(seed) == len(_MAX_SEED) and seed > _MAX_SEED)
     ):
         raise TranscriptValidationError("run.started seed is invalid")
     terminal_config = config["terminal"]
