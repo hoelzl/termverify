@@ -8,9 +8,9 @@ source of truth for volatile work state.
 ## Active
 
 - [Phase 1 readiness hardening handover](phase-1-readiness-hardening-handover.md)
-  — **active**; blocks public adapter/runtime implementation until the reviewed
-  protocol, deterministic-enforcement, evidence-safety, and conformance entry
-  gates pass.
+  — **active**; the deterministic direct and partial terminal-feasibility slices
+  are reviewed, while resource/fixture scope, installed-schema, and
+  release-control dispositions still block the Phase 2 transition.
 
 ## Archive
 

@@ -1,7 +1,7 @@
 # Phase 1 Protocol and Windows PTY Boundary Decision
 
-- **Status:** accepted — independently human-reviewed on 2026-07-15; executable
-  protocol fixtures and contract tests remain prerequisites for adapter code.
+- **Status:** accepted — independently human-reviewed on 2026-07-15 and
+  reconciled with the partial executable feasibility result merged in PR #53.
 - **Issue:** [#3](https://github.com/hoelzl/termverify/issues/3)
 - **Date:** 2026-07-15
 
@@ -30,56 +30,48 @@ The future terminal adapter interface must support all of the following:
 5. normalized VT output as evidence, not an assumption that every host renders
    identically.
 
-Browser bridging is explicitly deferred. Phase 1 proves a direct adapter and
-one terminal vertical slice first. A browser bridge can be proposed only after
-that slice demonstrates a concrete shared abstraction that cannot stay in the
-terminal adapter.
+Browser bridging is explicitly deferred. Phase 1 includes a direct adapter and
+one partial terminal-feasibility slice first. A browser bridge can be proposed
+only after later production terminal work demonstrates a concrete shared
+abstraction that cannot stay in the terminal adapter.
 
 ## Windows/ConPTY feasibility spike
 
-The spike ran on 2026-07-15 with the repository's managed interpreter:
+PR #53 replaced the earlier presence-only probe with the isolated executable
+probe under `spikes/conpty-lifecycle/`. On Windows 11 it used transient,
+pinned `pywinpty==3.0.5` with explicit `Backend.ConPTY`; no project dependency or
+lockfile changed. Repeated runs under Python 3.12 and focused runs under 3.13 and
+3.14 observed a synthetic child, input, initial dimensions, resize, a bounded
+1 MiB output burst, wrapper-level close, child status, and stopped servicing
+threads.
 
-```text
-$ uv --no-config run python -c '<platform probe>'
-os.name=nt
-platform=Windows-11-10.0.26200-SP0
-python=3.12.9 ... [MSC v.1943 64 bit (AMD64)]
-
-$ uv --no-config run python -c '<stdlib and binding probe>'
-pywinpty=False
-pty=True
-has_openpty=False
-has_forkpty=False
-
-$ uv --no-config run python -c '<kernel32 API probe>'
-CreatePseudoConsole=<_FuncPtr ...>
-ResizePseudoConsole=<_FuncPtr ...>
-ClosePseudoConsole=<_FuncPtr ...>
-```
-
-The standard-library `pty` module is importable under this Git-Bash-hosted
-Python process but does not provide `openpty` or `forkpty`; it is not a viable
-Windows PTY implementation. ConPTY entry points are present in `kernel32`, so a
-Windows adapter can use ConPTY directly or a separately justified binding. No
-new dependency is selected by this spike.
+The result is deliberately **partial** and binding-level. `PtyProcess.close`
+signals the child and disconnects the high-level reader; the probe does not prove
+that TermVerify directly called `ClosePseudoConsole`, observed native pipe EOF,
+received every final frame, or contained a process tree. The standard-library
+`pty` module is not usable on the tested Windows host: importing it requires the
+unavailable `termios`, and `os.openpty`/`os.forkpty` are absent.
 
 Microsoft's [Create a Pseudoconsole session guidance](https://learn.microsoft.com/en-us/windows/console/creating-a-pseudoconsole-session)
 requires synchronous input/output channels, warns that servicing both on one
-thread can deadlock, requires a size at creation, supports explicit resize, and
-requires draining output while closing. Its [virtual terminal sequence
+thread can deadlock, requires a size at creation, and supports explicit resize.
+Its close guidance permits either closing the output pipe before
+`ClosePseudoConsole` or continuing to service output until after that call
+returns. TermVerify deliberately requires the latter path when final-frame and
+EOF evidence are claimed. Microsoft's [virtual terminal sequence
 guidance](https://learn.microsoft.com/en-us/windows/console/console-virtual-terminal-sequences)
 also makes VT behavior conditional on console modes. These facts motivate the
 interface constraints above; they do not demonstrate a production adapter.
 
 ## Consequences and follow-up
 
-- Before adapter implementation, add canonical valid/invalid v1 JSONL fixtures
-  and tests for serialization, ordering, version rejection, and unsupported
-  deterministic constraints.
-- The first Windows adapter must include a real child-process smoke test for
-  create, input/output drain, resize, close, and exit; this documentation spike
-  is not that test.
-- Dependency selection for a ConPTY binding requires the rationale and
-  verification plan required by `AGENTS.md`.
-- Workstream 3 remains active until the executable fixtures and contract tests
-  are reviewed and pass.
+- Canonical lifecycle fixtures and deterministic execution-contract tests now
+  exist, but the active Phase 1 handover retains separate resource/fixture-scope
+  and installed-schema dispositions.
+- The first production Windows adapter must provide direct, reviewable evidence
+  for native pseudoconsole ownership, close, EOF/final-frame draining,
+  process-tree teardown, and truthful OS-level enforcement. PR #53 is not that
+  adapter.
+- Dependency selection for a ConPTY binding or promotion of spike code into
+  `termverify` requires the rationale and verification plan required by
+  `AGENTS.md` plus a separate focused review.

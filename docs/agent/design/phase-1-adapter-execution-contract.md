@@ -1,9 +1,8 @@
 # Phase 1 Adapter Execution Contract
 
-- **Status:** accepted by the maintainer on 2026-07-16; executable lifecycle
-  enforcement and canonical fixtures are tracked by
-  [#44](https://github.com/hoelzl/termverify/issues/44), while public adapter
-  types remain follow-up work.
+- **Status:** accepted by the maintainer on 2026-07-16; implemented by PR #45's
+  lifecycle validator/fixtures, PRs #47/#49's immutable public contracts, and PR
+  #51's deterministic direct execution.
 - **Issue:** [#42](https://github.com/hoelzl/termverify/issues/42)
 - **Date:** 2026-07-16
 - **Scope:** API-neutral execution semantics for the fake/direct adapter and the
@@ -11,22 +10,22 @@
 
 ## Context
 
-The transcript codec already validates deterministic configuration, ordered
-capability results, manual-clock timestamps, defined record shapes, and one
-final terminal record. Those rules do not yet say when an adapter is ready,
-which observation closes an input dispatch, how deterministic quiescence is
-established, or what evidence permits an adapter to claim that a requested
+Before this contract, the transcript codec validated deterministic configuration,
+ordered capability results, manual-clock timestamps, defined record shapes, and
+one final terminal record. It did not say when an adapter was ready, which
+observation closed an input dispatch, how deterministic quiescence was
+established, or what evidence permitted an adapter to claim that a requested
 constraint was enforced. Implementing public adapter types before those rules
-exist would turn incidental implementation choices into protocol behavior.
+would have turned incidental implementation choices into protocol behavior.
 
 The project therefore adopts a deliberately serialized Phase 1 execution
 model. It preserves deterministic replay and leaves explicit concurrent
 correlation for a later protocol version if a real application requires it.
-This decision authorizes an inception-v1 lifecycle correction under the
+This decision authorized an inception-v1 lifecycle correction under the
 accepted pre-client compatibility policy. It requires no new record member or
-kind. Issue #44 migrates the normative protocol prose, fixtures, validator, and
-property model together; public adapter implementation remains outside this
-decision document.
+kind. PR #45 migrated the normative protocol prose, fixtures, validator, and
+property model together; PRs #47/#49 and #51 then implemented the public values
+and deterministic direct adapter under this contract.
 
 ## Decision
 
@@ -158,11 +157,13 @@ clients may continue writing until they disconnect.
 ### Capability enforcement receipts
 
 Requested/effective equality is necessary but never sufficient to claim
-`status: enforced`. Each constraint attempt returns an internal typed receipt
-from the path that applied the constraint. The adapter validates the receipt
-before emitting the result. Receipts are not added to transcript v1; the
-transcript carries their normalized effective value while executable adapter
-contract tests prove their origin.
+`status: enforced`. Each constraint attempt returns a typed receipt synchronously
+through the application port responsible for that constraint. The adapter
+validates the exact receipt type, run binding, and effective value before emitting
+the result. A receipt remains a claim by that port; in-process validation cannot
+prove that external enforcement actually occurred. Receipts are not added to
+transcript v1, which carries only their normalized effective value. Executable
+adapter tests prove routing and binding behavior, not OS-level enforcement.
 
 The minimum receipt meanings are:
 
@@ -176,10 +177,12 @@ The minimum receipt meanings are:
 | `filesystem` | A direct application port received the named sandbox root capability. A terminal/subprocess adapter reports unsupported until OS containment, traversal, link, child-process, and cleanup behavior are proven. |
 | `network` | A direct application port received an enforcing deny/mediation capability. A terminal/subprocess adapter reports unsupported until OS-level network denial is proven. Allow-list enforcement remains deferred. |
 
-A receipt is invalid if it is synthesized from the requested configuration,
-returned before the enforcement operation completes, belongs to another run or
-constraint, or reports a different effective value. Public receipt types are a
-follow-up API decision; this document defines their required semantics only.
+An application port is obligated to return a receipt only after its enforcement
+operation completes. `DirectAdapter` rejects a value that does not arrive through
+the corresponding synchronous port call, has the wrong exact receipt type or run
+binding, or reports a different effective value; it cannot determine how that
+port constructed an otherwise matching receipt. PRs #47/#49 implemented the
+public receipt types with these semantics.
 
 ## Vocabulary ownership
 
@@ -221,16 +224,17 @@ must report unsupported when a port is absent or cannot establish the receipt.
 It does not simulate OS containment.
 
 The Phase 1 terminal work is an internal feasibility slice, not a production
-adapter. It proves create, independent input/output drain, initial size, resize,
-stop, EOF/exit observation, and cleanup with synthetic evidence. It does not
-produce a verified body transcript unless every requested deterministic
-constraint is truthfully enforced. Filesystem containment and network policy
-remain unsupported until their accepted OS-level boundaries are demonstrated.
+adapter. PR #53 provides partial binding-level evidence for child creation,
+independent input/output servicing, initial size, resize, wrapper-level close,
+child-status observation, and bounded worker shutdown with synthetic markers. It
+does not prove direct native pseudoconsole close, native EOF/final-frame draining,
+or containment, and it does not produce a verified body transcript. Filesystem
+containment and network policy remain unsupported until their accepted OS-level
+boundaries are demonstrated.
 
 ## Wire and validator consequences
 
-Follow-up executable work must update the v1 lifecycle validator and fixtures
-to enforce:
+PR #45 updated the v1 lifecycle validator and fixtures to enforce:
 
 1. optional `run.failed` during negotiation, including before the first
    capability result;
@@ -242,11 +246,11 @@ to enforce:
 7. terminal closure of incomplete epochs on subject exit or adapter failure;
 8. no unsolicited direct-adapter body records while idle.
 
-These are accepted inception-v1 lifecycle corrections. They add no generic
-member and do not authorize exhaustive schema work. Issue #44 updates protocol
-prose, fixtures, validator, and property model as one reviewed candidate. The
-public adapter/runtime entry gate remains closed until immutable contract types
-and enforcement receipts are implemented and reviewed.
+These accepted inception-v1 lifecycle corrections add no generic member and do
+not authorize exhaustive schema work. PRs #47/#49 added the reviewed immutable
+contract and receipts; PR #51 added deterministic direct execution. The active
+Phase 1 handover still gates stable runtime publication and Phase 2 on resource,
+fixture, installed-schema, and release-control dispositions.
 
 ## Deferred decisions
 
@@ -265,15 +269,14 @@ Each requires a focused issue and independently reviewable acceptance evidence.
 
 ## Acceptance evidence
 
-Issue #44 supplies model-based lifecycle tests that demonstrate legal
+PR #45 supplies model-based lifecycle tests that demonstrate legal
 transitions and reject input before readiness, overlapping epochs, idle
 unsolicited records, input after stop, unsupported body records, body after
 process exit, and records after terminal. Canonical fixtures cover startup
 failure, unsupported negotiation, initial readiness, successful input epochs,
-natural subject exit, and stop/drain. False enforcement receipts remain an
-adapter-contract test requirement. The terminal feasibility slice must use a
-harmless synthetic child and distinguish EOF/exit evidence from quiet-period
-timing.
+natural subject exit, and stop/drain. PRs #47/#49 test false enforcement receipts.
+PR #53 uses a harmless synthetic child and distinguishes binding-level status
+evidence from quiet-period timing without claiming native EOF/final-frame drain.
 
 ## References
 

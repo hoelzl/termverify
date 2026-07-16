@@ -2,9 +2,11 @@
 
 ## Handover metadata
 
-- **Status:** active — all owner decision gates were accepted on 2026-07-15;
-  public adapter/runtime implementation remains blocked on the prerequisite
-  workstreams below.
+- **Status:** active — the closure audit through merged PR #53 confirms the
+  deterministic direct slice and partial terminal-feasibility slice, but the
+  resource/fixture scope, schema-distribution, and release-control completion
+  gates below remain open or require an explicit owner-approved successor
+  boundary. Phase 2 is not active.
 - **Owner:** project maintainer
 - **Created:** 2026-07-15
 - **Updated:** 2026-07-16
@@ -24,10 +26,11 @@
 
 This handover transfers the July 2026 adversarial foundation review into a
 bounded prerequisite initiative. TermVerify's conceptual architecture remains
-sound, but the current `termverify.transcript/v1` implementation and evidence
-controls do not yet enforce all claims made by the accepted specifications.
-Phase 1 may continue only through the hardening and research work defined here
-until the public adapter/runtime boundary is explicitly unblocked.
+sound. Since that review, the public immutable adapter contracts and deterministic
+direct execution slice have landed, but transcript/evidence completion criteria
+and stable-publication claims remain gated below. Phase 1 may continue only
+through the hardening and research work defined here until its completion or
+supersession boundary is explicitly accepted.
 
 **In scope:**
 
@@ -43,7 +46,9 @@ until the public adapter/runtime boundary is explicitly unblocked.
 
 **Out of scope:**
 
-- production direct or PTY adapter implementation before the entry gates pass;
+- production PTY/OS adapter implementation or stable-publication claims before
+  their gates pass; the implemented deterministic direct slice remains in scope
+  as reviewed Phase 1 evidence;
 - transcript replay/comparison, application fixtures, or browser bridging;
 - automatic baseline approval or automatic acceptance of changed behavior;
 - broad refactoring unrelated to a confirmed finding or accepted decision.
@@ -179,7 +184,121 @@ Neither the completed focused hardening issues through #38 nor the merged
 schema slice authorizes adapter/runtime implementation or exhaustive schema
 work.
 
-### Confirmed P0 defects
+### Closure audit through merged PR #53
+
+The 2026-07-16 closure audit used clean `main` at merge commit `9250e60` and
+rechecked the handover's completion conditions against source, tests, built
+artifacts, and the merged CI/security evidence. It does **not** mark Phase 1
+complete.
+
+The following intended Phase 1 slices are now executable and reviewed:
+
+- PR #43 accepted the single-flight adapter execution contract; PR #45 made its
+  readiness, epoch, quiescence, draining, and terminal lifecycle rules part of
+  transcript validation and the model-based fixture suite.
+- PRs #47 and #49 established and hardened immutable, framework-neutral adapter
+  values and constraint-specific receipts. PR #51 implemented the deterministic
+  direct adapter with fail-closed negotiation, explicit application ports, and
+  bounded lifecycle outcomes.
+- PR #53 recorded a **partial**, binding-level Windows ConPTY feasibility result.
+  It demonstrated explicit ConPTY selection, synthetic input/output servicing,
+  initial size, resize, wrapper-level close, and child-status observation. It did
+  not prove direct `ClosePseudoConsole`, native EOF/final-frame draining,
+  process-tree containment, or production terminal enforcement.
+- The merged PR #53 candidate passed 477 tests, the declared Python 3.12-3.14
+  Windows/Ubuntu matrix, package, documentation-contract, workflow-security, and
+  dependency-vulnerability checks, and an exact-tree independent review.
+
+The following documented completion gates remain open or conflict with later
+reviewed deferrals:
+
+- **Resource governance:** parsing and serialization normalize recursion and
+  oversized-integer failures, but there are no reviewed transcript byte, line,
+  record-count, or structured-value limits. Workstream 1 and the P1 resource
+  finding are therefore not complete unless an owner-approved successor accepts
+  them explicitly.
+- **Fixture breadth:** canonical lifecycle fixtures and generated model tests
+  cover the accepted execution epochs, but the committed corpus does not contain
+  every terminal outcome, input kind, framing/canonicalization case, and
+  compatibility case requested by Workstream 3. That literal scope must be
+  completed or narrowed explicitly; generated coverage is not silently counted
+  as every promised fixture.
+- **Schema access:** a fresh `uv --no-config build` produced a wheel containing
+  the Python package but no schema resource. The canonical schema host
+  `termverify.dev` did not resolve from the audit environment. Workstreams 3 and
+  6 still require an exact installed-schema access contract and smoke tests.
+- **Release controls:** schema installation, release/security/provenance guidance,
+  and the reviewed coverage-ratchet activation point are not yet present. The
+  single package-version source, aligned uv-managed Ruff hooks, corrected NOTICE,
+  and current support matrix are complete, but they do not satisfy all of
+  literal Workstream 6. Later design text defers broader release governance and
+  the ratchet until a stable/public release, so closure requires an explicit
+  owner-approved successor boundary rather than pretending either disposition is
+  already part of this handover.
+
+Key and non-empty terminal-capability vocabularies, named-timezone policy,
+network allow-list semantics, and production OS/PTY enforcement remain
+deliberately deferred boundaries rather than claimed Phase 1 evidence. Current
+direct execution avoids ambient enforcement guessing through explicit
+application ports and exact receipt binding, but syntax-level selectors remain
+semantically unapproved. Because some also remain in this handover's original
+action list, the final retirement change must reconcile them into a named
+successor; deferral does not silently satisfy or expand the open completion scope
+above.
+
+The unresolved literal scope maps as follows; each row requires implementation,
+an owner-approved amendment of this handover's completion condition, or transfer
+to a named successor:
+
+- **Workstream 1:** named-timezone membership and the transcript byte, line,
+  record-count, nesting, and structured-value limits.
+- **Workstream 2:** key and terminal-capability registries; concurrent or
+  unsolicited-event correlation; filesystem mapping, lifecycle, traversal,
+  symlink/reparse-point, child-process, and failure semantics; and network
+  allow-list DNS, address, redirect, proxy, loopback, and inheritance semantics.
+- **Workstream 3:** additional per-kind schema coverage, the complete promised
+  fixture/compatibility corpus, and installed/canonical schema distribution.
+- **Owner decision 8:** direct native terminal close, output EOF/final-frame
+  draining, and teardown evidence beyond PR #53's binding-level result.
+- **Workstream 6:** schema installation checks, release/security/provenance
+  guidance, the coverage-ratchet activation rule, and any retained workflow
+  policy-check requirement.
+
+Workstream 4's fail-closed evidence and baseline boundary is complete for the
+current disabled-retention/disabled-publication scope. Workstream 5 is reconciled
+by this audit candidate but remains subject to its candidate-bound review.
+
+Consequently this handover remains active and no Phase 2 handover is created by
+the audit. Transcript replay/comparison may begin only after focused issues close
+the remaining Phase 1 completion gates or a separately reviewed owner decision
+narrows those gates. Native ConPTY close/drain and production containment remain
+later terminal-integration work; they are not misclassified as completed Phase 1
+evidence.
+
+The remaining closure sequence is intentionally narrow:
+
+1. obtain an owner-reviewed disposition for each literal criterion that later
+   design work deferred: either complete it in Phase 1 or move it to a named
+   successor without weakening current fail-closed behavior;
+2. complete or explicitly transfer resource limits and fixture breadth, and
+   package the exact v1 schema behind a documented installed-resource API or
+   transfer that distribution contract explicitly;
+3. complete or explicitly transfer the release/security/provenance and coverage
+   controls, then rerun the full completion gate and independently review the
+   integrated Phase 1 boundary;
+4. if every original completion criterion is implemented, mark this handover
+   complete after integrated review; if remaining scope moves intact to a named
+   successor, mark it superseded instead; an owner may alternatively amend the
+   completion condition explicitly before a complete transition;
+5. archive and update the index after either valid terminal state. Activate a
+   Phase 2 handover only under a separately accepted phase-boundary decision; do
+   not infer that authorization from a scope transfer.
+
+These are separate implementation/review slices. None may expand the transcript
+wire shape, turn the standard schema into an exhaustive conformance oracle, or
+activate sensitive artifacts or baselines implicitly.
+
+### Original confirmed P0 defects
 
 1. **Serializer/parser asymmetry.** `serialize_transcript()` does not invoke the
    envelope validator and can emit a wrong protocol, wrong sequence, missing
@@ -201,7 +320,7 @@ work.
    (`schemas/termverify.transcript/v1.schema.json:7-19`,
    `tests/test_transcript_schema.py:9-17`).
 
-### Confirmed P1 defects and oversights
+### Original confirmed P1 defects and oversights
 
 - Identifier grammar and RFC 5646/`C` locale syntax are now enforced. IANA/`UTC`
   timezone conformance remains unresolved because deterministic vocabulary,
@@ -279,9 +398,10 @@ work.
 
 ### Owner decisions accepted on 2026-07-15
 
-The project maintainer accepted all eight dispositions below. Public
-adapter/runtime implementation remains blocked until they are reflected in the
-applicable prose and executable tests.
+The project maintainer accepted all eight dispositions below. Their narrow
+direct-adapter and feasibility slices are reflected in prose and executable
+tests; stable runtime publication and Phase 2 remain gated by the open completion
+items recorded in the closure audit above.
 
 1. **Correction policy for the existing v1 contract.** Decide whether confirmed
    defects and missing replay metadata may be corrected in place before the
@@ -423,7 +543,8 @@ implementing the production adapter prematurely.
 - impossible enforcement claims have executable contract tests;
 - public types are introduced only after an accepted API rationale and
   verification plan;
-- the adapter-contract worktree remains unchanged until this entry gate passes.
+- future production adapters and Phase 2 replay work do not cross the remaining
+  resource, distribution, or semantic decision gates.
 
 ### 3. Make schema and fixtures genuinely executable
 
@@ -500,13 +621,14 @@ start independently.
 ### 5. Reconcile status, governance, and Phase execution
 
 **Objective:** restore one trustworthy description of current project state and
-one reviewable path into Phase 1.
+one reviewable path to the Phase 1 completion or supersession boundary.
 
 **Actions:**
 
 1. Update `docs/knowledge/protocol.md`, the Windows-boundary decision, README,
    and current status wording to distinguish accepted design, implemented codec,
-   incomplete conformance, and unimplemented adapter runtime.
+   incomplete conformance, implemented deterministic direct execution, and the
+   still-unimplemented production PTY/OS boundary.
 2. Preserve archived handovers as historical records; add concise historical
    context where readers could otherwise mistake old status for current state.
 3. Create focused GitHub issues/PR boundaries from these workstreams and link
@@ -525,7 +647,7 @@ start immediately.
 - searches find no current document claiming both that executable transcript
   contracts are absent and complete;
 - the active handover, accepted decisions, GitHub issues, and agent prompts agree
-  on adapter entry gates and Phase 1 scope;
+  on stable-publication/production-adapter gates and Phase 1 scope;
 - archived documents remain clearly historical and retain provenance;
 - documentation validation and local-link checks pass.
 
