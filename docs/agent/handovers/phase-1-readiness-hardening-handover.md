@@ -77,7 +77,7 @@ review contexts. No tracked repository files were modified by the review.
 - `actionlint` was not available locally. GitHub's pinned workflow-security and
   dependency-vulnerability jobs passed and remain the current remote evidence.
 
-### Reconciliation through merged PR #37 and issue #38
+### Reconciliation through merged PR #39
 
 The confirmed-finding lists below preserve the original review baseline. An
 intermediate reconciliation after PRs #12, #13, and #15 on clean `main` at
@@ -150,23 +150,34 @@ prerequisite was filed:
   Python integers now fail cleanly in state and extension positions while safe
   boundaries, ordinary range errors, parser behavior, and interpreter settings
   remain unchanged.
-- A fresh merged-main audit after PR #37 confirmed that the installed RFC 8785
-  implementation accepts Python tuples and silently canonicalizes them as JSON
-  arrays. Successful serialization therefore reparses tuples as lists and does
-  not preserve semantic records. Issue
-  [#38](https://github.com/hoelzl/termverify/issues/38) is the next focused
-  prerequisite. The initial state test demonstrated that tuple input was
-  accepted before the JSON-value representation check was added.
+- PR #39 completed issue #38 by rejecting Python tuples recursively before the
+  installed RFC 8785 implementation can silently canonicalize them as JSON
+  arrays. Valid list-valued arrays retain semantic serialize/parse identity,
+  while tuple values in application state and `x-` extensions fail through the
+  transcript validation boundary.
+- A fresh bounded audit of clean merged `main` after PR #39 found no further
+  small protocol/runtime discrepancy that was clearly ready for another
+  opportunistic malformed-input issue. The complete local gate passed with 325
+  tests, 88% overall coverage, and 90% coverage for
+  `src/termverify/transcript.py`; the current-head CI and Security workflows
+  also passed.
+- The maintainer accepted the proposed defaults for the next design workstream:
+  single-flight causal epochs, a positional initial readiness observation,
+  deterministic port-reported quiescence without wall-clock quiet windows, no
+  unsolicited direct-adapter events in the first slice, constraint-specific
+  enforcement receipts, drain-aware stop semantics, and protocol-owned key and
+  terminal-capability vocabularies. These defaults still require a durable,
+  independently reviewable contract before dependent public types or adapter
+  implementation begin.
 
-The adapter-contract entry gate remains closed during and after issue #38.
-Remaining gates
-include other Workstream 1 local and cross-record rules, the deterministic
-vocabularies and negotiation/attestation semantics in Workstream 2,
-locale enforcement/attestation and timezone conformance, fixture/property
-coverage, resource limits, and the deliberately bounded schema package-access
-criteria in Workstreams 3 and 6.
-Neither issues #16/#18/#20/#22/#24/#26/#28/#30/#32/#34/#36/#38 nor the merged schema slice authorizes
-adapter/runtime implementation or exhaustive schema work.
+The adapter-contract entry gate remains closed after PR #39. Remaining gates
+include the execution-epoch, readiness, quiescence, draining, vocabulary, and
+negotiation/attestation contract in Workstream 2; locale enforcement and
+timezone conformance; fixture/property coverage; resource limits; and the
+deliberately bounded schema package-access criteria in Workstreams 3 and 6.
+Neither the completed focused hardening issues through #38 nor the merged
+schema slice authorizes adapter/runtime implementation or exhaustive schema
+work.
 
 ### Confirmed P0 defects
 
