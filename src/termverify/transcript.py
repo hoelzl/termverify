@@ -102,7 +102,12 @@ class TranscriptValidationError(ValueError):
 
 def parse_transcript(data: bytes) -> list[Record]:
     """Parse canonical v1 JSONL *data* and validate its envelope and lifecycle."""
-    if data.startswith(b"\xef\xbb\xbf") or not data.endswith(b"\n") or b"\n\n" in data:
+    if (
+        data.startswith(b"\xef\xbb\xbf")
+        or b"\r" in data
+        or not data.endswith(b"\n")
+        or b"\n\n" in data
+    ):
         raise TranscriptValidationError(
             "transcript must use exactly one final LF without a BOM"
         )

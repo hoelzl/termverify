@@ -77,7 +77,7 @@ review contexts. No tracked repository files were modified by the review.
 - `actionlint` was not available locally. GitHub's pinned workflow-security and
   dependency-vulnerability jobs passed and remain the current remote evidence.
 
-### Reconciliation through merged PR #27 and issue #28
+### Reconciliation through merged PR #29 and issue #30
 
 The confirmed-finding lists below preserve the original review baseline. An
 intermediate reconciliation after PRs #12, #13, and #15 on clean `main` at
@@ -126,24 +126,26 @@ prerequisite was filed:
   transcript APIs now reject malformed array and object values with
   `TranscriptValidationError` while preserving valid enum-like values and
   action-dependent mouse-member rules.
-- A fresh probe after PR #27 confirmed that the required `observation.ui`
-  members are not enforced consistently: missing `focus` escapes both transcript
-  APIs as raw `KeyError`, while missing `mode` is accepted. Missing `regions` or
-  `cursor` already raises `TranscriptValidationError`, and explicitly present
-  `focus: null` and `mode: null` remain valid. Issue
-  [#28](https://github.com/hoelzl/termverify/issues/28) is the next focused
-  prerequisite: enforce presence of all four required UI members through the
-  shared validator without adding UI vocabulary, causality, or rendering
-  semantics.
+- PR #29 completed issue #28 by enforcing presence of all four required
+  `observation.ui` members through the shared validator. Missing `focus` now
+  raises `TranscriptValidationError` instead of raw `KeyError`, missing `mode`
+  is no longer accepted, and explicitly present nullable values plus
+  uninterpreted `x-` extensions remain valid.
+- A fresh probe after PR #29 confirmed that `parse_transcript()` accepts CRLF,
+  mixed CRLF/LF, and bare-CR record separators because `bytes.splitlines()`
+  removes those bytes before canonical line validation. Issue
+  [#30](https://github.com/hoelzl/termverify/issues/30) is the next focused
+  prerequisite: enforce the existing exactly-one-LF framing rule without adding
+  resource limits or redesigning JSON canonicalization.
 
-The adapter-contract entry gate remains closed during and after issue #28.
+The adapter-contract entry gate remains closed during and after issue #30.
 Remaining gates
 include other Workstream 1 local and cross-record rules, the deterministic
 vocabularies and negotiation/attestation semantics in Workstream 2,
 locale enforcement/attestation and timezone conformance, fixture/property
 coverage, resource limits, and the deliberately bounded schema package-access
 criteria in Workstreams 3 and 6.
-Neither issues #16/#18/#20/#22/#24/#26/#28 nor the merged schema slice authorizes
+Neither issues #16/#18/#20/#22/#24/#26/#28/#30 nor the merged schema slice authorizes
 adapter/runtime implementation or exhaustive schema work.
 
 ### Confirmed P0 defects
