@@ -7,6 +7,10 @@ source of truth for volatile work state.
 
 ## Active
 
+- [Adversarial review remediation handover](adversarial-review-remediation-handover.md)
+  — **active**; the first evidence-security fix is integrated, the semantic
+  evidence-transformation policy is accepted, and the remaining ordered slices
+  may proceed with candidate-bound review.
 - [Phase 1 readiness hardening handover](phase-1-readiness-hardening-handover.md)
   — **active**; the deterministic direct and partial terminal-feasibility slices
   are reviewed, while resource/fixture scope, installed-schema, and
