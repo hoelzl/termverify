@@ -30,8 +30,14 @@ _CREDENTIAL_PATTERNS = (
     re.compile(r"\bAuthorization\s*:\s*Basic\s+\S+", re.IGNORECASE),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b"),
     re.compile(r"\bsk-[A-Za-z0-9-]{20,}\b"),
+    re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"),
+    re.compile(r"\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{10,}\b"),
+    re.compile(r"\b(?:xox[baprs]|xapp|xwfp)-[A-Za-z0-9-]{10,}\b"),
+    re.compile(r"\bxoxe(?:\.xox[bp])?-[A-Za-z0-9-]{10,}\b"),
+    re.compile(r"\bMII[A-Za-z0-9+/]{20,}={0,2}(?=$|[^A-Za-z0-9+/=])"),
     re.compile(
-        r"\b(?:api[_-]?key|credential|password|secret|token)\s*[:=]\s*\S+",
+        r"(?:^|[^A-Za-z0-9])"
+        r"(?:api[_-]?key|credential|password|secret|token)\s*[:=]\s*\S+",
         re.IGNORECASE,
     ),
     re.compile(r"-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----"),
@@ -58,7 +64,7 @@ _PAYLOAD_MEMBERS = {
 def redact_evidence(value: JsonValue) -> JsonValue:
     """Return *value* with sensitive structured values replaced deterministically."""
     if isinstance(value, dict):
-        return {
+        result = {
             key: _redaction_marker(key)
             if _is_sensitive_key(key)
             else _redaction_marker("path")
@@ -67,7 +73,13 @@ def redact_evidence(value: JsonValue) -> JsonValue:
             if key == "payload" and value.get("kind") == "input.clipboard_set"
             else redact_evidence(item)
             for key, item in value.items()
+            if not key.startswith("x-")
         }
+        for index, _key in enumerate(
+            sorted(key for key in value if key.startswith("x-"))
+        ):
+            result[f"x-redacted-{index:04d}"] = _redaction_marker("extension")
+        return result
     if isinstance(value, list):
         return [redact_evidence(item) for item in value]
     if isinstance(value, str) and any(
@@ -93,33 +105,11 @@ def persist_transcript_evidence(
     # Validate one stable snapshot so malformed input cannot become valid merely
     # because a sensitive value is replaced or through concurrent mutation.
     serialize_transcript(sanitized)
-    started_payload = sanitized[0].get("payload")
-    if isinstance(started_payload, dict) and _contains_credential_shaped_selector(
-        started_payload.get("subject")
-    ):
-        raise ValueError("replay subject contains a credential-shaped selector")
-    for index, record in enumerate(sanitized):
-        redacted = _redact_validated_transcript_record(record)
-        if not isinstance(redacted, dict):
-            raise TypeError("transcript record redaction must produce an object")
-        sanitized[index] = redacted
-        _redact_transcript_record(sanitized[index])
+    for record in sanitized:
+        _redact_transcript_record(record)
     serialized = serialize_transcript(sanitized)
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_bytes(serialized)
-
-
-def _contains_credential_shaped_selector(value: JsonValue) -> bool:
-    if isinstance(value, dict):
-        return any(
-            not key.startswith("x-") and _contains_credential_shaped_selector(item)
-            for key, item in value.items()
-        )
-    if isinstance(value, list):
-        return any(_contains_credential_shaped_selector(item) for item in value)
-    return isinstance(value, str) and any(
-        pattern.search(value) for pattern in _CREDENTIAL_PATTERNS
-    )
 
 
 def _redact_transcript_record(record: Record) -> None:
@@ -137,12 +127,20 @@ def _redact_transcript_record(record: Record) -> None:
     elif kind == "capability.result":
         effective = payload.get("effective")
         constraint = payload.get("constraint")
-        if isinstance(constraint, str):
+        if constraint == "timezone" and "effective" in payload:
+            payload["effective"] = _redaction_marker("timezone")
+        elif isinstance(constraint, str):
             _redact_constraint_config(constraint, effective)
         if payload.get("status") == "unsupported" and "effective" in payload:
             payload["effective"] = _redaction_marker("unknown")
         if "reason" in payload:
             payload["reason"] = _redaction_marker("diagnostic")
+    elif kind == "input.key":
+        keys = payload.get("keys")
+        if isinstance(keys, list):
+            payload["keys"] = [
+                _redaction_marker(f"key-{index:04d}") for index, _key in enumerate(keys)
+            ]
     elif kind == "input.text" and "text" in payload:
         payload["text"] = _redaction_marker("input-text")
     elif kind == "input.clipboard_set" and "text" in payload:
@@ -154,7 +152,7 @@ def _redact_transcript_record(record: Record) -> None:
     elif kind == "run.finished":
         exit_value = payload.get("exit")
         if isinstance(exit_value, dict):
-            _redact_unknown_members(exit_value, frozenset({"kind", "value"}))
+            _redact_exit(exit_value)
     elif kind == "run.failed":
         error = payload.get("error")
         if isinstance(error, dict):
@@ -168,9 +166,11 @@ def _redact_observation(payload: dict[str, JsonValue]) -> None:
         payload["state"] = _redaction_marker("state")
     events = payload.get("events")
     if isinstance(events, list):
-        for event in events:
+        for index, event in enumerate(events):
             if isinstance(event, dict):
                 _redact_unknown_members(event, frozenset({"type", "data"}))
+                if "type" in event:
+                    event["type"] = _redaction_marker(f"event-type-{index:04d}")
                 if "data" in event:
                     event["data"] = _redaction_marker("event-data")
     ui = payload.get("ui")
@@ -187,7 +187,7 @@ def _redact_observation(payload: dict[str, JsonValue]) -> None:
         _redact_unknown_members(process, frozenset({"state", "exit"}))
         exit_value = process.get("exit")
         if isinstance(exit_value, dict):
-            _redact_unknown_members(exit_value, frozenset({"kind", "value"}))
+            _redact_exit(exit_value)
 
 
 def _redact_diagnostic(
@@ -197,6 +197,8 @@ def _redact_diagnostic(
         value,
         frozenset({"at_ms", "code", "message", "details"}) | extra_members,
     )
+    if "code" in value:
+        value["code"] = _redaction_marker("diagnostic-code")
     for key in ("message", "details"):
         if key in value:
             value[key] = _redaction_marker("diagnostic")
@@ -214,15 +216,30 @@ def _redact_runtime_config(config: dict[str, JsonValue]) -> None:
         _redact_unknown_members(clock, frozenset({"mode", "initial_ms"}))
     terminal = config.get("terminal")
     if isinstance(terminal, dict):
-        _redact_unknown_members(
-            terminal, frozenset({"columns", "rows", "capabilities"})
-        )
+        _redact_terminal_config(terminal)
+    if "timezone" in config:
+        config["timezone"] = _redaction_marker("timezone")
     filesystem = config.get("filesystem")
     if isinstance(filesystem, dict):
         _redact_filesystem_config(filesystem)
     network = config.get("network")
     if isinstance(network, dict):
         _redact_network_config(network)
+
+
+def _redact_terminal_config(config: dict[str, JsonValue]) -> None:
+    _redact_unknown_members(config, frozenset({"columns", "rows", "capabilities"}))
+    capabilities = config.get("capabilities")
+    if isinstance(capabilities, list):
+        config["capabilities"] = _ordered_markers(
+            "terminal-capability", len(capabilities)
+        )
+
+
+def _redact_exit(exit_value: dict[str, JsonValue]) -> None:
+    _redact_unknown_members(exit_value, frozenset({"kind", "value"}))
+    if exit_value.get("kind") == "signal" and "value" in exit_value:
+        exit_value["value"] = _redaction_marker("signal")
 
 
 def _redact_filesystem_config(config: dict[str, JsonValue]) -> None:
@@ -235,11 +252,12 @@ def _redact_network_config(config: dict[str, JsonValue]) -> None:
     _redact_unknown_members(config, frozenset({"mode", "allowed"}))
     allowed = config.get("allowed")
     if isinstance(allowed, list):
+        markers = _ordered_markers("network-host", len(allowed))
         for index, entry in enumerate(allowed):
             if isinstance(entry, dict):
                 _redact_unknown_members(entry, frozenset({"host", "port"}))
                 if "host" in entry:
-                    entry["host"] = _redaction_marker(f"network-host-{index:04d}")
+                    entry["host"] = markers[index]
 
 
 def _redact_constraint_config(constraint: str, value: JsonValue) -> None:
@@ -248,7 +266,7 @@ def _redact_constraint_config(constraint: str, value: JsonValue) -> None:
     if constraint == "clock":
         _redact_unknown_members(value, frozenset({"mode", "initial_ms"}))
     elif constraint == "terminal":
-        _redact_unknown_members(value, frozenset({"columns", "rows", "capabilities"}))
+        _redact_terminal_config(value)
     elif constraint == "filesystem":
         _redact_filesystem_config(value)
     elif constraint == "network":
@@ -257,21 +275,34 @@ def _redact_constraint_config(constraint: str, value: JsonValue) -> None:
 
 def _redact_ui(ui: dict[str, JsonValue]) -> None:
     _redact_unknown_members(ui, frozenset({"regions", "focus", "cursor", "mode"}))
+    if ui.get("mode") is not None:
+        ui["mode"] = _redaction_marker("ui-mode")
     cursor = ui.get("cursor")
     if isinstance(cursor, dict):
         _redact_unknown_members(cursor, frozenset({"column", "row", "visible"}))
     regions = ui.get("regions")
     if isinstance(regions, list):
-        for region in regions:
+        focus = ui.get("focus")
+        region_ids: dict[str, str] = {}
+        for index, region in enumerate(regions):
             if not isinstance(region, dict):
                 continue
             _redact_unknown_members(region, frozenset({"id", "role", "bounds"}))
+            region_id = region.get("id")
+            marker = _redaction_marker(f"region-{index:04d}")
+            if isinstance(region_id, str):
+                region_ids[region_id] = marker
+                region["id"] = marker
+            if "role" in region:
+                region["role"] = _redaction_marker(f"region-role-{index:04d}")
             bounds = region.get("bounds")
             if isinstance(bounds, dict):
                 _redact_unknown_members(
                     bounds,
                     frozenset({"column", "row", "columns", "rows"}),
                 )
+        if isinstance(focus, str):
+            ui["focus"] = region_ids[focus]
 
 
 def _redact_unknown_members(
@@ -284,14 +315,22 @@ def _redact_unknown_members(
 
 def _redact_extension_values(value: JsonValue) -> None:
     if isinstance(value, dict):
-        for key, item in value.items():
-            if key.startswith("x-"):
-                value[key] = _redaction_marker("extension")
-            else:
+        extension_keys = sorted(key for key in value if key.startswith("x-"))
+        for key, item in list(value.items()):
+            if not key.startswith("x-"):
                 _redact_extension_values(item)
+        for key in extension_keys:
+            del value[key]
+        for index, _key in enumerate(extension_keys):
+            value[f"x-redacted-{index:04d}"] = _redaction_marker("extension")
     elif isinstance(value, list):
         for item in value:
             _redact_extension_values(item)
+
+
+def _ordered_markers(reason: str, count: int) -> list[JsonValue]:
+    width = max(4, len(str(max(0, count - 1))))
+    return [_redaction_marker(f"{reason}-{index:0{width}d}") for index in range(count)]
 
 
 def _is_sensitive_key(key: str) -> bool:
@@ -310,7 +349,7 @@ def _key_parts(key: str) -> list[str]:
 def _redact_clipboard_payload(value: JsonValue) -> JsonValue:
     if not isinstance(value, dict):
         return _redaction_marker("clipboard")
-    return {
+    result = {
         key: redact_evidence(item)
         if key == "at_ms"
         and isinstance(item, int)
@@ -318,30 +357,11 @@ def _redact_clipboard_payload(value: JsonValue) -> JsonValue:
         and item >= 0
         else _redaction_marker("clipboard")
         for key, item in value.items()
+        if not key.startswith("x-")
     }
-
-
-def _redact_run_started_payload(value: JsonValue) -> JsonValue:
-    if not isinstance(value, dict):
-        return redact_evidence(value)
-    return {
-        key: item if key == "subject" else redact_evidence(item)
-        for key, item in value.items()
-    }
-
-
-def _redact_validated_transcript_record(record: Record) -> dict[str, JsonValue]:
-    if record.get("kind") != "run.started":
-        redacted = redact_evidence(record)
-        if not isinstance(redacted, dict):
-            raise TypeError("transcript record redaction must produce an object")
-        return redacted
-    return {
-        key: _redact_run_started_payload(item)
-        if key == "payload"
-        else redact_evidence(item)
-        for key, item in record.items()
-    }
+    for index, _key in enumerate(sorted(key for key in value if key.startswith("x-"))):
+        result[f"x-redacted-{index:04d}"] = _redaction_marker("extension")
+    return result
 
 
 def _redaction_marker(reason: str) -> str:

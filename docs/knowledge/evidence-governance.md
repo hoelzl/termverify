@@ -72,13 +72,30 @@ persistence. Redaction is deterministic and replaces a value with the exact
 marker `<redacted:reason>`; it must not retain the original value, its length,
 hash, or a reversible encoding.
 
-The initial implementation must recursively redact structured transcript
-values, including `state`, event `data`, diagnostic `details`, and `x-`
-extensions, as well as values identified by evidence type and keys such as
-`authorization`, `cookie`, `credential`, `password`, `secret`, `token`, and
-`clipboard`. It must also redact recognized credential-shaped strings in free
-text. A missed or unknown value is classified as restricted rather than
-silently treated as public.
+Safe persistence classifies validated records before applying any generic
+free-text credential patterns. Every v1 string-bearing position has this
+disposition:
+
+| Position | Disposition |
+| --- | --- |
+| Envelope `protocol` and `kind`; capability `constraint` and `status`; clock, filesystem, network, input-mouse, process, and exit tagged-enum strings | Preserve after protocol validation. |
+| Envelope `run_id` and `id`; replay-subject format and selector tokens; decimal seed; locale | Preserve as replay structure after protocol validation. Credential regexes do not scan these fields. |
+| Timezone | Replace with `<redacted:timezone>` in both requested and effective configuration. |
+| Filesystem root and network allow-list host | Replace with deterministic sandbox/positional markers in both requested and effective configuration. |
+| Terminal capability names | Replace by ordered positional markers in both requested and effective configuration, preserving ordering, uniqueness, and equality. |
+| Input key names | Replace by ordered positional markers. Input text and clipboard text are blanket-redacted. |
+| Observation state and event data | Blanket-redact. Event type is blanket-redacted. |
+| UI region ID and focus | Replace through one deterministic per-UI ID map so focus still names its region. |
+| UI region role and UI mode | Blanket-redact. Frame lines use one marker per original position. |
+| Diagnostic, failure, and unsupported-result code/message/details | Blanket-redact; unsupported-result constraint remains the validated enum. |
+| Process and final signal value | Replace with the same deterministic signal marker so exit coherence remains valid. |
+| Every `x-` member | Rename by sorted position to `x-redacted-NNNN` within its object and blanket-redact its value. |
+
+Recognizable credentials in genuinely free text remain a secondary defense,
+including bearer/basic authorization, GitHub and OpenAI-style tokens, AWS
+access IDs, JWTs, Slack tokens, and PEM private-key material. Sensitive/path
+key classification remains a fail-closed defense for unvalidated JSON. A
+missed or unknown semantic value is restricted rather than silently public.
 
 Fixture and artifact writers must invoke the same redactor; no path-specific
 writer may serialize raw evidence directly. Tests must construct nested fixture
@@ -95,16 +112,13 @@ to a repository file, report, artifact, or other persistent destination.
 API. It copies rather than mutates the caller's records, validates that stable
 snapshot, classifies semantic fields by record kind, redacts them,
 revalidates the sanitized transcript, and only then creates the destination and
-writes canonical JSONL. Safe mode redacts text input, clipboard values,
-application state, event data, frame lines, diagnostic messages/details,
-sandbox identity, network hosts, path/credential-shaped values, unknown semantic
-values inside open application data, and every `x-` extension value. The closed
-replay-subject selectors are
-caller-declared structural identities and remain intact; their grammar excludes
-raw paths, command lines, environments, and hostnames. If a structural selector
-matches a recognized credential shape, safe persistence rejects the transcript
-before creating the destination because redacting that selector would corrupt
-replay identity. Other structural fields required for replay remain intact.
+writes canonical JSONL. Safe mode applies the matrix above record-first and
+field-first, including lockstep transformations where the protocol requires
+cross-field equality. Closed replay-subject selectors, locale, decimal seed,
+envelope identity, numeric fields, and tagged enums remain intact after their
+validators accept them; credential-like substrings in those grammar-constrained
+or structural values are not a persistence failure. Generic free-text scanning
+does not run over the whole validated envelope.
 Likewise, an undeclared non-`x-` protocol member or a member that is invalid for
 its tagged variant is malformed transcript structure and is rejected before
 redaction or destination creation; redaction does not convert a malformed wire

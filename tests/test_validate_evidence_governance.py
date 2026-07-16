@@ -19,6 +19,23 @@ def load_validator() -> ModuleType:
     return module
 
 
+def _write_classified_fixture(repository: Path, document: object) -> Path:
+    fixture = repository / "tests" / "fixtures" / "transcripts" / "leak.jsonl"
+    fixture.parent.mkdir(parents=True)
+    fixture.write_text(json.dumps(document) + "\n", encoding="utf-8")
+    fixture.with_name(f"{fixture.name}.evidence.json").write_text(
+        json.dumps(
+            {
+                "schema": "termverify.fixture-evidence/v1",
+                "classification": "public-synthetic",
+                "fixture": fixture.name,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return fixture
+
+
 @pytest.mark.parametrize(
     ("review_mode", "proposed_by", "reviewed_by"),
     [
@@ -181,6 +198,45 @@ def test_validate_evidence_governance_rejects_acronym_sensitive_fixture_keys(
     validator = load_validator()
 
     errors = validator.validate_evidence_governance(repository)
+
+    assert any("restricted evidence" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "credential",
+    [
+        "AKIA" + "A" * 16,
+        ".".join(("eyJ" + "a" * 20, "eyJ" + "b" * 20, "c" * 32)),
+        "xox" + "b-" + "1234567890-abcdefghijklmnop",
+        "x" + "app-1-" + "1234567890-abcdefghijklmnop",
+        "x" + "wfp-" + "1234567890-abcdefghijklmnop",
+        "x" + "oxe-1-" + "1234567890-abcdefghijklmnop",
+        "x" + "oxe.xoxb-1-" + "1234567890-abcdefghijklmnop",
+        "MII" + "A" * 64 + "==",
+    ],
+)
+def test_validate_evidence_governance_rejects_modern_credential_corpus(
+    tmp_path: Path,
+    credential: str,
+) -> None:
+    repository = tmp_path / "repository"
+    _write_classified_fixture(repository, {"payload": {"value": credential}})
+
+    errors = load_validator().validate_evidence_governance(repository)
+
+    assert any("restricted evidence" in error for error in errors)
+
+
+def test_validate_evidence_governance_rejects_sensitive_extension_name(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository"
+    _write_classified_fixture(
+        repository,
+        {"payload": {"x-" + "AKIA" + "A" * 16: "synthetic"}},
+    )
+
+    errors = load_validator().validate_evidence_governance(repository)
 
     assert any("restricted evidence" in error for error in errors)
 
