@@ -93,6 +93,20 @@ def test_serialize_transcript_emits_canonical_fixture_bytes() -> None:
     assert serialize_transcript(parse_transcript(fixture)) == fixture
 
 
+@pytest.mark.parametrize("framing", ["all-crlf", "mixed-crlf", "bare-cr"])
+def test_parse_transcript_rejects_non_lf_record_separators(framing: str) -> None:
+    fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
+    if framing == "all-crlf":
+        invalid = fixture.replace(b"\n", b"\r\n")
+    elif framing == "mixed-crlf":
+        invalid = fixture.replace(b"\n", b"\r\n", 1)
+    else:
+        invalid = b"\r".join(fixture.splitlines()) + b"\n"
+
+    with pytest.raises(TranscriptValidationError, match="LF"):
+        parse_transcript(invalid)
+
+
 def test_parse_transcript_rejects_missing_replay_subject() -> None:
     lines = (FIXTURES / "valid" / "basic.jsonl").read_bytes().splitlines()
     started = json.loads(lines[0])
