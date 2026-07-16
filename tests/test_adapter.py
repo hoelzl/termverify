@@ -39,6 +39,7 @@ from termverify.adapter import (
     SeedReceipt,
     Started,
     StartFailed,
+    StartTerminated,
     StartUnsupported,
     Stop,
     TerminalConfiguration,
@@ -91,9 +92,14 @@ def _observation(at_ms: int = 0) -> Observation:
     )
 
 
-def _constraints(run_id: str = "run-contract") -> EnforcedConstraints:
-    configuration = _configuration()
+def _constraints(
+    run_id: str = "run-contract",
+    configuration: RunConfiguration | None = None,
+) -> EnforcedConstraints:
+    configuration = configuration or _configuration()
     return EnforcedConstraints(
+        run_id=run_id,
+        requested=configuration,
         seed=SeedReceipt(run_id=run_id, effective=configuration.seed),
         clock=ClockReceipt(run_id=run_id, effective=configuration.clock),
         locale=LocaleReceipt(run_id=run_id, effective=configuration.locale),
@@ -189,13 +195,72 @@ class CallableFactory(Protocol):
 
 
 def test_json_values_are_copied_and_transitively_immutable() -> None:
-    source: JsonInput = {"items": [1, {"name": "before"}]}
+    nested_source: dict[str, JsonInput] = {"name": "before"}
+    source: JsonInput = {"items": [1, nested_source]}
     frozen = freeze_json(source)
     cast(dict[str, JsonInput], source)["items"] = []
+    nested_source["name"] = "after"
 
     assert frozen == {"items": (1, {"name": "before"})}
     with pytest.raises(TypeError):
         cast(dict[str, object], frozen)["new"] = "value"
+    frozen_items = cast(
+        tuple[JsonInput, ...], cast(dict[str, JsonInput], frozen)["items"]
+    )
+    with pytest.raises(TypeError):
+        cast(dict[str, JsonInput], frozen_items[1])["name"] = "mutated"
+
+
+class _MutableInt(int):
+    pass
+
+
+class _MutableFloat(float):
+    pass
+
+
+class _MutableStr(str):
+    pass
+
+
+class _EqualityImpostor:
+    def __eq__(self, other: object) -> bool:
+        return True
+
+    def __hash__(self) -> int:
+        return hash("deny")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [_MutableInt(1), _MutableFloat(1.0), _MutableStr("value")],
+)
+def test_json_scalar_subclasses_are_rejected(value: object) -> None:
+    value.extra = []  # type: ignore[attr-defined]
+    with pytest.raises(TypeError, match="exact JSON builtin"):
+        freeze_json(cast(JsonInput, value))
+
+
+def test_manual_time_has_no_mutable_instance_attributes() -> None:
+    at_ms = ManualTime(0)
+    with pytest.raises(AttributeError):
+        at_ms.extra = []  # type: ignore[attr-defined]
+
+
+def test_literal_and_identifier_equality_impostors_are_rejected() -> None:
+    impostor = _EqualityImpostor()
+    with pytest.raises((TypeError, ValueError)):
+        NetworkConfiguration(cast(Any, impostor))
+    with pytest.raises((TypeError, ValueError)):
+        ProcessObservation(cast(Any, impostor))
+    with pytest.raises((TypeError, ValueError)):
+        ConstraintUnsupported(
+            cast(ConstraintName, impostor),
+            "constraint-unsupported",
+            "bad",
+        )
+    with pytest.raises(TypeError, match="run_id"):
+        SeedReceipt(cast(str, _MutableStr("run-contract")), 42)
 
 
 def test_observation_validates_structure_and_freezes_application_values() -> None:
@@ -246,6 +311,8 @@ def test_receipts_are_constraint_specific_run_bound_and_immutable() -> None:
         constraints.seed.effective = 7  # type: ignore[misc]
     with pytest.raises(TypeError, match="seed"):
         EnforcedConstraints(
+            run_id="run-contract",
+            requested=_configuration(),
             seed=cast(SeedReceipt, constraints.clock),
             clock=constraints.clock,
             locale=constraints.locale,
@@ -256,6 +323,8 @@ def test_receipts_are_constraint_specific_run_bound_and_immutable() -> None:
         )
     with pytest.raises(ValueError, match="same run"):
         EnforcedConstraints(
+            run_id="run-contract",
+            requested=_configuration(),
             seed=constraints.seed,
             clock=constraints.clock,
             locale=constraints.locale,
@@ -266,6 +335,18 @@ def test_receipts_are_constraint_specific_run_bound_and_immutable() -> None:
                 run_id="another-run",
                 effective=constraints.network.effective,
             ),
+        )
+    with pytest.raises(ValueError, match="requested seed"):
+        EnforcedConstraints(
+            run_id="run-contract",
+            requested=_configuration(),
+            seed=SeedReceipt("run-contract", 41),
+            clock=constraints.clock,
+            locale=constraints.locale,
+            timezone=constraints.timezone,
+            terminal=constraints.terminal,
+            filesystem=constraints.filesystem,
+            network=constraints.network,
         )
 
 
@@ -356,12 +437,16 @@ def test_structured_start_outcomes_are_immutable() -> None:
         diagnostics=(startup_diagnostic,),
     )
     unsupported = StartUnsupported(
+        run_id="run-contract",
+        requested=_configuration(),
         enforced=(started.constraints.seed,),
         constraint="clock",
         code="constraint-unsupported",
         message="clock port unavailable",
     )
     failed = StartFailed(
+        run_id="run-contract",
+        requested=_configuration(),
         enforced=(started.constraints.seed,),
         failure=AdapterFailure(code="adapter-start-failed", message="failed"),
     )
@@ -372,6 +457,8 @@ def test_structured_start_outcomes_are_immutable() -> None:
     assert failed.failure.code == "adapter-start-failed"
     with pytest.raises(ValueError, match="order"):
         StartUnsupported(
+            run_id="run-contract",
+            requested=_configuration(),
             enforced=(started.constraints.clock,),
             constraint="seed",
             code="constraint-unsupported",
@@ -381,13 +468,42 @@ def test_structured_start_outcomes_are_immutable() -> None:
         Started(constraints=_constraints(), observation=_observation(at_ms=1))
     with pytest.raises(ValueError, match="unsupported code"):
         StartUnsupported(
+            run_id="run-contract",
+            requested=_configuration(),
             enforced=(started.constraints.seed,),
             constraint="clock",
             code="other",
             message="bad code",
         )
+    with pytest.raises(ValueError, match="requested seed"):
+        StartUnsupported(
+            run_id="run-contract",
+            requested=_configuration(),
+            enforced=(SeedReceipt("run-contract", 41),),
+            constraint="clock",
+            code="constraint-unsupported",
+            message="wrong effective value",
+        )
+    with pytest.raises(ValueError, match="same run"):
+        StartUnsupported(
+            run_id="run-contract",
+            requested=_configuration(),
+            enforced=(SeedReceipt("another-run", 42),),
+            constraint="clock",
+            code="constraint-unsupported",
+            message="wrong run",
+        )
+    with pytest.raises(ValueError, match="same run"):
+        StartFailed(
+            run_id="run-contract",
+            requested=_configuration(),
+            enforced=(SeedReceipt("another-run", 42),),
+            failure=AdapterFailure(code="adapter-start-failed", message="failed"),
+        )
     with pytest.raises(ValueError, match="start failure code"):
         StartFailed(
+            run_id="run-contract",
+            requested=_configuration(),
             enforced=(),
             failure=AdapterFailure(code="adapter-runtime-failed", message="bad"),
         )
@@ -407,10 +523,40 @@ def test_epoch_and_terminal_results_preserve_process_lifecycle() -> None:
         TerminalResult(observation=exited, outcome=RunFinished.code(1))
     with pytest.raises(ValueError, match="runtime failure code"):
         RunFailed(AdapterFailure("adapter-start-failed", "bad phase"))
+    with pytest.raises(ValueError, match="exited-process evidence"):
+        TerminalResult(
+            observation=_observation(),
+            outcome=RunFailed(AdapterFailure("adapter-runtime-failed", "failed")),
+        )
+    with pytest.raises(ValueError, match="report exit"):
+        TerminalResult(
+            observation=replace(_observation(), process=ProcessObservation.running()),
+            outcome=RunFinished.code(0),
+        )
+    with pytest.raises(ValueError, match="readiness"):
+        Started(constraints=_constraints(), observation=exited)
 
     result = TerminalResult(observation=exited, outcome=RunFinished.code(0))
     assert result.observation == exited
     assert RunFinished.signal("TERM").exit == ExitStatus("signal", "TERM")
+    start_result = StartTerminated(constraints=_constraints(), result=result)
+    assert start_result.result == result
+    with pytest.raises(ValueError, match="subject exit"):
+        StartTerminated(
+            constraints=_constraints(),
+            result=TerminalResult(
+                observation=None,
+                outcome=RunFailed(AdapterFailure("adapter-runtime-failed", "failed")),
+            ),
+        )
+    with pytest.raises(ValueError, match="initial clock"):
+        StartTerminated(
+            constraints=_constraints(),
+            result=TerminalResult(
+                observation=replace(exited, at_ms=ManualTime(1)),
+                outcome=RunFinished.code(0),
+            ),
+        )
 
 
 class _FakeAdapter:
@@ -528,28 +674,51 @@ def test_test_double_can_implement_adapter_contract_without_ambient_state() -> N
         lambda: Started(cast(EnforcedConstraints, object()), _observation()),
         lambda: Started(_constraints(), cast(Observation, object())),
         lambda: StartUnsupported(
-            cast(tuple[SeedReceipt], [SeedReceipt("run-contract", 42)]),
-            "clock",
-            "constraint-unsupported",
-            "bad tuple",
+            run_id="run-contract",
+            requested=_configuration(),
+            enforced=cast(tuple[SeedReceipt], [SeedReceipt("run-contract", 42)]),
+            constraint="clock",
+            code="constraint-unsupported",
+            message="bad tuple",
         ),
         lambda: StartUnsupported(
-            (),
-            cast(ConstraintName, "invalid"),
-            "constraint-unsupported",
-            "bad constraint",
+            run_id="run-contract",
+            requested=_configuration(),
+            enforced=(),
+            constraint=cast(ConstraintName, "invalid"),
+            code="constraint-unsupported",
+            message="bad constraint",
         ),
-        lambda: StartUnsupported((), "seed", "constraint-unsupported", cast(str, 1)),
-        lambda: StartFailed((), cast(AdapterFailure, object())),
+        lambda: StartUnsupported(
+            run_id="run-contract",
+            requested=_configuration(),
+            enforced=(),
+            constraint="seed",
+            code="constraint-unsupported",
+            message=cast(str, 1),
+        ),
         lambda: StartFailed(
-            (),
-            AdapterFailure("adapter-start-failed", "failed"),
-            (Diagnostic(ManualTime(0), "startup", "message"),),
+            run_id="run-contract",
+            requested=_configuration(),
+            enforced=(),
+            failure=cast(AdapterFailure, object()),
+        ),
+        lambda: StartFailed(
+            run_id="run-contract",
+            requested=_configuration(),
+            enforced=(),
+            failure=AdapterFailure("adapter-start-failed", "failed"),
+            diagnostics=(Diagnostic(ManualTime(0), "startup", "message"),),
         ),
         lambda: EpochCompleted(cast(Observation, object())),
         lambda: EpochCompleted(_observation(), cast(tuple[Diagnostic, ...], [])),
         lambda: TerminalResult(cast(Observation | None, object()), RunFinished.code(0)),
         lambda: TerminalResult(None, cast(RunFinished | RunFailed, object())),
+        lambda: StartTerminated(
+            cast(EnforcedConstraints, object()),
+            TerminalResult(None, RunFinished.code(0)),
+        ),
+        lambda: StartTerminated(_constraints(), cast(TerminalResult, object())),
     ],
 )
 def test_invalid_runtime_shapes_fail_closed(factory: CallableFactory) -> None:

@@ -14,7 +14,8 @@ The first Python adapter surface lives in `termverify.adapter`. It is a
 synchronous, single-flight contract whose return values make lifecycle
 boundaries explicit:
 
-1. `Adapter.start()` returns `Started`, `StartUnsupported`, or `StartFailed`.
+1. `Adapter.start()` returns `Started`, `StartTerminated`, `StartUnsupported`, or
+   `StartFailed`.
 2. `Adapter.dispatch()` accepts only the currently approved `TextInput` and
    `Resize` values and returns `EpochCompleted` or `TerminalResult`.
 3. `Adapter.advance_clock()` accepts `ClockAdvance` separately so manual time
@@ -22,7 +23,10 @@ boundaries explicit:
 4. `Adapter.stop()` accepts `Stop` and always returns `TerminalResult`.
 
 `Started` includes the complete constraint-specific receipt set, startup
-`Diagnostic` values, and the initial readiness `Observation`. An ordinary
+`Diagnostic` values, and the initial readiness `Observation`. `StartTerminated`
+combines that fully negotiated receipt set with a terminal result when the
+subject exits during initialization. Adapter failure before readiness remains
+`StartFailed`, including after complete negotiation. An ordinary
 successful input returns `EpochCompleted`, which combines diagnostics with one
 quiescent observation. A subject exit or adapter failure returns
 `TerminalResult`, with optional final observation, diagnostics, and a typed
@@ -33,14 +37,28 @@ The module is public but deliberately is not re-exported from the package root.
 Callers import from `termverify.adapter`; the module's explicit `__all__` is the
 compatibility boundary.
 
+Issue #48 deliberately corrects the inception-v1 constructor contract in place:
+`EnforcedConstraints`, `StartUnsupported`, and `StartFailed` now require the
+active `run_id` and requested configuration. This is a breaking change from the
+short-lived shape merged in PR #47, made before any published release or
+supported consumer contract so invalid receipt provenance does not become the
+compatibility baseline. Callers testing against that transient commit must pass
+those two values explicitly. After this correction, `__all__` remains the
+compatibility boundary for subsequent work.
+
 ## Immutable values
 
-All contract records are frozen, slotted dataclasses or immutable scalar
-values. Sequence fields require tuples. Application-defined JSON values are
-copied recursively by `freeze_json()`: arrays become tuples and objects become
-private mapping proxies whose nested values are also frozen. Mutating the
-caller-owned source after construction cannot change an observation,
-diagnostic, failure, or outcome.
+All contract records are frozen, slotted dataclasses or attribute-free immutable
+scalar values. Sequence fields require exact tuples, and retained nested
+contract objects require their exact declared runtime types.
+Application-defined JSON values are copied recursively by `freeze_json()`:
+arrays become tuples and objects become private mapping proxies whose nested
+values are also frozen. Mutating the caller-owned source after construction
+cannot change an observation, diagnostic, failure, or outcome.
+
+JSON scalar subclasses and string-literal equality impostors are rejected rather
+than retained or compared polymorphically. This prevents mutable attributes or
+custom equality from crossing an otherwise frozen public boundary.
 
 `RunConfiguration` is composed only of immutable constraint values. Its
 `to_protocol()` method returns a fresh mutable JSON-shaped object matching the
@@ -56,9 +74,10 @@ runner because one standalone input cannot validate them.
 ## Enforcement receipts
 
 The seven receipt classes are intentionally distinct. `EnforcedConstraints`
-requires the exact receipt type in configuration order and requires every
-receipt to name the same deterministic run. Unsupported and failed startup
-results retain only a valid enforced prefix.
+binds the active run identifier and requested configuration, requires the exact
+receipt type in configuration order, and validates every receipt's run and
+effective value against that request. Unsupported and failed startup results
+likewise retain the active run, request, and only a valid enforced prefix.
 
 `ConstraintPorts` makes the origin path structural: each `enforce_*` method
 accepts only that constraint's requested value and returns only its matching
@@ -117,8 +136,10 @@ Focused tests must prove:
 - valid configuration converts to the exact reviewed v1 shape;
 - invalid and mutable-shaped construction is rejected;
 - nested application JSON is copied and transitively immutable;
-- observation and lifecycle result invariants fail closed;
-- receipt type, order, run binding, and deferred-enforcement gates are checked;
+- observation and lifecycle result invariants fail closed, including terminal
+  completion during initialization and exited-process evidence on failures;
+- receipt type, order, run/request binding, effective-value equality, and
+  deferred-enforcement gates are checked;
 - a test-only adapter satisfies the structural protocol under strict mypy and
   can start, dispatch, advance manual time, observe, and stop without ambient
   dependencies;
