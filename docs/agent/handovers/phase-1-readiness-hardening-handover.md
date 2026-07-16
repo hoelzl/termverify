@@ -77,7 +77,7 @@ review contexts. No tracked repository files were modified by the review.
 - `actionlint` was not available locally. GitHub's pinned workflow-security and
   dependency-vulnerability jobs passed and remain the current remote evidence.
 
-### Reconciliation through merged PR #35 and issue #36
+### Reconciliation through merged PR #37 and issue #38
 
 The confirmed-finding lists below preserve the original review baseline. An
 intermediate reconciliation after PRs #12, #13, and #15 on clean `main` at
@@ -145,22 +145,27 @@ prerequisite was filed:
   Oversized integer tokens now fail cleanly in envelope, state, and extension
   positions without changing ordinary malformed, non-finite, or noncanonical
   number behavior.
-- PR #35's independent review identified, and a fresh merged-main probe
-  confirmed, the sibling serializer boundary: `rfc8785` leaks raw `ValueError`
-  while formatting its range error for a programmatically constructed
-  5,000-digit Python integer. Issue
-  [#36](https://github.com/hoelzl/termverify/issues/36) is the next focused
-  prerequisite. The initial nested-state test reproduced the raw exception
-  before the canonicalization boundary was corrected.
+- PR #37 completed issue #36 by normalizing dependency `ValueError` at the
+  serializer's RFC 8785 boundary. Programmatically constructed 5,000-digit
+  Python integers now fail cleanly in state and extension positions while safe
+  boundaries, ordinary range errors, parser behavior, and interpreter settings
+  remain unchanged.
+- A fresh merged-main audit after PR #37 confirmed that the installed RFC 8785
+  implementation accepts Python tuples and silently canonicalizes them as JSON
+  arrays. Successful serialization therefore reparses tuples as lists and does
+  not preserve semantic records. Issue
+  [#38](https://github.com/hoelzl/termverify/issues/38) is the next focused
+  prerequisite. The initial state test demonstrated that tuple input was
+  accepted before the JSON-value representation check was added.
 
-The adapter-contract entry gate remains closed during and after issue #36.
+The adapter-contract entry gate remains closed during and after issue #38.
 Remaining gates
 include other Workstream 1 local and cross-record rules, the deterministic
 vocabularies and negotiation/attestation semantics in Workstream 2,
 locale enforcement/attestation and timezone conformance, fixture/property
 coverage, resource limits, and the deliberately bounded schema package-access
 criteria in Workstreams 3 and 6.
-Neither issues #16/#18/#20/#22/#24/#26/#28/#30/#32/#34/#36 nor the merged schema slice authorizes
+Neither issues #16/#18/#20/#22/#24/#26/#28/#30/#32/#34/#36/#38 nor the merged schema slice authorizes
 adapter/runtime implementation or exhaustive schema work.
 
 ### Confirmed P0 defects

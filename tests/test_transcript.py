@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -777,6 +778,27 @@ def test_serialize_transcript_rejects_out_of_domain_python_integer_cleanly(
 
     with pytest.raises(TranscriptValidationError, match="canonicalized"):
         serialize_transcript(transcript)
+
+
+@pytest.mark.parametrize("location", ["state", "extension"])
+def test_serialize_transcript_rejects_tuple_json_value(location: str) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[9]["payload"]
+    assert isinstance(payload, dict)
+    key = "state" if location == "state" else "x-array"
+    cast(dict[str, object], payload)[key] = ("ready",)
+
+    with pytest.raises(TranscriptValidationError, match="JSON arrays must use lists"):
+        serialize_transcript(transcript)
+
+
+def test_serialize_transcript_preserves_list_json_value() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[9]["payload"]
+    assert isinstance(payload, dict)
+    payload["state"] = ["ready"]
+
+    assert parse_transcript(serialize_transcript(transcript)) == transcript
 
 
 def test_parse_transcript_rejects_non_finite_json_number() -> None:
