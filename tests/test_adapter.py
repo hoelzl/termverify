@@ -559,6 +559,128 @@ def test_epoch_and_terminal_results_preserve_process_lifecycle() -> None:
         )
 
 
+def test_started_rejects_mismatched_diagnostic_time() -> None:
+    constraints = _constraints()
+
+    with pytest.raises(ValueError, match="diagnostic time"):
+        Started(
+            constraints=constraints,
+            observation=_observation(0),
+            diagnostics=(Diagnostic(ManualTime(1), "startup", "late"),),
+        )
+
+
+def test_epoch_completed_rejects_mismatched_diagnostic_time() -> None:
+    with pytest.raises(ValueError, match="diagnostic time"):
+        EpochCompleted(
+            observation=_observation(5),
+            diagnostics=(Diagnostic(ManualTime(4), "epoch", "early"),),
+        )
+
+
+def test_terminal_result_rejects_mismatched_diagnostic_time() -> None:
+    with pytest.raises(ValueError, match="diagnostic time"):
+        TerminalResult(
+            observation=_observation(5),
+            outcome=RunFinished.code(0),
+            diagnostics=(Diagnostic(ManualTime(4), "terminal", "early"),),
+        )
+
+
+def test_start_terminated_rejects_mismatched_diagnostic_without_observation() -> None:
+    constraints = _constraints()
+
+    with pytest.raises(ValueError, match="diagnostic time"):
+        StartTerminated(
+            constraints=constraints,
+            result=TerminalResult(
+                observation=None,
+                outcome=RunFinished.code(0),
+                diagnostics=(Diagnostic(ManualTime(1), "terminal", "late"),),
+            ),
+        )
+
+
+def test_start_failed_rejects_mismatched_diagnostic_after_negotiation() -> None:
+    constraints = _constraints()
+    enforced = (
+        constraints.seed,
+        constraints.clock,
+        constraints.locale,
+        constraints.timezone,
+        constraints.terminal,
+        constraints.filesystem,
+        constraints.network,
+    )
+
+    with pytest.raises(ValueError, match="diagnostic time"):
+        StartFailed(
+            run_id=constraints.run_id,
+            requested=constraints.requested,
+            enforced=enforced,
+            failure=AdapterFailure("adapter-start-failed", "failed"),
+            diagnostics=(Diagnostic(ManualTime(1), "startup", "late"),),
+        )
+
+
+def test_start_failed_still_forbids_diagnostics_before_complete_negotiation() -> None:
+    constraints = _constraints()
+
+    with pytest.raises(ValueError, match="complete negotiation"):
+        StartFailed(
+            run_id=constraints.run_id,
+            requested=constraints.requested,
+            enforced=(constraints.seed,),
+            failure=AdapterFailure("adapter-start-failed", "failed"),
+            diagnostics=(Diagnostic(ManualTime(0), "startup", "message"),),
+        )
+
+
+def test_result_aggregates_accept_matching_diagnostic_times() -> None:
+    constraints = _constraints()
+    enforced = (
+        constraints.seed,
+        constraints.clock,
+        constraints.locale,
+        constraints.timezone,
+        constraints.terminal,
+        constraints.filesystem,
+        constraints.network,
+    )
+    initial_diagnostic = Diagnostic(ManualTime(0), "startup", "ready")
+    epoch_diagnostic = Diagnostic(ManualTime(5), "epoch", "ready")
+
+    assert Started(
+        constraints=constraints,
+        observation=_observation(0),
+        diagnostics=(initial_diagnostic,),
+    ).diagnostics == (initial_diagnostic,)
+    assert EpochCompleted(
+        observation=_observation(5),
+        diagnostics=(epoch_diagnostic,),
+    ).diagnostics == (epoch_diagnostic,)
+    assert TerminalResult(
+        observation=_observation(5),
+        outcome=RunFinished.code(0),
+        diagnostics=(epoch_diagnostic,),
+    ).diagnostics == (epoch_diagnostic,)
+    assert StartTerminated(
+        constraints=constraints,
+        result=TerminalResult(
+            observation=None,
+            outcome=RunFinished.code(0),
+            diagnostics=(initial_diagnostic,),
+        ),
+    ).result.diagnostics == (initial_diagnostic,)
+    assert StartFailed(
+        run_id=constraints.run_id,
+        requested=constraints.requested,
+        enforced=enforced,
+        failure=AdapterFailure("adapter-start-failed", "failed"),
+        diagnostics=(initial_diagnostic,),
+    ).diagnostics == (initial_diagnostic,)
+
+
 class _FakeAdapter:
     def start(self, run_id: str, configuration: RunConfiguration) -> Started:
         assert configuration == _configuration()
