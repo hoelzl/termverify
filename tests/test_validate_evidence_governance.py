@@ -150,6 +150,41 @@ def test_validate_evidence_governance_rejects_secret_in_nested_transcript_fixtur
     assert any("restricted evidence" in error for error in errors)
 
 
+@pytest.mark.parametrize("key", ["APIToken", "AWSSecret"])
+def test_validate_evidence_governance_rejects_acronym_sensitive_fixture_keys(
+    tmp_path: Path,
+    key: str,
+) -> None:
+    repository = tmp_path / "repository"
+    fixture = repository / "tests" / "fixtures" / "transcripts" / "leak.jsonl"
+    fixture.parent.mkdir(parents=True)
+    credential = (
+        "AKIA" + "A" * 16
+        if key == "APIToken"
+        else ".".join(("eyJ" + "a" * 20, "eyJ" + "b" * 20, "c" * 32))
+    )
+    fixture.write_text(
+        json.dumps({"payload": {key: credential}}) + "\n",
+        encoding="utf-8",
+    )
+    fixture.with_name(f"{fixture.name}.evidence.json").write_text(
+        json.dumps(
+            {
+                "schema": "termverify.fixture-evidence/v1",
+                "classification": "public-synthetic",
+                "fixture": fixture.name,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    validator = load_validator()
+
+    errors = validator.validate_evidence_governance(repository)
+
+    assert any("restricted evidence" in error for error in errors)
+
+
 def test_validate_evidence_governance_requires_explicit_synthetic_classification(
     tmp_path: Path,
 ) -> None:
