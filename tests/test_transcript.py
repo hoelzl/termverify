@@ -76,6 +76,13 @@ class _ExplodingDict(dict[object, object]):
         raise RuntimeError("dict subclass items must not run")
 
 
+class _ExplodingClassLookup:
+    def __getattribute__(self, name: str) -> object:
+        if name == "__class__":
+            raise RuntimeError("class lookup must not run")
+        return super().__getattribute__(name)
+
+
 def test_parse_transcript_accepts_canonical_valid_fixture() -> None:
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
 
@@ -546,6 +553,16 @@ def test_serialize_transcript_rejects_container_subclass_without_invoking_it(
 
     with pytest.raises(TranscriptValidationError):
         serialize_transcript(records)
+
+
+def test_serialize_transcript_rejects_host_value_without_class_lookup() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[OBSERVATION_INDEX]["payload"]
+    assert isinstance(payload, dict)
+    cast(dict[str, object], payload)["state"] = _ExplodingClassLookup()
+
+    with pytest.raises(TranscriptValidationError, match="unsupported JSON value type"):
+        serialize_transcript(transcript)
 
 
 @pytest.mark.parametrize(

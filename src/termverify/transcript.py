@@ -151,7 +151,7 @@ def serialize_transcript(records: list[Record]) -> bytes:
 def _validate_json_value(value: object) -> None:
     if value is None or type(value) in {bool, int, str}:
         return
-    if isinstance(value, tuple):
+    if type(value) is tuple:
         raise TranscriptValidationError("JSON arrays must use lists")
     if type(value) is float:
         if not math.isfinite(value):
