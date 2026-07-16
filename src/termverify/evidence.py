@@ -36,7 +36,7 @@ _CREDENTIAL_PATTERNS = (
     ),
     re.compile(r"-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----"),
 )
-_CAMEL_CASE_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_CAMEL_CASE_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
 _PAYLOAD_MEMBERS = {
     "run.started": frozenset({"config", "subject"}),
     "capability.result": frozenset({"constraint", "status", "effective", "reason"}),

@@ -375,6 +375,35 @@ def test_redact_evidence_normalizes_camel_case_sensitive_keys() -> None:
     }
 
 
+@pytest.mark.parametrize(
+    ("key", "sensitive"),
+    [
+        ("api_token", True),
+        ("myTOKEN", True),
+        ("authorization", True),
+        ("APIToken", True),
+        ("AWSSecret", True),
+        ("DBPassword", True),
+        ("GHToken", True),
+        ("XToken", True),
+        ("APIResponse", False),
+        ("AWSRegion", False),
+        ("databaseName", False),
+        ("user_name", False),
+        ("feature-flag", False),
+    ],
+)
+def test_redact_evidence_classifies_acronym_and_delimited_keys(
+    key: str,
+    sensitive: bool,
+) -> None:
+    value = "synthetic-value"
+
+    assert redact_evidence({key: value}) == {
+        key: f"<redacted:{key}>" if sensitive else value
+    }
+
+
 def test_redact_evidence_classifies_clipboard_payload_by_record_kind() -> None:
     record: dict[str, JsonValue] = {
         "kind": "input.clipboard_set",
