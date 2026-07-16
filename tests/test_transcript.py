@@ -769,6 +769,36 @@ def test_parse_transcript_rejects_non_finite_json_number() -> None:
         parse_transcript(data)
 
 
+@pytest.mark.parametrize("location", ["envelope", "nested-state"])
+def test_parse_transcript_rejects_oversized_json_integer_cleanly(
+    location: str,
+) -> None:
+    oversized_integer = b"9" * 5_000
+    if location == "envelope":
+        data = (
+            b'{"id":"record-000","kind":"run.started","payload":{},'
+            b'"protocol":"termverify.transcript/v1","run_id":"run-basic","seq":'
+            + oversized_integer
+            + b"}\n"
+        )
+    else:
+        fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
+        data = fixture.replace(
+            b'"state":{}', b'"state":{"value":' + oversized_integer + b"}"
+        )
+
+    with pytest.raises(TranscriptValidationError, match="invalid JSON"):
+        parse_transcript(data)
+
+
+def test_parse_transcript_preserves_duplicate_member_diagnostic() -> None:
+    fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
+    data = fixture.replace(b'"seq":0}', b'"seq":0,"seq":0}', 1)
+
+    with pytest.raises(TranscriptValidationError, match="duplicate JSON member: seq"):
+        parse_transcript(data)
+
+
 def test_parse_transcript_converts_excessive_nesting_to_validation_error() -> None:
     data = b'{"x":' * 2_000 + b"0" + b"}" * 2_000 + b"\n"
 

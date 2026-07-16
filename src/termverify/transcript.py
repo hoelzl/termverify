@@ -164,7 +164,9 @@ def _parse_line(line: bytes, number: int) -> Record:
     try:
         text = line.decode("utf-8")
         raw = json.loads(text, object_pairs_hook=_reject_duplicate_members)
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+    except TranscriptValidationError:
+        raise
+    except (UnicodeDecodeError, ValueError) as error:
         raise TranscriptValidationError(f"line {number + 1}: invalid JSON") from error
     if not isinstance(raw, dict):
         raise TranscriptValidationError(f"line {number + 1}: record must be an object")
