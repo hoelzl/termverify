@@ -414,7 +414,10 @@ def _validate_lifecycle(records: list[Record]) -> None:
     if constraints != list(_CONSTRAINTS[: len(capabilities)]):
         raise TranscriptValidationError("capability results are out of order")
     statuses = [payload.get("status") for payload in capability_payloads]
-    if any(status not in {"enforced", "unsupported"} for status in statuses):
+    if any(
+        not isinstance(status, str) or status not in {"enforced", "unsupported"}
+        for status in statuses
+    ):
         raise TranscriptValidationError("capability result status is invalid")
     for constraint, status, payload in zip(
         constraints, statuses, capability_payloads, strict=True
@@ -561,9 +564,15 @@ def _validate_lifecycle(records: list[Record]) -> None:
         if record["kind"] == "input.mouse":
             action = input_payload.get("action")
             coordinates = (input_payload.get("column"), input_payload.get("row"))
-            if action not in {"press", "release", "move", "scroll"} or not all(
-                isinstance(value, int) and not isinstance(value, bool) and value >= 0
-                for value in coordinates
+            if (
+                not isinstance(action, str)
+                or action not in {"press", "release", "move", "scroll"}
+                or not all(
+                    isinstance(value, int)
+                    and not isinstance(value, bool)
+                    and value >= 0
+                    for value in coordinates
+                )
             ):
                 raise TranscriptValidationError(
                     "input.mouse action or position is invalid"
@@ -572,7 +581,8 @@ def _validate_lifecycle(records: list[Record]) -> None:
             delta = input_payload.get("delta")
             if action in {"press", "release"}:
                 if (
-                    button not in {"left", "middle", "right"}
+                    not isinstance(button, str)
+                    or button not in {"left", "middle", "right"}
                     or "delta" in input_payload
                 ):
                     raise TranscriptValidationError("input.mouse button is invalid")

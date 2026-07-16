@@ -77,7 +77,7 @@ review contexts. No tracked repository files were modified by the review.
 - `actionlint` was not available locally. GitHub's pinned workflow-security and
   dependency-vulnerability jobs passed and remain the current remote evidence.
 
-### Reconciliation through merged PR #23 and issue #24
+### Reconciliation through merged PR #25 and issue #26
 
 The confirmed-finding lists below preserve the original review baseline. An
 intermediate reconciliation after PRs #12, #13, and #15 on clean `main` at
@@ -117,22 +117,27 @@ prerequisite was filed:
   canonical-versus-alias policy, compatibility/update semantics, or another
   deterministic membership mechanism. No timezone implementation issue should
   invent those decisions or depend on ambient `zoneinfo` data.
-- The same probe found an independent local rule with already accepted
-  semantics: action-forbidden `input.mouse` members are accepted when explicitly
-  set to JSON `null`. Issue
-  [#24](https://github.com/hoelzl/termverify/issues/24) is the next focused
-  prerequisite: distinguish member absence from a present null value for
-  `button` and `delta` while preserving `x-` extensions and parser/serializer
-  symmetry.
+- PR #25 completed issue #24 by enforcing action-dependent `input.mouse` member
+  presence and absence through the shared parser/serializer semantic validator,
+  including explicit JSON `null` values, while preserving uninterpreted `x-`
+  extensions.
+- A fresh probe after PR #25 found that array and object values for
+  `capability.result.payload.status`, `input.mouse.payload.action`, and required
+  mouse `button` values escape both transcript APIs as raw unhashable-value
+  `TypeError` exceptions. Issue
+  [#26](https://github.com/hoelzl/termverify/issues/26) is the next focused
+  prerequisite: convert this confirmed enum-like wire-value failure class to
+  `TranscriptValidationError` without redesigning validator errors or expanding
+  protocol semantics.
 
-The adapter-contract entry gate remains closed during and after issue #24.
+The adapter-contract entry gate remains closed during and after issue #26.
 Remaining gates
 include other Workstream 1 local and cross-record rules, the deterministic
 vocabularies and negotiation/attestation semantics in Workstream 2,
 locale enforcement/attestation and timezone conformance, fixture/property
 coverage, resource limits, and the deliberately bounded schema package-access
 criteria in Workstreams 3 and 6.
-Neither issues #16/#18/#20/#22/#24 nor the merged schema slice authorizes
+Neither issues #16/#18/#20/#22/#24/#26 nor the merged schema slice authorizes
 adapter/runtime implementation or exhaustive schema work.
 
 ### Confirmed P0 defects
