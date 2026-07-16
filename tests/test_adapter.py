@@ -588,21 +588,31 @@ def test_terminal_result_rejects_mismatched_diagnostic_time() -> None:
 
 
 def test_start_terminated_rejects_mismatched_diagnostic_without_observation() -> None:
-    constraints = _constraints()
+    configuration = replace(
+        _configuration(),
+        clock=ClockConfiguration(initial_ms=7),
+    )
+    constraints = _constraints(configuration=configuration)
+    result = TerminalResult(
+        observation=None,
+        outcome=RunFinished.code(0),
+        diagnostics=(Diagnostic(ManualTime(8), "terminal", "late"),),
+    )
+    assert result.observation is None
 
     with pytest.raises(ValueError, match="diagnostic time"):
         StartTerminated(
             constraints=constraints,
-            result=TerminalResult(
-                observation=None,
-                outcome=RunFinished.code(0),
-                diagnostics=(Diagnostic(ManualTime(1), "terminal", "late"),),
-            ),
+            result=result,
         )
 
 
 def test_start_failed_rejects_mismatched_diagnostic_after_negotiation() -> None:
-    constraints = _constraints()
+    configuration = replace(
+        _configuration(),
+        clock=ClockConfiguration(initial_ms=7),
+    )
+    constraints = _constraints(configuration=configuration)
     enforced = (
         constraints.seed,
         constraints.clock,
@@ -619,7 +629,7 @@ def test_start_failed_rejects_mismatched_diagnostic_after_negotiation() -> None:
             requested=constraints.requested,
             enforced=enforced,
             failure=AdapterFailure("adapter-start-failed", "failed"),
-            diagnostics=(Diagnostic(ManualTime(1), "startup", "late"),),
+            diagnostics=(Diagnostic(ManualTime(8), "startup", "late"),),
         )
 
 
