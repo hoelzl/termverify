@@ -138,7 +138,9 @@ def serialize_transcript(records: list[Record]) -> bytes:
         ) from error
 
 
-def _validate_json_numbers(value: JsonValue) -> None:
+def _validate_json_numbers(value: object) -> None:
+    if isinstance(value, tuple):
+        raise TranscriptValidationError("JSON arrays must use lists")
     if isinstance(value, float) and not math.isfinite(value):
         raise TranscriptValidationError("JSON number must be finite")
     if isinstance(value, list):
