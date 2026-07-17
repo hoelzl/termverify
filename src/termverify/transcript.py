@@ -19,6 +19,14 @@ type Record = dict[str, JsonValue]
 
 _PROTOCOL = "termverify.transcript/v1"
 _MAX_SEED = "18446744073709551615"
+_MAX_TRANSCRIPT_BYTES = 32 * 1024 * 1024
+_MAX_LINE_BYTES = 4 * 1024 * 1024
+_MAX_RECORDS = 10_000
+_MAX_JSON_NESTING = 64
+_MAX_COLLECTION_ITEMS = 16_384
+_MAX_JSON_VALUES = 100_000
+_MAX_STRING_BYTES = 1024 * 1024
+_MAX_RECORD_STRING_BYTES = 2 * 1024 * 1024
 _IDENTIFIER_PATTERN = re.compile(r"[a-z0-9._-]+")
 _TERMINAL_KINDS = frozenset({"run.finished", "run.failed", "run.unsupported"})
 _INPUT_KINDS = frozenset(
@@ -67,6 +75,8 @@ class TranscriptValidationError(ValueError):
 
 def parse_transcript(data: bytes) -> list[Record]:
     """Parse canonical v1 JSONL *data* and validate its envelope and lifecycle."""
+    if len(data) > _MAX_TRANSCRIPT_BYTES:
+        raise TranscriptValidationError("transcript bytes exceed the v1 limit")
     if (
         data.startswith(b"\xef\xbb\xbf")
         or b"\r" in data
@@ -76,10 +86,15 @@ def parse_transcript(data: bytes) -> list[Record]:
         raise TranscriptValidationError(
             "transcript must use exactly one final LF without a BOM"
         )
+    lines = data[:-1].split(b"\n")
+    if len(lines) > _MAX_RECORDS:
+        raise TranscriptValidationError("transcript record count exceeds the v1 limit")
+    for number, line in enumerate(lines, start=1):
+        if len(line) > _MAX_LINE_BYTES:
+            raise TranscriptValidationError(f"line {number} bytes exceed the v1 limit")
+        _validate_json_nesting(line, number)
     try:
-        records = [
-            _parse_line(line, number) for number, line in enumerate(data.splitlines())
-        ]
+        records = [_parse_line(line, number) for number, line in enumerate(lines)]
         _validate_lifecycle(records)
         return records
     except RecursionError as error:
@@ -94,6 +109,10 @@ def serialize_transcript(records: list[Record]) -> bytes:
         raw_records: object = records
         if type(raw_records) is not list:
             raise TranscriptValidationError("transcript records must be a list")
+        if len(raw_records) > _MAX_RECORDS:
+            raise TranscriptValidationError(
+                "transcript record count exceeds the v1 limit"
+            )
         validated_records: list[Record] = []
         for sequence, value in enumerate(raw_records):
             if type(value) is not dict:
@@ -103,9 +122,19 @@ def serialize_transcript(records: list[Record]) -> bytes:
             _validate_envelope(record, sequence)
             validated_records.append(record)
         _validate_lifecycle(validated_records)
-        return b"".join(
-            _canonical_record(record) + b"\n" for record in validated_records
-        )
+        lines: list[bytes] = []
+        total_bytes = 0
+        for number, record in enumerate(validated_records, start=1):
+            line = _canonical_record(record)
+            if len(line) > _MAX_LINE_BYTES:
+                raise TranscriptValidationError(
+                    f"line {number} bytes exceed the v1 limit"
+                )
+            total_bytes += len(line) + 1
+            if total_bytes > _MAX_TRANSCRIPT_BYTES:
+                raise TranscriptValidationError("transcript bytes exceed the v1 limit")
+            lines.append(line + b"\n")
+        return b"".join(lines)
     except RecursionError as error:
         raise TranscriptValidationError(
             "transcript JSON nesting exceeds the supported depth"
@@ -113,25 +142,80 @@ def serialize_transcript(records: list[Record]) -> bytes:
 
 
 def _validate_json_value(value: object) -> None:
-    if value is None or type(value) in {bool, int, str}:
-        return
-    if type(value) is tuple:
-        raise TranscriptValidationError("JSON arrays must use lists")
-    if type(value) is float:
-        if not math.isfinite(value):
-            raise TranscriptValidationError("JSON number must be finite")
-        return
-    if type(value) is list:
-        for item in value:
-            _validate_json_value(item)
-        return
-    if type(value) is dict:
-        for key, item in value.items():
-            if type(key) is not str:
-                raise TranscriptValidationError("JSON object keys must be strings")
-            _validate_json_value(item)
-        return
-    raise TranscriptValidationError("unsupported JSON value type")
+    pending: list[tuple[object, int]] = [(value, 1)]
+    value_count = 0
+    string_bytes = 0
+    while pending:
+        current, depth = pending.pop()
+        value_count += 1
+        if value_count > _MAX_JSON_VALUES:
+            raise TranscriptValidationError(
+                "transcript JSON value count exceeds the v1 limit"
+            )
+        if type(current) is str:
+            string_bytes += _limited_string_bytes(current)
+            if string_bytes > _MAX_RECORD_STRING_BYTES:
+                raise TranscriptValidationError(
+                    "transcript record string bytes exceed the v1 limit"
+                )
+            continue
+        if current is None or type(current) in {bool, int}:
+            continue
+        if type(current) is tuple:
+            raise TranscriptValidationError("JSON arrays must use lists")
+        if type(current) is float:
+            if not math.isfinite(current):
+                raise TranscriptValidationError("JSON number must be finite")
+            continue
+        if type(current) is list:
+            if depth > _MAX_JSON_NESTING:
+                raise TranscriptValidationError(
+                    "transcript JSON nesting exceeds the v1 limit"
+                )
+            if len(current) > _MAX_COLLECTION_ITEMS:
+                raise TranscriptValidationError(
+                    "transcript JSON collection exceeds the v1 limit"
+                )
+            pending.extend((item, depth + 1) for item in current)
+            continue
+        if type(current) is dict:
+            if depth > _MAX_JSON_NESTING:
+                raise TranscriptValidationError(
+                    "transcript JSON nesting exceeds the v1 limit"
+                )
+            if len(current) > _MAX_COLLECTION_ITEMS:
+                raise TranscriptValidationError(
+                    "transcript JSON collection exceeds the v1 limit"
+                )
+            for key, item in current.items():
+                if type(key) is not str:
+                    raise TranscriptValidationError("JSON object keys must be strings")
+                string_bytes += _limited_string_bytes(key)
+                if string_bytes > _MAX_RECORD_STRING_BYTES:
+                    raise TranscriptValidationError(
+                        "transcript record string bytes exceed the v1 limit"
+                    )
+                pending.append((item, depth + 1))
+            continue
+        raise TranscriptValidationError("unsupported JSON value type")
+
+
+def _limited_string_bytes(value: str) -> int:
+    if len(value) > _MAX_STRING_BYTES:
+        raise TranscriptValidationError(
+            "transcript JSON string bytes exceed the v1 limit"
+        )
+    try:
+        size = len(value.encode("utf-8"))
+    except UnicodeEncodeError as error:
+        raise TranscriptValidationError(
+            "record cannot be canonicalized as RFC 8785"
+        ) from error
+    if size > _MAX_STRING_BYTES:
+        raise TranscriptValidationError(
+            "transcript JSON string bytes exceed the v1 limit"
+        )
+    return size
 
 
 def _canonical_record(record: Record) -> bytes:
@@ -141,6 +225,30 @@ def _canonical_record(record: Record) -> bytes:
         raise TranscriptValidationError(
             "record cannot be canonicalized as RFC 8785"
         ) from error
+
+
+def _validate_json_nesting(line: bytes, number: int) -> None:
+    depth = 0
+    in_string = False
+    escaped = False
+    for byte in line:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif byte == 0x5C:
+                escaped = True
+            elif byte == 0x22:
+                in_string = False
+        elif byte == 0x22:
+            in_string = True
+        elif byte == 0x5B or byte == 0x7B:
+            depth += 1
+            if depth > _MAX_JSON_NESTING:
+                raise TranscriptValidationError(
+                    f"line {number} JSON nesting exceeds the v1 limit"
+                )
+        elif byte == 0x5D or byte == 0x7D:
+            depth -= 1
 
 
 def _parse_line(line: bytes, number: int) -> Record:

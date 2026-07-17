@@ -11,10 +11,11 @@ This document defines the reviewed **design** for the first intended external
 protocol: `termverify.transcript/v1`. The repository contains a canonical codec,
 semantic lifecycle validator, non-exhaustive schema aid, and reviewed fixture and
 property coverage. The active Phase 1 handover now retains deterministic
-transcript resource governance and an amended behavior-based fixture gate.
-Installed-schema and release controls transfer intact to the draft pre-release
-successor before the first supported external artifact. Neither that transfer nor
-the current runtime activates Phase 2.
+transcript resource governance through the fixed limits below and retains an
+amended behavior-based fixture gate. Installed-schema and release controls
+transfer intact to the draft pre-release successor before the first supported
+external artifact. Neither that transfer nor the current runtime activates Phase
+2.
 
 ## Schema and runtime authority
 
@@ -35,6 +36,37 @@ Each UTF-8 JSON Lines file is one transcript for one verified run. A line ends
 with exactly one LF (`\n`); a final LF is required. Blank lines, comments, and
 byte-order marks are invalid. Readers reject duplicate object member names and
 unknown required semantics instead of silently choosing an interpretation.
+
+## Fixed v1 resource limits
+
+The canonical parser and programmatic serializer enforce the same fixed,
+protocol-owned ceilings. They do not inherit interpreter recursion settings,
+host memory, or ambient configuration:
+
+| Resource | V1 maximum | Counting rule |
+| --- | ---: | --- |
+| Transcript bytes | 32 MiB (33,554,432 bytes) | Entire JSONL byte sequence, including every final LF. |
+| Line bytes | 4 MiB (4,194,304 bytes) | One canonical JSON object, excluding its LF. |
+| Records | 10,000 | JSONL objects in one transcript. |
+| JSON nesting | 64 | Simultaneously open objects and arrays in one record, including the envelope object. |
+| Collection items | 16,384 | Immediate members in one object or items in one array. |
+| JSON values | 100,000 | Container and scalar value nodes in one record; object keys are not value nodes. |
+| Individual string bytes | 1 MiB (1,048,576 bytes) | UTF-8 bytes of one decoded string value or object key. |
+| Record string bytes | 2 MiB (2,097,152 bytes) | Aggregate UTF-8 bytes of every decoded string value and object key in one record. |
+
+The parser checks total bytes, framing, record count, line bytes, and lexical JSON
+nesting before JSON decoding. After decoding, it checks collection, value, and
+string budgets before semantic validation. Brackets inside JSON strings do not
+contribute to lexical nesting. The serializer traverses exact Python JSON values
+iteratively, applies the same structured-value budgets before RFC 8785
+canonicalization, then checks each canonical line and accumulates transcript
+bytes before joining output. Strings longer than the individual byte ceiling in
+code points are rejected before UTF-8 measurement, bounding that measurement;
+malformed Unicode is normalized to `TranscriptValidationError` rather than
+leaking a codec exception. A limit violation is a
+`TranscriptValidationError`; interpreter recursion or allocation-dependent
+behavior is not a conformance result. Every successfully serialized transcript
+therefore remains admissible to the parser under the same ceilings.
 
 ## Canonical serialization
 

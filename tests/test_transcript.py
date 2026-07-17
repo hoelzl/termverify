@@ -83,6 +83,64 @@ class _ExplodingClassLookup:
         return super().__getattribute__(name)
 
 
+def _json_value_count(value: JsonValue) -> int:
+    pending = [value]
+    count = 0
+    while pending:
+        current = pending.pop()
+        count += 1
+        if isinstance(current, list):
+            pending.extend(current)
+        elif isinstance(current, dict):
+            pending.extend(current.values())
+    return count
+
+
+def _json_string_bytes(value: JsonValue) -> int:
+    pending = [value]
+    total = 0
+    while pending:
+        current = pending.pop()
+        if isinstance(current, str):
+            total += len(current.encode())
+        elif isinstance(current, list):
+            pending.extend(current)
+        elif isinstance(current, dict):
+            total += sum(len(key.encode()) for key in current)
+            pending.extend(current.values())
+    return total
+
+
+def _set_observation_record_string_bytes(
+    transcript: list[dict[str, JsonValue]], target: int
+) -> None:
+    payload = transcript[OBSERVATION_INDEX]["payload"]
+    assert isinstance(payload, dict)
+    state: list[JsonValue] = ["x" * (1024 * 1024), ""]
+    payload["state"] = state
+    remaining = target - _json_string_bytes(transcript[OBSERVATION_INDEX])
+    assert 0 <= remaining <= 1024 * 1024
+    state[1] = "y" * remaining
+    assert _json_string_bytes(transcript[OBSERVATION_INDEX]) == target
+
+
+def _set_observation_record_value_count(
+    transcript: list[dict[str, JsonValue]], target: int
+) -> None:
+    payload = transcript[OBSERVATION_INDEX]["payload"]
+    assert isinstance(payload, dict)
+    state: list[JsonValue] = [[] for _ in range(10)]
+    payload["state"] = state
+    remaining = target - _json_value_count(transcript[OBSERVATION_INDEX])
+    for child in state:
+        assert isinstance(child, list)
+        added = min(10_000, remaining)
+        child.extend([None] * added)
+        remaining -= added
+    assert remaining == 0
+    assert _json_value_count(transcript[OBSERVATION_INDEX]) == target
+
+
 def test_parse_transcript_accepts_canonical_valid_fixture() -> None:
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
 
@@ -100,6 +158,27 @@ def test_parse_transcript_accepts_canonical_valid_fixture() -> None:
         "observation",
         "run.finished",
     ]
+
+
+def test_parse_transcript_rejects_total_bytes_before_framing() -> None:
+    oversized = b" " * (32 * 1024 * 1024 + 1)
+
+    with pytest.raises(TranscriptValidationError, match="transcript bytes"):
+        parse_transcript(oversized)
+
+
+def test_parse_transcript_rejects_line_bytes_before_json_decoding() -> None:
+    oversized = b" " * (4 * 1024 * 1024 + 1) + b"\n"
+
+    with pytest.raises(TranscriptValidationError, match="line 1 bytes"):
+        parse_transcript(oversized)
+
+
+def test_parse_transcript_rejects_record_count_before_json_decoding() -> None:
+    oversized = b"x\n" * 10_001
+
+    with pytest.raises(TranscriptValidationError, match="record count"):
+        parse_transcript(oversized)
 
 
 def test_parse_transcript_requires_initial_readiness_observation() -> None:
@@ -526,6 +605,31 @@ def test_serialize_transcript_rejects_non_list_record_collection() -> None:
 
     with pytest.raises(TranscriptValidationError, match="records must be a list"):
         serialize_transcript(records)
+
+
+def test_serialize_transcript_rejects_record_count_before_record_validation() -> None:
+    records = cast(list[dict[str, JsonValue]], [{}] * 10_001)
+
+    with pytest.raises(TranscriptValidationError, match="record count"):
+        serialize_transcript(records)
+
+
+def test_transcript_accepts_record_count_at_v1_limit() -> None:
+    basic = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    transcript = deepcopy(basic[:INPUT_INDEX])
+    for _ in range(4_995):
+        transcript.extend(
+            (deepcopy(basic[INPUT_INDEX]), deepcopy(basic[OBSERVATION_INDEX]))
+        )
+    transcript.append(deepcopy(basic[-1]))
+    for sequence, record in enumerate(transcript):
+        record["id"] = f"record-{sequence:05d}"
+        record["seq"] = sequence
+
+    encoded = serialize_transcript(transcript)
+
+    assert len(transcript) == 10_000
+    assert parse_transcript(encoded) == transcript
 
 
 @pytest.mark.parametrize(
@@ -1032,6 +1136,403 @@ def test_serialize_transcript_preserves_list_json_value() -> None:
     assert parse_transcript(serialize_transcript(transcript)) == transcript
 
 
+@pytest.mark.parametrize("collection", ["array", "object"])
+def test_serialize_transcript_rejects_collection_beyond_v1_limit(
+    collection: str,
+) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[OBSERVATION_INDEX]["payload"]
+    assert isinstance(payload, dict)
+    payload["state"] = (
+        list(range(16_385))
+        if collection == "array"
+        else {f"item-{index}": None for index in range(16_385)}
+    )
+
+    with pytest.raises(TranscriptValidationError, match="collection"):
+        serialize_transcript(transcript)
+
+
+@pytest.mark.parametrize("collection", ["array", "object"])
+def test_parse_transcript_rejects_collection_beyond_v1_limit(
+    collection: str,
+) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[OBSERVATION_INDEX]["payload"]
+    assert isinstance(payload, dict)
+    payload["state"] = (
+        list(range(16_385))
+        if collection == "array"
+        else {f"item-{index}": None for index in range(16_385)}
+    )
+    encoded = b"".join(
+        json.dumps(
+            record, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        ).encode()
+        + b"\n"
+        for record in transcript
+    )
+
+    with pytest.raises(TranscriptValidationError, match="collection"):
+        parse_transcript(encoded)
+
+
+@pytest.mark.parametrize("collection", ["array", "object"])
+def test_transcript_accepts_collection_at_v1_limit(collection: str) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[OBSERVATION_INDEX]["payload"]
+    assert isinstance(payload, dict)
+    payload["state"] = (
+        list(range(16_384))
+        if collection == "array"
+        else {f"item-{index}": None for index in range(16_384)}
+    )
+
+    encoded = serialize_transcript(transcript)
+
+    assert parse_transcript(encoded) == transcript
+
+
+def test_serialize_transcript_rejects_value_nodes_beyond_v1_limit() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    _set_observation_record_value_count(transcript, 100_001)
+
+    with pytest.raises(TranscriptValidationError, match="value count"):
+        serialize_transcript(transcript)
+
+
+def test_parse_transcript_rejects_value_nodes_beyond_v1_limit() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    _set_observation_record_value_count(transcript, 100_001)
+    encoded = b"".join(
+        json.dumps(
+            record, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        ).encode()
+        + b"\n"
+        for record in transcript
+    )
+
+    with pytest.raises(TranscriptValidationError, match="value count"):
+        parse_transcript(encoded)
+
+
+def test_transcript_accepts_value_nodes_at_v1_limit() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    _set_observation_record_value_count(transcript, 100_000)
+
+    encoded = serialize_transcript(transcript)
+
+    assert parse_transcript(encoded) == transcript
+
+
+def test_serialize_transcript_rejects_string_bytes_beyond_v1_limit() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[OBSERVATION_INDEX]["payload"]
+    assert isinstance(payload, dict)
+    payload["state"] = "x" * (1024 * 1024 + 1)
+
+    with pytest.raises(TranscriptValidationError, match="string bytes"):
+        serialize_transcript(transcript)
+
+
+def test_parse_transcript_rejects_string_bytes_beyond_v1_limit() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[OBSERVATION_INDEX]["payload"]
+    assert isinstance(payload, dict)
+    payload["state"] = "x" * (1024 * 1024 + 1)
+    encoded = b"".join(
+        json.dumps(
+            record, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        ).encode()
+        + b"\n"
+        for record in transcript
+    )
+
+    with pytest.raises(TranscriptValidationError, match="string bytes"):
+        parse_transcript(encoded)
+
+
+@pytest.mark.parametrize(
+    ("api", "location"),
+    [("parse", "value"), ("serialize", "value"), ("serialize", "key")],
+)
+def test_transcript_normalizes_lone_surrogate_strings(
+    api: str,
+    location: str,
+) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[OBSERVATION_INDEX]["payload"]
+    assert isinstance(payload, dict)
+    if location == "key":
+        payload["x-\ud800"] = None
+    else:
+        payload["state"] = "\ud800"
+
+    with pytest.raises(TranscriptValidationError) as exc_info:
+        if api == "serialize":
+            serialize_transcript(transcript)
+        else:
+            encoded = b"".join(
+                json.dumps(
+                    record,
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ).encode()
+                + b"\n"
+                for record in transcript
+            )
+            parse_transcript(encoded)
+
+    assert str(exc_info.value) == "record cannot be canonicalized as RFC 8785"
+
+
+@pytest.mark.parametrize("api", ["parse", "serialize"])
+def test_transcript_rejects_object_key_bytes_beyond_v1_limit(api: str) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[OBSERVATION_INDEX]["payload"]
+    assert isinstance(payload, dict)
+    payload["x-" + "k" * (1024 * 1024)] = None
+
+    with pytest.raises(TranscriptValidationError, match="string bytes"):
+        if api == "serialize":
+            serialize_transcript(transcript)
+        else:
+            encoded = b"".join(
+                json.dumps(
+                    record,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ).encode()
+                + b"\n"
+                for record in transcript
+            )
+            parse_transcript(encoded)
+
+
+def test_transcript_accepts_object_key_bytes_at_v1_limit() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[OBSERVATION_INDEX]["payload"]
+    assert isinstance(payload, dict)
+    payload["x-" + "k" * (1024 * 1024 - 2)] = None
+
+    encoded = serialize_transcript(transcript)
+
+    assert parse_transcript(encoded) == transcript
+
+
+def test_transcript_accepts_individual_string_at_v1_limit() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[OBSERVATION_INDEX]["payload"]
+    assert isinstance(payload, dict)
+    payload["state"] = "x" * (1024 * 1024)
+
+    encoded = serialize_transcript(transcript)
+
+    assert parse_transcript(encoded) == transcript
+
+
+def test_serialize_transcript_rejects_record_string_bytes_beyond_v1_limit() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    _set_observation_record_string_bytes(transcript, 2 * 1024 * 1024 + 1)
+
+    with pytest.raises(TranscriptValidationError, match="record string bytes"):
+        serialize_transcript(transcript)
+
+
+def test_parse_transcript_rejects_record_string_bytes_beyond_v1_limit() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    _set_observation_record_string_bytes(transcript, 2 * 1024 * 1024 + 1)
+    encoded = b"".join(
+        json.dumps(
+            record, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        ).encode()
+        + b"\n"
+        for record in transcript
+    )
+
+    with pytest.raises(TranscriptValidationError, match="record string bytes"):
+        parse_transcript(encoded)
+
+
+def test_transcript_accepts_record_string_bytes_at_v1_limit() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    _set_observation_record_string_bytes(transcript, 2 * 1024 * 1024)
+
+    encoded = serialize_transcript(transcript)
+
+    assert parse_transcript(encoded) == transcript
+
+
+def test_serialize_transcript_rejects_canonical_line_bytes_beyond_v1_limit() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[OBSERVATION_INDEX]["payload"]
+    assert isinstance(payload, dict)
+    payload["state"] = ""
+    baseline = len(
+        json.dumps(
+            transcript[OBSERVATION_INDEX],
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode()
+    )
+    escaped, plain = divmod(4 * 1024 * 1024 + 1 - baseline, 6)
+    payload["state"] = "\0" * escaped + "x" * plain
+    oversized_line = json.dumps(
+        transcript[OBSERVATION_INDEX],
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+
+    assert len(oversized_line) == 4 * 1024 * 1024 + 1
+
+    with pytest.raises(TranscriptValidationError, match="line 11 bytes"):
+        serialize_transcript(transcript)
+
+
+def test_transcript_accepts_canonical_line_bytes_at_v1_limit() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[OBSERVATION_INDEX]["payload"]
+    assert isinstance(payload, dict)
+    payload["state"] = ""
+    baseline = len(
+        json.dumps(
+            transcript[OBSERVATION_INDEX],
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode()
+    )
+    escaped, plain = divmod(4 * 1024 * 1024 - baseline, 6)
+    payload["state"] = "\0" * escaped + "x" * plain
+
+    encoded = serialize_transcript(transcript)
+
+    assert len(encoded.splitlines()[OBSERVATION_INDEX]) == 4 * 1024 * 1024
+    assert parse_transcript(encoded) == transcript
+
+
+def test_serialize_transcript_rejects_total_bytes_beyond_v1_limit() -> None:
+    basic = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    transcript = deepcopy(basic[:INPUT_INDEX])
+    for _ in range(8):
+        transcript.extend(
+            (deepcopy(basic[INPUT_INDEX]), deepcopy(basic[OBSERVATION_INDEX]))
+        )
+    transcript.append(deepcopy(basic[-1]))
+    body_observations: list[dict[str, JsonValue]] = []
+    for sequence, record in enumerate(transcript):
+        record["id"] = f"record-{sequence:03d}"
+        record["seq"] = sequence
+        if record["kind"] == "observation" and sequence != READINESS_INDEX:
+            body_observations.append(record)
+    for record in body_observations[:-1]:
+        payload = record["payload"]
+        assert isinstance(payload, dict)
+        payload["state"] = ""
+        baseline = len(
+            json.dumps(
+                record,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode()
+        )
+        escaped, plain = divmod(4 * 1024 * 1024 - baseline, 6)
+        payload["state"] = "\0" * escaped + "x" * plain
+    final_observation = body_observations[-1]
+    final_payload = final_observation["payload"]
+    assert isinstance(final_payload, dict)
+    final_payload["state"] = ""
+    encoded_lines = [
+        json.dumps(
+            record, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        ).encode()
+        for record in transcript
+    ]
+    final_index = transcript.index(final_observation)
+    other_bytes = sum(len(line) + 1 for line in encoded_lines) - (
+        len(encoded_lines[final_index]) + 1
+    )
+    final_line_bytes = 32 * 1024 * 1024 + 1 - other_bytes - 1
+    remaining = final_line_bytes - len(encoded_lines[final_index])
+    escaped, plain = divmod(remaining, 6)
+    final_payload["state"] = "\0" * escaped + "x" * plain
+    encoded_size = sum(
+        len(
+            json.dumps(
+                record,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode()
+        )
+        + 1
+        for record in transcript
+    )
+
+    assert encoded_size == 32 * 1024 * 1024 + 1
+
+    with pytest.raises(TranscriptValidationError, match="transcript bytes"):
+        serialize_transcript(transcript)
+
+
+def test_transcript_accepts_total_bytes_at_v1_limit() -> None:
+    basic = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    transcript = deepcopy(basic[:INPUT_INDEX])
+    for _ in range(8):
+        transcript.extend(
+            (deepcopy(basic[INPUT_INDEX]), deepcopy(basic[OBSERVATION_INDEX]))
+        )
+    transcript.append(deepcopy(basic[-1]))
+    body_observations: list[dict[str, JsonValue]] = []
+    for sequence, record in enumerate(transcript):
+        record["id"] = f"record-{sequence:03d}"
+        record["seq"] = sequence
+        if record["kind"] == "observation" and sequence != READINESS_INDEX:
+            body_observations.append(record)
+    for record in body_observations[:-1]:
+        payload = record["payload"]
+        assert isinstance(payload, dict)
+        payload["state"] = ""
+        baseline = len(
+            json.dumps(
+                record,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode()
+        )
+        escaped, plain = divmod(4 * 1024 * 1024 - baseline, 6)
+        payload["state"] = "\0" * escaped + "x" * plain
+    final_observation = body_observations[-1]
+    final_payload = final_observation["payload"]
+    assert isinstance(final_payload, dict)
+    final_payload["state"] = ""
+    encoded_lines = [
+        json.dumps(
+            record, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        ).encode()
+        for record in transcript
+    ]
+    final_index = transcript.index(final_observation)
+    other_bytes = sum(len(line) + 1 for line in encoded_lines) - (
+        len(encoded_lines[final_index]) + 1
+    )
+    final_line_bytes = 32 * 1024 * 1024 - other_bytes - 1
+    remaining = final_line_bytes - len(encoded_lines[final_index])
+    escaped, plain = divmod(remaining, 6)
+    final_payload["state"] = "\0" * escaped + "x" * plain
+
+    encoded = serialize_transcript(transcript)
+
+    assert len(encoded) == 32 * 1024 * 1024
+    assert parse_transcript(encoded) == transcript
+
+
 def test_parse_transcript_rejects_non_finite_json_number() -> None:
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_text(encoding="utf-8")
     data = fixture.replace('"text":"hello"', '"text":NaN').encode("utf-8")
@@ -1070,11 +1571,61 @@ def test_parse_transcript_preserves_duplicate_member_diagnostic() -> None:
         parse_transcript(data)
 
 
+def test_parse_transcript_rejects_nesting_beyond_v1_limit() -> None:
+    data = b"[" * 65 + b"0" + b"]" * 65 + b"\n"
+
+    with pytest.raises(TranscriptValidationError, match="nesting"):
+        parse_transcript(data)
+
+
+def test_parse_transcript_ignores_brackets_inside_escaped_json_string() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[OBSERVATION_INDEX]["payload"]
+    assert isinstance(payload, dict)
+    payload["state"] = '\\"' + "[{" * 1_000
+    encoded = serialize_transcript(transcript)
+
+    assert parse_transcript(encoded) == transcript
+
+
 def test_parse_transcript_converts_excessive_nesting_to_validation_error() -> None:
     data = b'{"x":' * 2_000 + b"0" + b"}" * 2_000 + b"\n"
 
     with pytest.raises(TranscriptValidationError, match="nesting"):
         parse_transcript(data)
+
+
+def test_serialize_transcript_rejects_nesting_beyond_v1_limit() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[OBSERVATION_INDEX]["payload"]
+    assert isinstance(payload, dict)
+    root: list[JsonValue] = []
+    nested = root
+    for _ in range(62):
+        child: list[JsonValue] = []
+        nested.append(child)
+        nested = child
+    payload["state"] = root
+
+    with pytest.raises(TranscriptValidationError, match="nesting"):
+        serialize_transcript(transcript)
+
+
+def test_transcript_accepts_nesting_at_v1_limit() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[OBSERVATION_INDEX]["payload"]
+    assert isinstance(payload, dict)
+    root: list[JsonValue] = []
+    nested = root
+    for _ in range(61):
+        child: list[JsonValue] = []
+        nested.append(child)
+        nested = child
+    payload["state"] = root
+
+    encoded = serialize_transcript(transcript)
+
+    assert parse_transcript(encoded) == transcript
 
 
 def test_serialize_transcript_converts_excessive_nesting_to_validation_error() -> None:
@@ -1088,6 +1639,25 @@ def test_serialize_transcript_converts_excessive_nesting_to_validation_error() -
         nested.append(child)
         nested = child
     payload["state"] = root
+
+    with pytest.raises(TranscriptValidationError, match="nesting"):
+        serialize_transcript(transcript)
+
+
+@pytest.mark.parametrize("container", ["array", "object"])
+def test_serialize_transcript_rejects_cyclic_json_container_cleanly(
+    container: str,
+) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[OBSERVATION_INDEX]["payload"]
+    assert isinstance(payload, dict)
+    if container == "array":
+        cycle: object = []
+        cast(list[object], cycle).append(cycle)
+    else:
+        cycle = {}
+        cast(dict[str, object], cycle)["self"] = cycle
+    cast(dict[str, object], payload)["state"] = cycle
 
     with pytest.raises(TranscriptValidationError, match="nesting"):
         serialize_transcript(transcript)
