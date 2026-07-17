@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import re
 from copy import deepcopy
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Literal
 
 from termverify._json import JsonValue as JsonValue
@@ -92,7 +94,10 @@ def persist_transcript_evidence(
     *,
     mode: Literal["safe", "sensitive"] = "safe",
 ) -> None:
-    """Sanitize and canonically persist validated transcript *records*."""
+    """Sanitize and atomically replace canonical transcript *records*.
+
+    Atomic replacement does not imply crash-durable storage.
+    """
     if mode != "safe":
         raise ValueError(
             "sensitive persistence is unavailable until access and cleanup "
@@ -106,7 +111,24 @@ def persist_transcript_evidence(
         _redact_transcript_record(record)
     serialized = serialize_transcript(sanitized)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_bytes(serialized)
+    _replace_atomically(destination, serialized)
+
+
+def _replace_atomically(destination: Path, serialized: bytes) -> None:
+    temporary: Path | None = None
+    try:
+        with NamedTemporaryFile(
+            dir=destination.parent,
+            prefix=f".{destination.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as stream:
+            temporary = Path(stream.name)
+            stream.write(serialized)
+        os.replace(temporary, destination)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def _redact_transcript_record(record: Record) -> None:
