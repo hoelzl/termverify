@@ -55,7 +55,7 @@ Every row has disposition **transfer intact to this named successor**.
 | Distribution and release governance | Resolvable canonical schema publication for the documented `$id` | The current unresolved host is not a publication contract. Runtime validation remains authoritative. |
 | Distribution and release governance | Release checklist, changelog/compatibility policy, security-disclosure process, and build/release provenance | Implemented as governance: reviewed checklist, changelog with pre-1.0 policy, private-disclosure process, and a tag-triggered attested draft-artifact workflow. No release is authorized, no index publishing exists, and the package remains pre-alpha. |
 | Distribution and release governance | Reviewed behavior-based coverage-ratchet activation | Implemented: the committed `fail_under` floor is the integer floor of the reviewed observed total (94.43% at activation), raises require sustained durable coverage, and lowering requires explicit owner review. |
-| Production terminal adapter | Direct native pseudoconsole ownership/close, native EOF and final-frame draining, process-tree teardown, cancellation/recovery, and truthful OS-level enforcement evidence | PR #53 remains partial binding-level feasibility evidence. The accepted dependency decision (`docs/agent/design/terminal-adapter-dependency-decision.md`) authorizes reviewed implementation slices with pinned `pywinpty`/ConPTY behind its verification plan; every criterion here remains unproven until that evidence lands. |
+| Production terminal adapter | Direct native pseudoconsole ownership/close, native EOF and final-frame draining, process-tree teardown, cancellation/recovery, and truthful OS-level enforcement evidence | The accepted dependency decision (`docs/agent/design/terminal-adapter-dependency-decision.md`) authorizes reviewed implementation slices with pinned `pywinpty`/ConPTY behind its verification plan. Slice 2 landed durable Windows-matrix evidence for native ownership/close and EOF/final-frame drain (plan items 2–3); process-tree teardown, cancellation/recovery, dimensions receipts, and every enforcement claim remain unproven until their planned evidence lands. |
 
 ## Completion-definition amendments retained from the predecessor
 
@@ -236,6 +236,27 @@ rationale in the developer guide. Native EOF and final-frame drain,
 process-tree teardown, cancellation/recovery, dimensions receipts, and every
 enforcement claim remain unproven and fail-closed; the binding's `write`
 deliberately returns no byte-count receipt.
+
+Implementation slice 2 landed on 2026-07-17 (issue #106), covering
+verification-plan items 2 and 3. The binding now owns the native
+`winpty._winpty.PTY` object directly: pywinpty's `PtyProcess` wrapper routes
+output through an internal socket-relay reader thread that measurably lost
+buffered output after child exit and swallowed the native end-of-stream
+signal, and the plan rejects reader-thread state as evidence. Durable
+Windows-matrix tests now prove: a marker-bounded 1 MiB burst written by an
+exiting child drains byte-complete until the native output pipe reports
+end-of-stream, classified from the failing native read plus the native
+liveness and exit records; forced close terminates the child, verified by an
+OS process-handle wait with exit-code agreement between the OS record and the
+binding; and a release-only close proves deterministic native handle release
+because ConPTY itself terminates the attached client with
+`STATUS_CONTROL_C_EXIT`, observed entirely outside the binding, while the
+binding truthfully records no exit status it never observed. Close
+unpublishes the native object before cancelling in-flight native reads until
+each returns, so a read that raced the close cannot hold the handles open.
+Process-tree teardown, cancellation/recovery taxonomy, dimensions receipts,
+enforcement receipts, and evidence normalization remain unproven and
+fail-closed.
 
 ## Risks and non-negotiables
 
