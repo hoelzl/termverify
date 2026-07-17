@@ -2,17 +2,20 @@
 
 ## Handover metadata
 
-- **Status:** final review pending — Slices 1–8 are integrated through PR #78
-  after exact-candidate review. All accepted implementation work and finding
-  dispositions are complete; the required final integrated review remains
-  before this handover can be marked complete and archived.
+- **Status:** complete — Slices 1–8, every accepted finding disposition, and the
+  final integrated reconciliation are merged through PR #80. The required final
+  review approved the exact reconciliation candidate with no findings.
 - **Owner:** project maintainer
 - **Created:** 2026-07-16
 - **Updated:** 2026-07-17
-- **Review required:** yes — evidence security, public immutable contracts, serializer behavior, and protocol-adjacent refactors require candidate-bound independent human-readable review.
-- **Predecessor:** none; this is a focused remediation initiative nested within, but not a replacement for, the active [Phase 1 readiness hardening handover](phase-1-readiness-hardening-handover.md).
-- **Source reviews:** [GPT-5.6 review](../design/adversarial-correctness-and-code-quality-review-gpt-5.6-sol-2026-07-16.md) and [Opus 4.8 review](../design/adversarial-correctness-and-code-quality-review-opus-4.8-2026-07-16.md).
-- **Execution plan:** [detailed implementation plan](../../../.hermes/plans/2026-07-16_215137-adversarial-review-remediation.md).
+- **Review required:** satisfied — the final exact candidate
+  `5270a09be39cd1c2a8d964b0cff7224797f7bdd1` received independent integrated
+  approval with no Critical, High, Medium, or Low findings.
+- **Predecessor:** none; this focused remediation initiative was nested within,
+  but did not replace, the active
+  [Phase 1 readiness hardening handover](../phase-1-readiness-hardening-handover.md).
+- **Source reviews:** [GPT-5.6 review](../../design/adversarial-correctness-and-code-quality-review-gpt-5.6-sol-2026-07-16.md) and [Opus 4.8 review](../../design/adversarial-correctness-and-code-quality-review-opus-4.8-2026-07-16.md).
+- **Execution plan:** [detailed implementation plan](../../../../.hermes/plans/2026-07-16_215137-adversarial-review-remediation.md).
 - **Successor:** none
 - **Completion:** every confirmed finding in both source reviews has an explicit verified disposition; all accepted fixes are integrated; the evidence-policy gate is accepted and implemented or explicitly transferred; the full repository gate passes; and an independent final review accepts the integrated result.
 
@@ -79,6 +82,13 @@ This handover is not an issue tracker. Use one focused issue, branch, external s
   short-write hardening. It received independent approval with no remaining
   findings; 626 tests passed with 94% branch coverage and all 10 exact-head CI
   checks succeeded.
+- Final source-review reconciliation merged through
+  [PR #80](https://github.com/hoelzl/termverify/pull/80) as
+  `7026f5aa89e78edb91fcab1f6b784cd3a88d1d0b`. Independent final review approved
+  exact candidate `5270a09be39cd1c2a8d964b0cff7224797f7bdd1`, tree
+  `5861ba2be9cc54dc7e6de5cfee72ec48553fbb6e`, with no findings after a complete
+  immutable-export gate, 104 focused integrated boundary probes, and all 10
+  exact-head CI checks.
 - Confirmed-good boundaries to preserve include duplicate-member rejection, RFC 8785 canonical-byte checking, lifecycle/epoch validation, exact receipt binding, deep-frozen adapter JSON values, single-flight runtime state, post-redaction semantic revalidation, and the deliberately non-exhaustive schema boundary.
 - **Not independently rerun while originally authoring this handover:** the
   reviews' mutation probes and fuzz campaigns. Slice 1 separately reproduced its
@@ -386,9 +396,8 @@ durability decision is accepted.
 Deferred suggestions are not treated as completed: exhaustive JSON Schema
 expansion, sensitive persistence, stronger cross-platform crash durability and
 `fsync`, broader release work, and unrelated Phase 1 gates remain outside this
-initiative. The final integrated review must verify this table against both
-source reviews and current merged behavior before the handover can transition to
-complete.
+initiative. The final integrated review verified this table against both source
+reviews and current merged behavior before PR #80 integrated the reconciliation.
 
 ## Risks and non-negotiables
 
