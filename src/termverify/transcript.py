@@ -204,7 +204,7 @@ def _validate_envelope(record: Record, sequence: int) -> None:
         raise TranscriptValidationError("record payload must be an object")
 
 
-def _validate_lifecycle(records: list[Record]) -> None:
+def _validate_record_kinds_and_payload_members(records: list[Record]) -> None:
     for record in records:
         kind = record["kind"]
         if kind not in _RECORD_KINDS:
@@ -221,6 +221,9 @@ def _validate_lifecycle(records: list[Record]) -> None:
             raise TranscriptValidationError(
                 f"{kind} payload member is not defined by v1"
             )
+
+
+def _validate_run_placement_and_identity(records: list[Record]) -> None:
     if not records or records[0]["kind"] != "run.started":
         raise TranscriptValidationError("transcript must start with run.started")
     if any(record["kind"] == "run.started" for record in records[1:]):
@@ -240,6 +243,9 @@ def _validate_lifecycle(records: list[Record]) -> None:
         if record["run_id"] != run_id or record["id"] in identifiers:
             raise TranscriptValidationError("record run_id or id is invalid")
         identifiers.add(record["id"])
+
+
+def _validate_run_started(records: list[Record]) -> dict[str, JsonValue]:
     started_payload = records[0]["payload"]
     if not isinstance(started_payload, dict):
         raise TranscriptValidationError("run.started payload must be an object")
@@ -351,8 +357,12 @@ def _validate_lifecycle(records: list[Record]) -> None:
         raise TranscriptValidationError("run.started locale is invalid")
     if not isinstance(config["timezone"], str) or not config["timezone"]:
         raise TranscriptValidationError("run.started timezone is invalid")
-    terminal_payload = records[-1]["payload"]
-    if records[-1]["kind"] == "run.finished":
+    return config
+
+
+def _validate_terminal_payload(terminal: Record) -> dict[str, JsonValue]:
+    terminal_payload = terminal["payload"]
+    if terminal["kind"] == "run.finished":
         if not isinstance(terminal_payload, dict):
             raise TranscriptValidationError("run.finished payload must be an object")
         exit_value = terminal_payload.get("exit")
@@ -371,7 +381,7 @@ def _validate_lifecycle(records: list[Record]) -> None:
         )
         if not valid_exit:
             raise TranscriptValidationError("run.finished exit is invalid")
-    if records[-1]["kind"] == "run.failed":
+    if terminal["kind"] == "run.failed":
         if not isinstance(terminal_payload, dict):
             raise TranscriptValidationError("run.failed payload must be an object")
         error_value = terminal_payload.get("error")
@@ -385,6 +395,12 @@ def _validate_lifecycle(records: list[Record]) -> None:
             or not isinstance(error_value.get("message"), str)
         ):
             raise TranscriptValidationError("run.failed error is invalid")
+    return cast(dict[str, JsonValue], terminal_payload)
+
+
+def _validate_negotiation(
+    records: list[Record], config: dict[str, JsonValue]
+) -> list[Record]:
     capabilities: list[Record] = []
     for record in records[1:]:
         if record["kind"] != "capability.result":
@@ -459,15 +475,10 @@ def _validate_lifecycle(records: list[Record]) -> None:
         raise TranscriptValidationError(
             "run.unsupported requires an unsupported capability result"
         )
-    if len(capabilities) == len(CONSTRAINT_NAMES):
-        _validate_execution_epochs(records[len(capabilities) + 1 : -1])
-    if any(
-        record["kind"] == "capability.result"
-        for record in records[len(capabilities) + 1 :]
-    ):
-        raise TranscriptValidationError(
-            "capability results must precede all body and terminal records"
-        )
+    return capabilities
+
+
+def _validate_manual_clock(config: dict[str, JsonValue]) -> int:
     clock_config = config["clock"]
     if not isinstance(clock_config, dict) or _has_unknown_generic_members(
         clock_config, frozenset({"mode", "initial_ms"})
@@ -481,7 +492,11 @@ def _validate_lifecycle(records: list[Record]) -> None:
         or manual_time < 0
     ):
         raise TranscriptValidationError("run.started clock is invalid")
-    for record in records[len(capabilities) + 1 : -1]:
+    return manual_time
+
+
+def _validate_inputs(records: list[Record], manual_time: int) -> None:
+    for record in records:
         if not isinstance(record["kind"], str) or not record["kind"].startswith(
             "input."
         ):
@@ -591,7 +606,10 @@ def _validate_lifecycle(records: list[Record]) -> None:
                 raise TranscriptValidationError(
                     "input.mouse move forbids button and delta"
                 )
-    for record in records[len(capabilities) + 1 : -1]:
+
+
+def _validate_diagnostics(records: list[Record]) -> None:
+    for record in records:
         if record["kind"] != "diagnostic":
             continue
         diagnostic_payload = record["payload"]
@@ -607,7 +625,14 @@ def _validate_lifecycle(records: list[Record]) -> None:
             or not isinstance(diagnostic_payload.get("message"), str)
         ):
             raise TranscriptValidationError("diagnostic payload is invalid")
-    for record in records[len(capabilities) + 1 : -1]:
+
+
+def _validate_observations(
+    records: list[Record],
+    terminal_kind: JsonValue,
+    terminal_payload: dict[str, JsonValue],
+) -> None:
+    for record in records:
         if record["kind"] != "observation":
             continue
         observation_payload = record["payload"]
@@ -748,10 +773,10 @@ def _validate_lifecycle(records: list[Record]) -> None:
                 )
             ):
                 raise TranscriptValidationError("observation process is invalid")
-            if records[-1]["kind"] == "run.finished":
+            if terminal_kind == "run.finished":
                 finished_exit = cast(
                     dict[str, JsonValue],
-                    cast(dict[str, JsonValue], terminal_payload)["exit"],
+                    terminal_payload["exit"],
                 )
                 if exit_value.get("kind") != finished_exit.get(
                     "kind"
@@ -761,10 +786,29 @@ def _validate_lifecycle(records: list[Record]) -> None:
                     raise TranscriptValidationError(
                         "observation process exit does not match run.finished exit"
                     )
-    _validate_evidence_times(
-        records[len(capabilities) + 1 : -1],
-        cast(int, clock_config["initial_ms"]),
-    )
+
+
+def _validate_lifecycle(records: list[Record]) -> None:
+    _validate_record_kinds_and_payload_members(records)
+    _validate_run_placement_and_identity(records)
+    config = _validate_run_started(records)
+    terminal_payload = _validate_terminal_payload(records[-1])
+    capabilities = _validate_negotiation(records, config)
+    body = records[len(capabilities) + 1 : -1]
+    if len(capabilities) == len(CONSTRAINT_NAMES):
+        _validate_execution_epochs(body)
+    if any(
+        record["kind"] == "capability.result"
+        for record in records[len(capabilities) + 1 :]
+    ):
+        raise TranscriptValidationError(
+            "capability results must precede all body and terminal records"
+        )
+    manual_time = _validate_manual_clock(config)
+    _validate_inputs(body, manual_time)
+    _validate_diagnostics(body)
+    _validate_observations(body, records[-1]["kind"], terminal_payload)
+    _validate_evidence_times(body, manual_time)
 
 
 def _validate_execution_epochs(body: list[Record]) -> None:
