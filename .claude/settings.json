@@ -6,7 +6,6 @@
       "Bash(uv --no-config run ruff:*)",
       "Bash(uv --no-config run mypy:*)",
       "Bash(uv --no-config run pre-commit:*)",
-      "Bash(uv --no-config run python scripts/:*)",
       "Bash(uv --no-config build:*)",
       "Bash(git status:*)",
       "Bash(git diff:*)",

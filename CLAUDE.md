@@ -15,6 +15,3 @@ about Claude Code mechanics.
 - Shared, reviewed Claude Code configuration belongs in
   `.claude/settings.json`. Personal overrides go in
   `.claude/settings.local.json`, which is gitignored.
-- For parallel work, use external sibling worktrees as defined in
-  `docs/developer-guide/agent-workflow.md`, not nested worktrees inside this
-  checkout.

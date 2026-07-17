@@ -1,7 +1,7 @@
 # Implementation Plans
 
 Durable implementation plans for accepted initiatives live here so every agent
-harness can retrieve them. Name plans `<date>-<initiative>.md`. Harness state
+harness can retrieve them. Name plans `<YYYY-MM-DD>_<HHMMSS>-<initiative>.md`. Harness state
 directories such as `.hermes/` or `.claude/` are local-only and must not hold
 the authoritative copy of a plan.
 
