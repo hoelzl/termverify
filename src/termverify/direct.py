@@ -6,6 +6,7 @@ from collections.abc import Callable
 from threading import Lock
 from typing import Literal, NamedTuple, Protocol, cast
 
+from termverify._protocol_v1 import CONSTRAINT_NAMES
 from termverify.adapter import (
     AdapterFailure,
     ClockAdvance,
@@ -251,6 +252,35 @@ class DirectAdapter:
             if self._state != "created":
                 raise RuntimeError("direct adapter has already started")
             self._state = "negotiating"
+        operations = (
+            lambda: self._constraints.enforce_seed(run_id, configuration.seed),
+            lambda: self._constraints.enforce_clock(run_id, configuration.clock),
+            lambda: self._constraints.enforce_locale(run_id, configuration.locale),
+            lambda: self._constraints.enforce_timezone(run_id, configuration.timezone),
+            lambda: self._constraints.enforce_terminal(run_id, configuration.terminal),
+            lambda: self._constraints.enforce_filesystem(
+                run_id, configuration.filesystem
+            ),
+            lambda: self._constraints.enforce_network(run_id, configuration.network),
+        )
+        receipt_types: tuple[type[EnforcementReceipt], ...] = (
+            SeedReceipt,
+            ClockReceipt,
+            LocaleReceipt,
+            TimezoneReceipt,
+            TerminalReceipt,
+            FilesystemReceipt,
+            NetworkReceipt,
+        )
+        expected_values = (
+            configuration.seed,
+            configuration.clock,
+            configuration.locale,
+            configuration.timezone,
+            configuration.terminal,
+            configuration.filesystem,
+            configuration.network,
+        )
         steps: tuple[
             tuple[
                 ConstraintName,
@@ -259,57 +289,14 @@ class DirectAdapter:
                 object,
             ],
             ...,
-        ] = (
-            (
-                "seed",
-                lambda: self._constraints.enforce_seed(run_id, configuration.seed),
-                SeedReceipt,
-                configuration.seed,
-            ),
-            (
-                "clock",
-                lambda: self._constraints.enforce_clock(run_id, configuration.clock),
-                ClockReceipt,
-                configuration.clock,
-            ),
-            (
-                "locale",
-                lambda: self._constraints.enforce_locale(run_id, configuration.locale),
-                LocaleReceipt,
-                configuration.locale,
-            ),
-            (
-                "timezone",
-                lambda: self._constraints.enforce_timezone(
-                    run_id, configuration.timezone
-                ),
-                TimezoneReceipt,
-                configuration.timezone,
-            ),
-            (
-                "terminal",
-                lambda: self._constraints.enforce_terminal(
-                    run_id, configuration.terminal
-                ),
-                TerminalReceipt,
-                configuration.terminal,
-            ),
-            (
-                "filesystem",
-                lambda: self._constraints.enforce_filesystem(
-                    run_id, configuration.filesystem
-                ),
-                FilesystemReceipt,
-                configuration.filesystem,
-            ),
-            (
-                "network",
-                lambda: self._constraints.enforce_network(
-                    run_id, configuration.network
-                ),
-                NetworkReceipt,
-                configuration.network,
-            ),
+        ] = tuple(
+            zip(
+                CONSTRAINT_NAMES,
+                operations,
+                receipt_types,
+                expected_values,
+                strict=True,
+            )
         )
         receipts: list[EnforcementReceipt] = []
         for constraint, operation, receipt_type, expected_value in steps:

@@ -9,7 +9,9 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal, Protocol, cast
 
-from termverify.transcript import JsonValue, _is_well_formed_language_tag
+from termverify._json import JsonValue
+from termverify._language_tag import is_well_formed_language_tag
+from termverify._protocol_v1 import CONSTRAINT_NAMES, ConstraintName
 
 __all__ = [
     "Adapter",
@@ -62,15 +64,6 @@ __all__ = [
     "freeze_json",
 ]
 
-type ConstraintName = Literal[
-    "seed",
-    "clock",
-    "locale",
-    "timezone",
-    "terminal",
-    "filesystem",
-    "network",
-]
 type FrozenJsonValue = (
     None
     | bool
@@ -92,15 +85,6 @@ type JsonInput = (
     | Mapping[str, JsonInput]
 )
 
-_CONSTRAINT_ORDER: tuple[ConstraintName, ...] = (
-    "seed",
-    "clock",
-    "locale",
-    "timezone",
-    "terminal",
-    "filesystem",
-    "network",
-)
 _IDENTIFIER = re.compile(r"^[a-z0-9._-]+$")
 _MAX_SEED = 2**64 - 1
 
@@ -285,9 +269,7 @@ class RunConfiguration:
             raise ValueError("seed must fit an unsigned 64-bit integer")
         if type(self.clock) is not ClockConfiguration:
             raise TypeError("clock has the wrong type")
-        if type(self.locale) is not str or not _is_well_formed_language_tag(
-            self.locale
-        ):
+        if type(self.locale) is not str or not is_well_formed_language_tag(self.locale):
             raise ValueError("locale is invalid")
         _require_non_empty(self.timezone, "timezone")
         if type(self.terminal) is not TerminalConfiguration:
@@ -619,7 +601,7 @@ class LocaleReceipt:
 
     def __post_init__(self) -> None:
         _validate_run_id(self.run_id)
-        if type(self.effective) is not str or not _is_well_formed_language_tag(
+        if type(self.effective) is not str or not is_well_formed_language_tag(
             self.effective
         ):
             raise ValueError("effective locale is invalid")
@@ -712,7 +694,7 @@ class ConstraintUnsupported:
         message: str,
         details: JsonInput = None,
     ) -> None:
-        _require_choice(constraint, "unsupported constraint", _CONSTRAINT_ORDER)
+        _require_choice(constraint, "unsupported constraint", CONSTRAINT_NAMES)
         _require_choice(
             code,
             "unsupported code",
@@ -784,7 +766,7 @@ class EnforcedConstraints:
             self.network,
         )
         for name, receipt, receipt_type in zip(
-            _CONSTRAINT_ORDER, receipts, _RECEIPT_TYPES, strict=True
+            CONSTRAINT_NAMES, receipts, _RECEIPT_TYPES, strict=True
         ):
             if type(receipt) is not receipt_type:
                 raise TypeError(f"{name} receipt has the wrong type")
@@ -806,7 +788,7 @@ def _validate_receipt_binding(
         requested.network,
     )
     for name, receipt, requested_value in zip(
-        _CONSTRAINT_ORDER, receipts, expected, strict=False
+        CONSTRAINT_NAMES, receipts, expected, strict=False
     ):
         if receipt.run_id != run_id:
             raise ValueError("all receipts must belong to the same run")
@@ -845,7 +827,7 @@ def _validate_receipt_prefix(
         raise TypeError("requested configuration has the wrong type")
     if type(receipts) is not tuple:
         raise TypeError("enforced receipts must be a tuple")
-    if len(receipts) > len(_CONSTRAINT_ORDER):
+    if len(receipts) > len(CONSTRAINT_NAMES):
         raise ValueError("enforced receipt prefix is too long")
     for index, receipt in enumerate(receipts):
         if type(receipt) is not _RECEIPT_TYPES[index]:
@@ -874,8 +856,8 @@ class StartUnsupported:
         details: JsonInput = None,
     ) -> None:
         _validate_receipt_prefix(run_id, requested, enforced)
-        _require_choice(constraint, "unsupported constraint", _CONSTRAINT_ORDER)
-        if len(enforced) != _CONSTRAINT_ORDER.index(constraint):
+        _require_choice(constraint, "unsupported constraint", CONSTRAINT_NAMES)
+        if len(enforced) != CONSTRAINT_NAMES.index(constraint):
             raise ValueError("unsupported constraint does not follow receipt order")
         object.__setattr__(self, "run_id", run_id)
         object.__setattr__(self, "requested", requested)
@@ -908,10 +890,10 @@ class StartFailed:
         if self.failure.code != "adapter-start-failed":
             raise ValueError("start failure code must be adapter-start-failed")
         _validate_diagnostics(self.diagnostics)
-        if self.diagnostics and len(self.enforced) != len(_CONSTRAINT_ORDER):
+        if self.diagnostics and len(self.enforced) != len(CONSTRAINT_NAMES):
             raise ValueError("startup diagnostics require complete negotiation")
-        if len(self.enforced) == len(_CONSTRAINT_ORDER):
-            clock = cast(ClockReceipt, self.enforced[_CONSTRAINT_ORDER.index("clock")])
+        if len(self.enforced) == len(CONSTRAINT_NAMES):
+            clock = cast(ClockReceipt, self.enforced[CONSTRAINT_NAMES.index("clock")])
             _validate_diagnostics(self.diagnostics, clock.effective.initial_ms)
 
 
