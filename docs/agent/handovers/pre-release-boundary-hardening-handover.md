@@ -54,7 +54,7 @@ Every row has disposition **transfer intact to this named successor**.
 | Distribution and release governance | Installed schema access API and exact wheel/sdist resource contract | Implemented: the canonical schema is a packaged resource with public byte/object accessors, and isolated wheel and sdist installation checks verify byte identity with the committed copy. Canonical `$id` publication remains transferred and unresolved. |
 | Distribution and release governance | Resolvable canonical schema publication for the documented `$id` | The current unresolved host is not a publication contract. Runtime validation remains authoritative. |
 | Distribution and release governance | Release checklist, changelog/compatibility policy, security-disclosure process, and build/release provenance | Required before the first supported external artifact; no stable/public release claim is implied by the current pre-alpha package. |
-| Distribution and release governance | Reviewed behavior-based coverage-ratchet activation | Coverage remains reported without an invented threshold until a separately reviewed no-regression rule is accepted. |
+| Distribution and release governance | Reviewed behavior-based coverage-ratchet activation | Implemented: the committed `fail_under` floor is the integer floor of the reviewed observed total (94.43% at activation), raises require sustained durable coverage, and lowering requires explicit owner review. |
 | Production terminal adapter | Direct native pseudoconsole ownership/close, native EOF and final-frame draining, process-tree teardown, cancellation/recovery, and truthful OS-level enforcement evidence | PR #53 remains partial binding-level feasibility evidence; no spike promotion or `pywinpty` dependency is authorized. |
 
 ## Completion-definition amendments retained from the predecessor
@@ -175,6 +175,18 @@ the installed resource and the committed schema. This slice does not publish a
 resolvable `$id`, change schema content or its non-exhaustive role, weaken
 runtime authority, or make any release claim; those criteria remain transferred
 and fail-closed.
+
+The owner accepted the second focused distribution slice on 2026-07-17 (issue
+#97): behavior-based coverage-ratchet activation. The committed
+`fail_under = 94` floor in `pyproject.toml` is the integer floor of the
+reviewed observed full-suite total (94.43% line-and-branch at activation), so
+the gate encodes observed behavior rather than an invented threshold.
+Executable evidence showed the gate failing at a floor above the observed
+total and passing at the activated floor. Raising the floor requires the
+observed total to stay at least one point above it across the CI matrix;
+lowering it requires explicit owner review with recorded rationale
+(`docs/developer-guide/development.md`). This slice adds no per-file gates, no
+behavioral baselines, and no tests whose only purpose is to move the number.
 
 ### 5. Production terminal adapter
 

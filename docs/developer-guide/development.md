@@ -42,6 +42,21 @@ src/termverify/       distributable library
  skills/               proven reusable playbooks, added only when warranted
 ```
 
+## Coverage ratchet
+
+The combined line-and-branch coverage of the full suite is gated by the
+committed `fail_under` floor in `pyproject.toml`. The floor is a no-regression
+rule, not a target: it is the integer floor of the reviewed observed total at
+activation or at the most recent accepted raise, never an invented aspiration.
+
+- Raise the floor only when new durable behavior coverage keeps the observed
+  total at least one point above it across the CI matrix.
+- Lowering the floor requires explicit owner review with the rationale recorded
+  in the pull request that lowers it.
+- Do not add tests whose only purpose is to move the number; coverage follows
+  from the strict-TDD rule that every behavior change starts with a focused
+  failing test.
+
 ## Testing tiers
 
 - **Unit:** pure normalization, comparison, protocol, and replay behavior.
