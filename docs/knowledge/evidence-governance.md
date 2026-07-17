@@ -114,8 +114,11 @@ snapshot, classifies semantic fields by record kind, redacts them,
 revalidates the sanitized transcript, and only then writes canonical JSONL to a
 uniquely created temporary file in the destination directory. It closes that
 file before atomically replacing the destination and removes the temporary file
-on tested pre-replacement failures. This guarantees atomic replacement only; it
-does not claim crash-durable storage and performs no file or directory `fsync`.
+on tested pre-replacement failures. If the operating system refuses cleanup,
+the primary persistence error remains authoritative and carries a note about the
+cleanup failure; the already-sanitized temporary file can remain for operator
+cleanup. This guarantees atomic replacement only; it does not claim
+crash-durable storage and performs no file or directory `fsync`.
 Safe mode applies the matrix above record-first and
 field-first, including lockstep transformations where the protocol requires
 cross-field equality. Closed replay-subject selectors, locale, decimal seed,

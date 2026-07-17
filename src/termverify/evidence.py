@@ -116,6 +116,7 @@ def persist_transcript_evidence(
 
 def _replace_atomically(destination: Path, serialized: bytes) -> None:
     temporary: Path | None = None
+    primary_error: BaseException | None = None
     try:
         with NamedTemporaryFile(
             dir=destination.parent,
@@ -124,11 +125,26 @@ def _replace_atomically(destination: Path, serialized: bytes) -> None:
             delete=False,
         ) as stream:
             temporary = Path(stream.name)
-            stream.write(serialized)
+            written = stream.write(serialized)
+            if written != len(serialized):
+                raise OSError(
+                    f"short temporary write: expected {len(serialized)} bytes, "
+                    f"wrote {written}"
+                )
         os.replace(temporary, destination)
+    except BaseException as error:
+        primary_error = error
+        raise
     finally:
         if temporary is not None:
-            temporary.unlink(missing_ok=True)
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError as cleanup_error:
+                if primary_error is None:
+                    raise
+                primary_error.add_note(
+                    f"temporary evidence cleanup failed: {cleanup_error}"
+                )
 
 
 def _redact_transcript_record(record: Record) -> None:
