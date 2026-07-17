@@ -221,12 +221,17 @@ The following intended Phase 1 slices are now executable and reviewed:
   dependency-vulnerability checks, and an exact-tree independent review.
 
 The closure audit originally found the following open or conflicting criteria.
-The maintainer resolved every scope conflict on 2026-07-17; only resource
-governance remains implementation work in this handover:
+The maintainer resolved every scope conflict on 2026-07-17. Issue #85 completes
+the remaining resource-governance implementation; the amended integrated gate
+and exact-candidate review remain before this handover can be superseded:
 
-- **Resource governance — complete within Phase 1:** parsing and serialization
-  normalize recursion and oversized-integer failures, but there are no reviewed
-  transcript byte, line, record-count, or structured-value limits.
+- **Resource governance — implemented within Phase 1 by issue #85:** parsing and
+  serialization now enforce symmetric fixed ceilings of 32 MiB per transcript,
+  4 MiB per canonical line, 10,000 records, 64 open containers, 16,384 immediate
+  collection items, 100,000 value nodes per record, 1 MiB per decoded string or
+  key, and 2 MiB aggregate decoded string/key bytes per record. Parser admission
+  checks bytes, lines, records, and lexical nesting before decoding; iterative
+  structured-value checks precede serializer canonicalization.
 - **Fixture breadth — completion definition amended:** the committed corpus does
   not literally enumerate every terminal outcome, input kind, framing case, and
   compatibility case. Completion now requires reviewed behavior-based executable
@@ -273,25 +278,23 @@ Workstream 4's fail-closed evidence and baseline boundary is complete for the
 current disabled-retention/disabled-publication scope. Workstream 5 is reconciled
 by this audit candidate but remains subject to its candidate-bound review.
 
-Consequently this handover remains active only for transcript resource
-governance and the integrated amended-gate review. The pre-release successor is
-draft, and no Phase 2 handover is created or activated. Native ConPTY close/drain
-and production containment remain successor work; they are not misclassified as
-completed Phase 1 evidence.
+Consequently this handover remains active only for the integrated amended-gate
+review. The pre-release successor is draft, and no Phase 2 handover is created or
+activated. Native ConPTY close/drain and production containment remain successor
+work; they are not misclassified as completed Phase 1 evidence.
 
 The remaining transition sequence is intentionally narrow:
 
-1. implement deterministic fail-closed transcript limits for bytes, line bytes,
-   record count, nesting, and structured values through one focused TDD slice;
-2. verify the amended behavior-based fixture matrix, deliberately non-exhaustive
+1. verify the issue #85 deterministic resource-limit implementation together
+   with the amended behavior-based fixture matrix, deliberately non-exhaustive
    schema boundary, and retained pinned workflow-security controls against the
    integrated candidate;
-3. run the full completion gate and independently review the exact integrated
+2. run the full completion gate and independently review the exact integrated
    Phase 1 boundary;
-4. in a later reviewed transition, activate the named successor so it accepts
+3. in a later reviewed transition, activate the named successor so it accepts
    every disposition-3 criterion intact, mark this handover `superseded`, move it
    to `archive/`, and update the index in the same change;
-5. keep Phase 2 inactive unless a separate owner-reviewed phase-boundary decision
+4. keep Phase 2 inactive unless a separate owner-reviewed phase-boundary decision
    explicitly activates it.
 
 These are separate implementation/review slices. None may expand the transcript
