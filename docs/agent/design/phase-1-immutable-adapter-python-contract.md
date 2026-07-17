@@ -1,9 +1,10 @@
 # Phase 1 Immutable Adapter Python Contract
 
-- **Status:** accepted and implemented by PRs
+- **Status:** accepted and implemented; initial surface by PRs
   [#47](https://github.com/hoelzl/termverify/pull/47) and
-  [#49](https://github.com/hoelzl/termverify/pull/49)
-- **Date:** 2026-07-16
+  [#49](https://github.com/hoelzl/termverify/pull/49), amended by the accepted
+  `termverify.key/v1` boundary
+- **Date:** 2026-07-17
 - **Depends on:** the accepted
   [execution contract](phase-1-adapter-execution-contract.md)
 - **Scope:** public, framework-neutral Python values and structural protocols;
@@ -17,8 +18,9 @@ boundaries explicit:
 
 1. `Adapter.start()` returns `Started`, `StartTerminated`, `StartUnsupported`, or
    `StartFailed`.
-2. `Adapter.dispatch()` accepts only the currently approved `TextInput` and
-   `Resize` values and returns `EpochCompleted` or `TerminalResult`.
+2. `Adapter.dispatch()` accepts only the currently approved `KeyInput`,
+   `TextInput`, and `Resize` values and returns `EpochCompleted` or
+   `TerminalResult`.
 3. `Adapter.advance_clock()` accepts `ClockAdvance` separately so manual time
    cannot be confused with host waiting.
 4. `Adapter.stop()` accepts `Stop` and always returns `TerminalResult`.
