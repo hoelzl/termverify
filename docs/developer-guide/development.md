@@ -48,14 +48,19 @@ The combined line-and-branch coverage of the full suite is gated by the
 committed `fail_under` floor in `pyproject.toml`. The floor is a no-regression
 rule, not a target: it is the integer floor of the reviewed observed total at
 activation or at the most recent accepted raise, never an invented aspiration.
+The committed `precision = 2` makes the comparison a strict floor rather than
+allowing integer rounding to absorb a regression.
 
 - Raise the floor only when new durable behavior coverage keeps the observed
-  total at least one point above it across the CI matrix.
+  total at least one point above the current floor across the CI matrix.
 - Lowering the floor requires explicit owner review with the rationale recorded
   in the pull request that lowers it.
 - Do not add tests whose only purpose is to move the number; coverage follows
   from the strict-TDD rule that every behavior change starts with a focused
   failing test.
+- The floor is enforced by every `pytest --cov` run, which includes the CI
+  quality matrix and the documented validation commands; the pre-push test
+  hook deliberately runs without coverage for speed.
 
 ## Testing tiers
 

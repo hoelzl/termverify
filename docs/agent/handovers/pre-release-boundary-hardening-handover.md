@@ -182,8 +182,10 @@ The owner accepted the second focused distribution slice on 2026-07-17 (issue
 reviewed observed full-suite total (94.43% line-and-branch at activation), so
 the gate encodes observed behavior rather than an invented threshold.
 Executable evidence showed the gate failing at a floor above the observed
-total and passing at the activated floor. Raising the floor requires the
-observed total to stay at least one point above it across the CI matrix;
+total and passing at the activated floor; the committed reporting precision
+makes the comparison a strict floor without integer rounding grace. Raising
+the floor requires the observed total to stay at least one point above the
+current floor across the CI matrix;
 lowering it requires explicit owner review with recorded rationale
 (`docs/developer-guide/development.md`). This slice adds no per-file gates, no
 behavioral baselines, and no tests whose only purpose is to move the number.
