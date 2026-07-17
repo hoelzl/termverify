@@ -2,9 +2,9 @@
 
 ## Handover metadata
 
-- **Status:** blocked — Slices 1–7 are integrated through PR #72 after
-  exact-candidate review. Only Slice 8 atomic persistence remains, and its
-  safe-mode durability level requires the project maintainer's decision below.
+- **Status:** active — Slices 1–7 are integrated through PR #72 after
+  exact-candidate review. Slice 8 atomic persistence is the next ordered work;
+  its safe-mode durability boundary is accepted below.
 - **Owner:** project maintainer
 - **Created:** 2026-07-16
 - **Updated:** 2026-07-17
@@ -177,6 +177,10 @@ This handover is not an issue tracker. Use one focused issue, branch, external s
 - **Numeric-type disagreement:** implement type-aware equality as serializer API hardening. Record that canonical wire output was not shown incorrect.
 - **Security metadata sharing:** centralize stable protocol vocabulary only. Keep evidence classification independently fail-closed and prove coverage with synchronization tests.
 - **Atomic persistence scope:** atomic safe replacement is a late isolated improvement. Sensitive-mode permissions/cleanup and any stronger `fsync` guarantee are not implied.
+- **Safe-mode durability level:** accepted on 2026-07-17. Write validated
+  bytes to a unique temporary file in the destination directory, close it, then
+  atomically replace the destination. This guarantees atomic replacement only;
+  it makes no crash-durability claim and requires no file or directory `fsync`.
 - **Schema scope:** these findings do not authorize exhaustive schema work or make schema acceptance equivalent to runtime conformance.
 - **Unbounded semantic strings and extension names:** accepted on 2026-07-16.
   Safe persistence transforms every such attacker-controlled value while
@@ -200,12 +204,16 @@ Current v1 permits arbitrary strings in UI IDs/roles/mode, input key names, term
   review. The policy acceptance alone did not authorize its implementation
   diff.
 
-### Decision gate — safe-mode durability level
+### Accepted decision — safe-mode durability level
 
-- **Recommended default:** same-directory unique temporary file, close, and atomic replace; explicitly document that this is atomic replacement rather than guaranteed crash-durable storage.
-- **Alternative:** add file and directory `fsync` with a separately reviewed cross-platform contract.
+- **Accepted boundary:** same-directory unique temporary file, close, and atomic
+  replace; explicitly document that this is atomic replacement rather than
+  guaranteed crash-durable storage.
+- **Deferred alternative:** file and directory `fsync` requires a separately
+  reviewed cross-platform contract and is not part of Slice 8.
 - **Decision owner:** project maintainer.
-- **Blocks:** only atomic persistence Workstream 6.
+- **Accepted:** 2026-07-17.
+- **Blocks:** none; this decision enables atomic persistence Workstream 6.
 
 ## Workstreams
 
@@ -318,7 +326,7 @@ extraction.
 
 ### 6. Atomic safe persistence
 
-**Status:** blocked pending Slice 8's safe-mode durability decision recorded above.
+**Status:** next ordered workstream (Slice 8).
 
 **Objective:** leave old evidence intact if a replacement write fails.
 
@@ -328,7 +336,8 @@ extraction.
 2. Write validated bytes to a unique same-directory temporary file and atomically replace.
 3. Document the accepted `fsync` boundary without enabling sensitive persistence.
 
-**Dependencies:** evidence redaction semantics complete; durability decision accepted.
+**Dependencies:** satisfied; evidence redaction semantics are complete and the
+durability decision is accepted.
 
 **Acceptance criteria:**
 
