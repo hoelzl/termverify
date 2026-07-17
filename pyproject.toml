@@ -20,6 +20,7 @@ classifiers = [
     "Topic :: Software Development :: Testing",
 ]
 dependencies = [
+    "pywinpty>=3.0.5,<4.0; sys_platform == 'win32'",
     "rfc8785>=0.1.4",
 ]
 
@@ -53,6 +54,12 @@ testpaths = ["tests"]
 [tool.coverage.run]
 branch = true
 source = ["termverify"]
+# The native ConPTY binding executes only on the Windows CI legs; including it
+# would make the cross-platform ratchet floor depend on the host OS. It stays
+# deliberately thin, its behavior is proven by the Windows-only integration
+# tests, and all adapter logic above it must remain fully ratcheted
+# (docs/developer-guide/development.md).
+omit = ["*/termverify/_conpty.py"]
 
 [tool.coverage.report]
 show_missing = true
@@ -77,3 +84,9 @@ files = ["src", "tests", "scripts"]
 python_version = "3.12"
 strict = true
 warn_unreachable = true
+
+[[tool.mypy.overrides]]
+# pywinpty ships no type stubs and is absent on non-Windows checkers; the
+# binding wrapper confines its untyped surface to termverify._conpty.
+module = "winpty.*"
+ignore_missing_imports = true
