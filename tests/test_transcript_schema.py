@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 from jsonschema import Draft202012Validator
 
+from termverify import transcript_schema_v1_json
 from termverify.transcript import (
     JsonValue,
     TranscriptValidationError,
@@ -15,14 +16,11 @@ from termverify.transcript import (
     serialize_transcript,
 )
 
-SCHEMA_PATH = Path("schemas/termverify.transcript/v1.schema.json")
 FIXTURE_PATH = Path("tests/fixtures/transcripts/v1/valid/basic.jsonl")
 
 
 def _schema() -> dict[str, Any]:
-    value = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
-    assert isinstance(value, dict)
-    return value
+    return transcript_schema_v1_json()
 
 
 def _started_record() -> dict[str, object]:

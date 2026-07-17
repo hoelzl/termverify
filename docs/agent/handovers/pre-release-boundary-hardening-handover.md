@@ -51,7 +51,7 @@ Every row has disposition **transfer intact to this named successor**.
 | Concurrent event correlation | Explicit correlation and ordering for concurrent inputs or unsolicited/asynchronous events | V1 remains single-flight; idle unsolicited body records remain invalid; no wall-clock quiet period is evidence of causality or quiescence. |
 | Production containment | Filesystem root mapping and lifecycle, traversal, symlink/reparse-point handling, child-process inheritance/containment, cleanup, and failure semantics | Direct execution may route an explicit application port but does not prove OS containment; terminal/subprocess enforcement remains unsupported. |
 | Production containment | Network allow-list DNS, address normalization, redirects, proxies, loopback, subprocess inheritance, and failure semantics | Direct receipts remain deny-only; allow-list enforcement remains rejected; terminal/subprocess enforcement remains unsupported. |
-| Distribution and release governance | Installed schema access API and exact wheel/sdist resource contract | Repository schema presence is not installed access; no package claim is made until isolated installation tests pass. |
+| Distribution and release governance | Installed schema access API and exact wheel/sdist resource contract | Implemented: the canonical schema is a packaged resource with public byte/object accessors, and isolated wheel and sdist installation checks verify byte identity with the committed copy. Canonical `$id` publication remains transferred and unresolved. |
 | Distribution and release governance | Resolvable canonical schema publication for the documented `$id` | The current unresolved host is not a publication contract. Runtime validation remains authoritative. |
 | Distribution and release governance | Release checklist, changelog/compatibility policy, security-disclosure process, and build/release provenance | Required before the first supported external artifact; no stable/public release claim is implied by the current pre-alpha package. |
 | Distribution and release governance | Reviewed behavior-based coverage-ratchet activation | Coverage remains reported without an invented threshold until a separately reviewed no-regression rule is accepted. |
@@ -163,6 +163,18 @@ Define installed schema access, canonical publication, release/security/provenan
 controls, and the coverage-ratchet activation rule before the first supported
 external artifact. Preserve the schema's non-exhaustive role and keep behavioral
 acceptance runtime-authoritative.
+
+The owner accepted the first focused distribution slice on 2026-07-17 (issue
+#95). The canonical committed transcript schema lives inside the package at
+`src/termverify/schemas/termverify.transcript/v1.schema.json` as the single
+authoritative copy, so wheel and sdist carry it automatically. The public API
+exposes `TRANSCRIPT_SCHEMA_V1_ID`, exact resource bytes, and a fresh parsed
+object per call. Isolated `--no-project` installation checks against both built
+artifacts verify version metadata, public callables, and byte identity between
+the installed resource and the committed schema. This slice does not publish a
+resolvable `$id`, change schema content or its non-exhaustive role, weaken
+runtime authority, or make any release claim; those criteria remain transferred
+and fail-closed.
 
 ### 5. Production terminal adapter
 

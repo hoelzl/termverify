@@ -31,6 +31,16 @@ schema-only validation cannot fully enforce those rules. Exhaustive per-kind
 schema coverage or a custom vocabulary/validator is a separate compatibility and
 distribution workstream, not part of this replay-identity slice.
 
+The canonical committed schema is packaged as the installed resource
+`termverify/schemas/termverify.transcript/v1.schema.json` in both wheel and
+sdist. The public accessors `termverify.transcript_schema_v1_bytes()` and
+`termverify.transcript_schema_v1_json()` return the exact resource bytes and a
+fresh parsed object, and `termverify.TRANSCRIPT_SCHEMA_V1_ID` names the
+documented `$id`. Isolated installed-artifact checks verify byte identity
+between the installed resource and the committed schema. The `$id` remains an
+identifier only: no resolvable canonical publication exists yet, and installed
+access does not change the schema's non-exhaustive role or runtime authority.
+
 Each UTF-8 JSON Lines file is one transcript for one verified run. A line ends
 with exactly one LF (`\n`); a final LF is required. Blank lines, comments, and
 byte-order marks are invalid. Readers reject duplicate object member names and
