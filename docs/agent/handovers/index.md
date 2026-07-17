@@ -8,9 +8,9 @@ source of truth for volatile work state.
 ## Active
 
 - [Adversarial review remediation handover](adversarial-review-remediation-handover.md)
-  — **active**; Slices 1–5 are integrated after candidate-bound review, narrow
-  shared internals are next, and lifecycle decomposition plus atomic persistence
-  remain.
+  — **final review pending**; Slices 1–8 and every accepted finding disposition
+  are integrated through PR #78, with final reconciliation under review before
+  completion and archival.
 - [Phase 1 readiness hardening handover](phase-1-readiness-hardening-handover.md)
   — **active**; the deterministic direct and partial terminal-feasibility slices
   are reviewed, while resource/fixture scope, installed-schema, and

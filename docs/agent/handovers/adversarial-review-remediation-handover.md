@@ -2,9 +2,10 @@
 
 ## Handover metadata
 
-- **Status:** active — Slices 1–7 are integrated through PR #72 after
-  exact-candidate review. Slice 8 atomic persistence is the next ordered work;
-  its safe-mode durability boundary is accepted below.
+- **Status:** final review pending — Slices 1–8 are integrated through PR #78
+  after exact-candidate review. All accepted implementation work and finding
+  dispositions are complete; the required final integrated review remains
+  before this handover can be marked complete and archived.
 - **Owner:** project maintainer
 - **Created:** 2026-07-16
 - **Updated:** 2026-07-17
@@ -70,6 +71,14 @@ This handover is not an issue tracker. Use one focused issue, branch, external s
   replacement candidate received independent approval with no findings. The
   final candidate passed 614 tests with 94% branch coverage and all 10
   exact-head CI checks.
+- Atomic safe persistence merged through
+  [PR #78](https://github.com/hoelzl/termverify/pull/78). Its first exact review
+  identified one Medium cleanup-error-masking finding. The replacement candidate
+  `dc81e7b588c2165717727a527a4dfc79477d9450` preserved the primary error,
+  annotated cleanup refusal, added real Windows held-open coverage, and adopted
+  short-write hardening. It received independent approval with no remaining
+  findings; 626 tests passed with 94% branch coverage and all 10 exact-head CI
+  checks succeeded.
 - Confirmed-good boundaries to preserve include duplicate-member rejection, RFC 8785 canonical-byte checking, lifecycle/epoch validation, exact receipt binding, deep-frozen adapter JSON values, single-flight runtime state, post-redaction semantic revalidation, and the deliberately non-exhaustive schema boundary.
 - **Not independently rerun while originally authoring this handover:** the
   reviews' mutation probes and fuzz campaigns. Slice 1 separately reproduced its
@@ -168,6 +177,14 @@ This handover is not an issue tracker. Use one focused issue, branch, external s
 - **Evidence:** `Path.write_bytes()` writes directly to the destination.
 - **Impact:** interruption can leave a truncated safe transcript, though not an immediate confidentiality leak because bytes are sanitized first.
 - **Required outcome:** separate temp-file-plus-atomic-replace durability slice; `fsync` level must be explicit.
+- **Disposition:** fixed by PR #78. Safe persistence now writes canonical
+  sanitized bytes to a unique same-directory temporary file, closes it, and
+  atomically replaces the destination. Ordinary write, close, and replace
+  failures preserve the prior destination and clean the temporary file. If the
+  operating system refuses cleanup, the primary error remains authoritative and
+  records the cleanup failure; the already-sanitized temporary file may require
+  operator cleanup. No file or directory `fsync` or crash-durability claim was
+  added.
 
 ## Material decisions
 
@@ -326,7 +343,7 @@ extraction.
 
 ### 6. Atomic safe persistence
 
-**Status:** next ordered workstream (Slice 8).
+**Status:** completed through PR #78.
 
 **Objective:** leave old evidence intact if a replacement write fails.
 
@@ -342,8 +359,36 @@ durability decision is accepted.
 **Acceptance criteria:**
 
 - Prior destination survives simulated pre-replace failure.
-- No tested failure leaves a temporary file.
+- Ordinary tested write, close, and replace failures leave no temporary file;
+  cleanup refusal preserves and annotates the primary error and may leave only
+  the already-sanitized temporary file for operator cleanup.
 - Successful bytes remain canonical and semantically valid.
+
+## Final source-review reconciliation
+
+| Source finding or recommendation | Verified disposition |
+| --- | --- |
+| Opus correctness 1 — acronym-prefixed credentials could pass fixture governance | Fixed by PR #57 through acronym-aware tokenization and real governance-path regression coverage. |
+| Opus correctness 2 — regex-only defense for attacker-controlled semantic strings and extension names | Fixed by PR #66 through explicit field-first safe-evidence classification and deterministic transformations. |
+| Opus correctness 3 — valid `sk-` grammar collisions denied persistence | Fixed by PR #66; constrained identities remain structurally validated and bypass free-text credential screening. |
+| GPT correctness 1 — capability effective values permitted type-changing round trips | Fixed by PR #60 with recursive runtime JSON validation and type-aware equivalence; the wire canonicalizer itself was not treated as defective. |
+| GPT correctness 3 and Opus correctness 4 — malformed serializer inputs leaked `AttributeError` | Fixed by PR #60; malformed programmatic inputs normalize to `TranscriptValidationError`. |
+| GPT correctness 2 and Opus correctness 5 — immutable result aggregates allowed contradictory diagnostic times | Fixed by PR #62 at constructor boundaries with direct-runtime checks retained in defense in depth. |
+| Opus correctness 6 — abort failure discarded application details | Fixed by PR #64 with collision-safe preservation of application and cleanup evidence. |
+| Opus correctness 7 — startup construction failure could leave initializing state wedged | Fixed by PR #64 with cleanup-safe startup failure handling and terminal state publication. |
+| GPT quality 1 and Opus quality 1 — 569-line lifecycle validator | Fixed by PR #72 through ordered same-module procedural phases with exact diagnostic characterization. |
+| GPT quality 2 and Opus quality 4 — adapter contract depended on codec-private locale logic | Fixed by PR #70 through a narrowly named neutral internal grammar module. |
+| GPT quality 3 and Opus quality 2 — repeated direct-runtime result classification | Fixed by PR #64 through one private classifier while retaining explicit public preconditions and port calls. |
+| GPT quality 4 and Opus quality 3 — duplicated stable protocol vocabulary | Fixed narrowly by PR #70; ordered v1 constraints and recursive JSON typing are shared while evidence classification remains independently fail-closed. |
+| GPT quality 5 and Opus quality 5 — direct safe-evidence writes and mode hardening | Atomic safe replacement fixed by PR #78 under the accepted no-`fsync` boundary. Sensitive persistence remains intentionally unavailable. |
+| Both reviews — Pydantic, implementation inheritance, or a dynamic validation framework | Explicitly not adopted. Frozen slotted dataclasses, closed unions, structural protocols, composition, and procedural validation preserve stronger runtime and wire invariants. |
+
+Deferred suggestions are not treated as completed: exhaustive JSON Schema
+expansion, sensitive persistence, stronger cross-platform crash durability and
+`fsync`, broader release work, and unrelated Phase 1 gates remain outside this
+initiative. The final integrated review must verify this table against both
+source reviews and current merged behavior before the handover can transition to
+complete.
 
 ## Risks and non-negotiables
 
