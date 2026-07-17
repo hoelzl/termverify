@@ -11,7 +11,7 @@ fixture-driven compatibility coverage without changing the accepted protocol.
 1. `AGENTS.md`
 2. `docs/knowledge/protocol.md`
 3. `docs/knowledge/evidence-governance.md`
-4. `schemas/termverify.transcript/v1.schema.json`
+4. `src/termverify/schemas/termverify.transcript/v1.schema.json`
 5. `src/termverify/transcript.py`
 6. `tests/test_transcript.py` and `tests/fixtures/transcripts/v1/`
 
