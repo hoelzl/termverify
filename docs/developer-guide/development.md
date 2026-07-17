@@ -61,6 +61,13 @@ allowing integer rounding to absorb a regression.
 - The floor is enforced by every `pytest --cov` run, which includes the CI
   quality matrix and the documented validation commands; the pre-push test
   hook deliberately runs without coverage for speed.
+- The native ConPTY binding (`termverify._conpty`) is the single reviewed
+  coverage exclusion: it executes only on Windows legs, so including it would
+  make the cross-platform floor depend on the host OS. It must stay a thin
+  ownership wrapper proven by the Windows-only integration tests; adapter
+  logic above it is written against an injected binding and stays fully
+  ratcheted. Adding any other exclusion requires the same owner review as
+  lowering the floor.
 
 ## Testing tiers
 

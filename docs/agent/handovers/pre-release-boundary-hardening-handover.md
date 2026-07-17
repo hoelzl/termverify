@@ -222,9 +222,20 @@ fail-closed semantics, and defines the executable verification plan for
 ownership/close, EOF/final-frame drain, process-tree teardown,
 cancellation/recovery, dimensions, truthful receipts, and dependency
 governance. Acceptance authorizes reviewed implementation slices to add the
-pinned dependency behind that plan; no adapter exists, the spike remains
-unpromoted, and every claim in the transferred criterion stays unproven until
-its planned evidence lands.
+pinned dependency behind that plan; no adapter exists, and every claim in the
+transferred criterion stays unproven until its planned evidence lands.
+
+Implementation slice 1 landed on 2026-07-17 (issue #104): `pywinpty` is a
+pinned Windows-marker dependency, the thin `termverify._conpty` binding is the
+only module touching it, and the spike behaviors are promoted into durable
+Windows-matrix integration tests — child creation, initial dimensions, echoed
+input, marker-bounded burst on a dedicated reader thread, explicit resize,
+forced close, integer exit status — plus a fail-closed non-Windows spawn
+test. The binding is the single reviewed coverage-ratchet exclusion with
+rationale in the developer guide. Native EOF and final-frame drain,
+process-tree teardown, cancellation/recovery, dimensions receipts, and every
+enforcement claim remain unproven and fail-closed; the binding's `write`
+deliberately returns no byte-count receipt.
 
 ## Risks and non-negotiables
 
