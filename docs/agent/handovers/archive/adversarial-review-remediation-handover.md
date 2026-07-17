@@ -13,7 +13,9 @@
   approval with no Critical, High, Medium, or Low findings.
 - **Predecessor:** none; this focused remediation initiative was nested within,
   but did not replace, the active
-  [Phase 1 readiness hardening handover](../phase-1-readiness-hardening-handover.md).
+  [Phase 1 readiness hardening handover](../phase-1-readiness-hardening-handover.md),
+  whose owner-reviewed scope disposition was recorded later without reopening
+  this completed remediation initiative.
 - **Source reviews:** [GPT-5.6 review](../../design/adversarial-correctness-and-code-quality-review-gpt-5.6-sol-2026-07-16.md) and [Opus 4.8 review](../../design/adversarial-correctness-and-code-quality-review-opus-4.8-2026-07-16.md).
 - **Execution plan:** [detailed implementation plan](../../../../.hermes/plans/2026-07-16_215137-adversarial-review-remediation.md).
 - **Successor:** none
