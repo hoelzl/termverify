@@ -2,10 +2,14 @@
 
 > **For the implementing agent:** Execute this plan one coherent reviewable slice at a time, using strict TDD and candidate-bound independent review. The maintainer accepted the recommended semantic-field transformation policy on 2026-07-16; the separate safe-write durability decision remains open.
 
-> **Progress:** Slice 1 merged through
-> [PR #57](https://github.com/hoelzl/termverify/pull/57) on 2026-07-16 after
-> candidate-bound independent review. Resume with Slice 2; do not rerun the
-> kickoff prompt against current `main`.
+> **Progress:** Slices 1–5 merged through
+> [PR #57](https://github.com/hoelzl/termverify/pull/57),
+> [PR #60](https://github.com/hoelzl/termverify/pull/60),
+> [PR #62](https://github.com/hoelzl/termverify/pull/62),
+> [PR #64](https://github.com/hoelzl/termverify/pull/64), and
+> [PR #66](https://github.com/hoelzl/termverify/pull/66) after exact-candidate
+> independent review. Resume with Slice 6 from current `origin/main`; do not
+> rerun the kickoff prompt or reopen completed behavior.
 
 **Goal:** Apply the union of confirmed fixes and maintainability improvements from the two 2026-07-16 adversarial reviews without weakening canonical transcript validation, immutable value contracts, or fail-closed evidence handling.
 

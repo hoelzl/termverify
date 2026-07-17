@@ -2,13 +2,13 @@
 
 ## Handover metadata
 
-- **Status:** active — the acronym-prefixed sensitive-key fix merged in PR #57,
-  and the maintainer accepted the semantic-field transformation policy on
-  2026-07-16; implementation may proceed with the remaining ordered reviewable
-  slices below. Atomic-write durability still has its separate decision gate.
+- **Status:** active — Slices 1–5 are integrated through PR #66 after
+  exact-candidate review. Narrow shared internals are the next ordered slice;
+  lifecycle decomposition and atomic persistence remain. Atomic-write
+  durability still has its separate decision gate.
 - **Owner:** project maintainer
 - **Created:** 2026-07-16
-- **Updated:** 2026-07-16
+- **Updated:** 2026-07-17
 - **Review required:** yes — evidence security, public immutable contracts, serializer behavior, and protocol-adjacent refactors require candidate-bound independent human-readable review.
 - **Predecessor:** none; this is a focused remediation initiative nested within, but not a replacement for, the active [Phase 1 readiness hardening handover](phase-1-readiness-hardening-handover.md).
 - **Source reviews:** [GPT-5.6 review](../design/adversarial-correctness-and-code-quality-review-gpt-5.6-sol-2026-07-16.md) and [Opus 4.8 review](../design/adversarial-correctness-and-code-quality-review-opus-4.8-2026-07-16.md).
@@ -48,6 +48,19 @@ This handover is not an issue tracker. Use one focused issue, branch, external s
   approved the acronym-boundary correction with no blocking findings; all 10 CI
   checks passed against the reviewed head, including Python 3.12-3.14 on Ubuntu
   and Windows.
+- Serializer/runtime JSON strictness merged through
+  [PR #60](https://github.com/hoelzl/termverify/pull/60), aggregate
+  diagnostic-time coherence through
+  [PR #62](https://github.com/hoelzl/termverify/pull/62), and direct-runtime
+  classification plus abort-detail preservation through
+  [PR #64](https://github.com/hoelzl/termverify/pull/64). Each final candidate
+  received independent exact-candidate approval before merge.
+- The accepted semantic evidence-classification policy merged through
+  [PR #66](https://github.com/hoelzl/termverify/pull/66) at
+  `939db4797987e4a4f92cd158cd120a8088eb3bc2`. The final candidate received
+  independent exact-candidate approval with no Critical, High, Medium, or Low
+  findings; 589 tests passed with 94% branch coverage and all 10 exact-head CI
+  checks succeeded.
 - Confirmed-good boundaries to preserve include duplicate-member rejection, RFC 8785 canonical-byte checking, lifecycle/epoch validation, exact receipt binding, deep-frozen adapter JSON values, single-flight runtime state, post-redaction semantic revalidation, and the deliberately non-exhaustive schema boundary.
 - **Not independently rerun while originally authoring this handover:** the
   reviews' mutation probes and fuzz campaigns. Slice 1 separately reproduced its
@@ -69,41 +82,81 @@ This handover is not an issue tracker. Use one focused issue, branch, external s
   and the real fixture validator rejects dynamically constructed AWS/JWT-shaped
   regression cases without adding credential-like values to committed fixtures.
 
-### P0 — arbitrary semantic strings and extension names are not fail-closed
+### P0 — arbitrary semantic strings and extension names were not fail-closed — fixed
 
-- **Evidence:** credential regexes are the only defense for multiple known semantic members, and extension values are redacted while attacker-controlled `x-` names remain intact. AWS IDs, JWTs, Slack tokens, and PEM body material were reported to survive in such positions.
-- **Impact:** safe persistence and fixture governance can publish secrets encoded in structurally valid fields.
+- **Evidence at the reviewed revision:** credential regexes were the only defense
+  for multiple known semantic members, and extension values were redacted while
+  attacker-controlled `x-` names remained intact. AWS IDs, JWTs, Slack tokens,
+  and PEM body material survived in such positions.
+- **Historical impact:** safe persistence and fixture governance could publish
+  secrets encoded in structurally valid fields.
 - **Required outcome:** every defined string-bearing field and extension name receives an explicit preserve/transform/redact/reject classification; denylist regexes remain secondary only.
+- **Disposition:** fixed by PR #66. Validated v1 records now use field-first
+  classification, unbounded semantic strings and extension names transform
+  deterministically, and modern credential patterns remain a secondary defense.
 
-### P1 — whole-record screening rejects valid grammar-constrained values
+### P1 — whole-record screening rejected valid grammar-constrained values — fixed
 
-- **Evidence:** legal `sk-...` run IDs, Slovak-style locale tags, and replay selectors collide with the `sk-` credential pattern and fail post-redaction validation or selector screening.
-- **Impact:** valid transcripts can be denied safe persistence.
+- **Evidence at the reviewed revision:** legal `sk-...` run IDs, Slovak-style
+  locale tags, and replay selectors collided with the `sk-` credential pattern
+  and failed post-redaction validation or selector screening.
+- **Historical impact:** valid transcripts could be denied safe persistence.
 - **Required outcome:** credential scanning is scoped to fields where credentials can actually be represented; constrained structural identities remain valid and unchanged.
+- **Disposition:** fixed by PR #66. Grammar-constrained envelope, locale, seed,
+  replay-selector, numeric, and enum fields remain structurally validated and
+  bypass free-text credential scanning.
 
-### P1 — programmatic serialization has an inconsistent exception/type boundary
+### P1 — programmatic serialization had an inconsistent exception/type boundary — fixed
 
-- **Evidence:** non-object records and non-string keys can leak `AttributeError`; integral floats can compare equal to requested integer configuration and serialize/parse as integers.
-- **Impact:** callers cannot rely on `TranscriptValidationError`, and the programmatic serializer can silently change JSON runtime type category even though wire bytes remain canonical.
+- **Evidence at the reviewed revision:** non-object records and non-string keys
+  could leak `AttributeError`; integral floats could compare equal to requested
+  integer configuration and serialize/parse as integers.
+- **Historical impact:** callers could not rely solely on
+  `TranscriptValidationError`, and the programmatic serializer could silently
+  change JSON runtime type category even though wire bytes remained canonical.
 - **Required outcome:** recursive runtime JSON-shape validation plus type-aware JSON equivalence; no claim that canonical wire parsing itself is defective.
+- **Disposition:** fixed by PR #60 with recursive runtime JSON-shape validation
+  and category-aware JSON equivalence.
 
-### P1 — immutable result aggregates permit contradictory diagnostic times
+### P1 — immutable result aggregates permitted contradictory diagnostic times — fixed
 
-- **Evidence:** direct construction of `Started`, `EpochCompleted`, `TerminalResult`, `StartTerminated`, and fully negotiated `StartFailed` can combine diagnostics with another manual time. `DirectAdapter` catches reachable cases, but alternate structural adapters need not.
-- **Impact:** public immutable values do not fully carry their own invariants.
+- **Evidence at the reviewed revision:** direct construction of `Started`,
+  `EpochCompleted`, `TerminalResult`, `StartTerminated`, and fully negotiated
+  `StartFailed` could combine diagnostics with another manual time.
+  `DirectAdapter` caught reachable cases, but alternate structural adapters did
+  not have to do so.
+- **Historical impact:** public immutable values did not fully carry their own
+  invariants.
 - **Required outcome:** constructor-level coherence with direct-runtime checks retained as defense in depth.
+- **Disposition:** fixed by PR #62 at the aggregate constructors, with direct
+  runtime checks retained as defense in depth.
 
-### P2 — runtime abort and startup cleanup lose evidence or can wedge defensively
+### P2 — runtime abort and startup cleanup could lose evidence or wedge — fixed
 
-- **Evidence:** abort failure replaces application details with only `{"abort": "failed"}`; an unexpected `Started` construction failure can leave state at `initializing` without abort.
-- **Impact:** operator diagnostics are weakest during compound failure, and an invariant-bypassing producer can wedge a direct adapter.
+- **Evidence at the reviewed revision:** abort failure replaced application
+  details with only `{"abort": "failed"}`; an unexpected `Started` construction
+  failure could leave state at `initializing` without abort.
+- **Historical impact:** operator diagnostics were weakest during compound
+  failure, and an invariant-bypassing producer could wedge a direct adapter.
 - **Required outcome:** collision-safe detail preservation and cleanup-safe terminal state transition.
+- **Disposition:** fixed by PR #64 with collision-safe detail preservation,
+  cleanup-safe startup failure handling, and consolidated result classification.
 
-### P2 — duplication and layering create correctness-drift risk
+### P2 — duplication and layering create correctness-drift risk — partially fixed
 
-- **Evidence:** `_validate_lifecycle()` is 569 lines with reported complexity `F (276)`; dispatch/clock classification tails are nearly identical and stop repeats terminal handling; adapter imports a codec-private locale predicate; constraint order and JSON aliases are duplicated.
-- **Impact:** future protocol corrections can land incompletely or break a separate compatibility boundary.
-- **Required outcome:** behavior-preserving pure helper extraction, one narrow result classifier, neutral locale grammar, and cautiously shared stable vocabulary.
+- **Historical evidence at the reviewed revision:** `_validate_lifecycle()` was
+  569 lines with reported complexity `F (276)`; dispatch/clock classification
+  tails were nearly identical and `stop()` repeated terminal handling.
+- **Current remaining evidence:** lifecycle validation remains concentrated;
+  adapter imports a codec-private locale predicate; constraint order and JSON
+  aliases remain duplicated.
+- **Remaining impact:** future protocol corrections can still land incompletely
+  or break a separate compatibility boundary.
+- **Required remaining outcome:** behavior-preserving lifecycle helper
+  extraction, neutral locale grammar, and cautiously shared stable vocabulary.
+- **Disposition:** direct-runtime result classification was consolidated in PR
+  #64. Neutral shared internals and lifecycle decomposition remain Slices 6 and
+  7 respectively.
 
 ### P3 — direct evidence writes can truncate on failure
 
@@ -138,9 +191,9 @@ Current v1 permits arbitrary strings in UI IDs/roles/mode, input key names, term
   semantic labels while retaining protocol structure and relationships. This
   is preferable to making current transcripts non-persistable or relying on a
   credential denylist.
-- **Review boundary:** implementation still requires candidate-bound independent
-  human-readable security review; acceptance of the policy is not approval of
-  an implementation diff.
+- **Review boundary:** PR #66 completed candidate-bound independent security
+  review. The policy acceptance alone did not authorize its implementation
+  diff.
 
 ### Decision gate — safe-mode durability level
 
@@ -152,6 +205,8 @@ Current v1 permits arbitrary strings in UI IDs/roles/mode, input key names, term
 ## Workstreams
 
 ### 1. Immediate evidence security and correctness
+
+**Status:** completed through PRs #57 and #66.
 
 **Objective:** close the repository credential leak, then implement the accepted semantic-field policy without denying valid constrained records.
 
@@ -165,9 +220,8 @@ Current v1 permits arbitrary strings in UI IDs/roles/mode, input key names, term
    invariant-preserving policy.
 5. Add AWS/JWT/Slack/PEM recognition as secondary defense with near-miss tests.
 
-**Dependencies:** acronym fix is independent; the semantic-field decision is
-accepted, so the full workstream may proceed after its focused tests define the
-cross-field transformations.
+**Dependencies:** satisfied. PR #57 landed independently; the accepted
+semantic-field decision and focused invariant tests were implemented in PR #66.
 
 **Acceptance criteria:**
 
@@ -176,6 +230,8 @@ cross-field transformations.
 - Sanitized output revalidates canonically and preserves cross-field invariants.
 
 ### 2. Serializer and immutable-contract hardening
+
+**Status:** completed through PRs #60 and #62.
 
 **Objective:** make public programmatic inputs fail consistently and immutable results internally coherent.
 
@@ -195,6 +251,8 @@ cross-field transformations.
 
 ### 3. Direct-runtime drift reduction and failure preservation
 
+**Status:** completed through PR #64.
+
 **Objective:** classify epoch results once and make compound failures diagnosable and terminal.
 
 **Actions:**
@@ -213,6 +271,8 @@ cross-field transformations.
 
 ### 4. Narrow shared internals
 
+**Status:** next ordered workstream (Slice 6).
+
 **Objective:** remove private cross-layer coupling and low-value vocabulary duplication.
 
 **Actions:**
@@ -222,7 +282,8 @@ cross-field transformations.
 3. Share the JSON value alias without breaking current import surfaces.
 4. Keep evidence classification independent and add exhaustive defined-kind coverage tests.
 
-**Dependencies:** after correctness/security semantics stabilize; before lifecycle extraction.
+**Dependencies:** satisfied by merged Slices 1–5; complete before lifecycle
+extraction.
 
 **Acceptance criteria:**
 
@@ -231,6 +292,8 @@ cross-field transformations.
 - No generic utilities/rules registry or inheritance is introduced.
 
 ### 5. Lifecycle-validator decomposition
+
+**Status:** pending Slice 7 after shared-internal stabilization.
 
 **Objective:** turn `_validate_lifecycle()` into a readable procedural orchestrator with cohesive pure helpers.
 
@@ -249,6 +312,8 @@ cross-field transformations.
 - No class hierarchy, visitor, or dynamic rules engine appears.
 
 ### 6. Atomic safe persistence
+
+**Status:** pending Slice 8 and the safe-mode durability decision recorded above.
 
 **Objective:** leave old evidence intact if a replacement write fails.
 
