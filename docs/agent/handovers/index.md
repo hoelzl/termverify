@@ -7,10 +7,6 @@ source of truth for volatile work state.
 
 ## Active
 
-- [Adversarial review remediation handover](adversarial-review-remediation-handover.md)
-  — **final review pending**; Slices 1–8 and every accepted finding disposition
-  are integrated through PR #78, with final reconciliation under review before
-  completion and archival.
 - [Phase 1 readiness hardening handover](phase-1-readiness-hardening-handover.md)
   — **active**; the deterministic direct and partial terminal-feasibility slices
   are reviewed, while resource/fixture scope, installed-schema, and
@@ -18,6 +14,10 @@ source of truth for volatile work state.
 
 ## Archive
 
+- [Adversarial review remediation handover](archive/adversarial-review-remediation-handover.md)
+  — **complete**; Slices 1–8 and every accepted source-review disposition were
+  integrated, reconciled, and accepted by final independent review through PR
+  #80.
 - [Foundation handover](archive/foundation-handover.md) — **complete**; Phase 0
   established the initial package, workflow, documentation, and CI foundation.
 - [Quality hardening handover](archive/quality-hardening-handover.md) —
