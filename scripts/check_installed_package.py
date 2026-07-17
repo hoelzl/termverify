@@ -27,6 +27,14 @@ def main() -> int:
     import termverify
     from termverify.transcript import parse_transcript, serialize_transcript
 
+    imported_from = Path(termverify.__file__ or "").resolve()
+    repository_package = arguments.reference_schema.resolve().parents[2]
+    if repository_package in imported_from.parents:
+        raise AssertionError(
+            "termverify was imported from the repository checkout, not an"
+            " installed artifact; run with an isolated interpreter such as"
+            " uv run --no-project --with <artifact>"
+        )
     if termverify.__version__ != importlib.metadata.version("termverify"):
         raise AssertionError("installed version does not match package metadata")
     for callable_value in (
