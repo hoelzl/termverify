@@ -993,6 +993,128 @@ def test_serialize_transcript_rejects_incomplete_private_use_locale() -> None:
 
 
 @pytest.mark.parametrize(
+    "timezone",
+    ["US/Eastern", "Europe/Kiev", "Mars/Olympus", "../UTC", "europe/Berlin"],
+)
+def test_serialize_transcript_rejects_noncanonical_v1_timezone(
+    timezone: str,
+) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    started_payload = transcript[0]["payload"]
+    assert isinstance(started_payload, dict)
+    config = started_payload["config"]
+    assert isinstance(config, dict)
+    config["timezone"] = timezone
+    timezone_result = transcript[4]["payload"]
+    assert isinstance(timezone_result, dict)
+    assert timezone_result["constraint"] == "timezone"
+    timezone_result["effective"] = timezone
+
+    with pytest.raises(TranscriptValidationError, match="timezone"):
+        serialize_transcript(transcript)
+
+
+@pytest.mark.parametrize("timezone", ["Etc/UTC", "Europe/Berlin"])
+def test_canonical_named_v1_timezone_request_round_trips_as_unsupported(
+    timezone: str,
+) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    started_payload = transcript[0]["payload"]
+    assert isinstance(started_payload, dict)
+    config = started_payload["config"]
+    assert isinstance(config, dict)
+    config["timezone"] = timezone
+    timezone_result = transcript[4]["payload"]
+    assert isinstance(timezone_result, dict)
+    timezone_result.clear()
+    timezone_result.update(
+        {
+            "constraint": "timezone",
+            "status": "unsupported",
+            "reason": "named timezone enforcement is unavailable",
+        }
+    )
+    terminal = transcript[5]
+    terminal["kind"] = "run.unsupported"
+    terminal["payload"] = {
+        "constraint": "timezone",
+        "code": "constraint-unsupported",
+        "message": "named timezone enforcement is unavailable",
+    }
+    del transcript[6:]
+
+    reparsed = parse_transcript(serialize_transcript(transcript))
+    reparsed_started = reparsed[0]["payload"]
+    assert isinstance(reparsed_started, dict)
+    reparsed_config = reparsed_started["config"]
+    assert isinstance(reparsed_config, dict)
+    assert reparsed_config["timezone"] == timezone
+
+
+@pytest.mark.parametrize("timezone", ["Etc/UTC", "Europe/Berlin"])
+def test_serialize_transcript_rejects_named_timezone_enforcement_receipt(
+    timezone: str,
+) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    started_payload = transcript[0]["payload"]
+    assert isinstance(started_payload, dict)
+    config = started_payload["config"]
+    assert isinstance(config, dict)
+    config["timezone"] = timezone
+    timezone_result = transcript[4]["payload"]
+    assert isinstance(timezone_result, dict)
+    timezone_result["effective"] = timezone
+
+    with pytest.raises(TranscriptValidationError, match="timezone enforcement"):
+        serialize_transcript(transcript)
+
+
+def test_parse_transcript_rejects_named_timezone_enforcement_receipt() -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    started_payload = transcript[0]["payload"]
+    assert isinstance(started_payload, dict)
+    config = started_payload["config"]
+    assert isinstance(config, dict)
+    config["timezone"] = "Europe/Berlin"
+    timezone_result = transcript[4]["payload"]
+    assert isinstance(timezone_result, dict)
+    timezone_result["effective"] = "Europe/Berlin"
+    encoded = b"".join(
+        json.dumps(
+            record, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        ).encode()
+        + b"\n"
+        for record in transcript
+    )
+
+    with pytest.raises(TranscriptValidationError, match="timezone enforcement"):
+        parse_transcript(encoded)
+
+
+@pytest.mark.parametrize("timezone", ["US/Eastern", "Mars/Olympus", "../UTC"])
+def test_parse_transcript_rejects_noncanonical_v1_timezone(timezone: str) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    started_payload = transcript[0]["payload"]
+    assert isinstance(started_payload, dict)
+    config = started_payload["config"]
+    assert isinstance(config, dict)
+    config["timezone"] = timezone
+    timezone_result = transcript[4]["payload"]
+    assert isinstance(timezone_result, dict)
+    timezone_result["effective"] = timezone
+    encoded = b"".join(
+        json.dumps(
+            record, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        ).encode()
+        + b"\n"
+        for record in transcript
+    )
+
+    with pytest.raises(TranscriptValidationError, match="timezone"):
+        parse_transcript(encoded)
+
+
+@pytest.mark.parametrize(
     "locale",
     MALFORMED_LOCALES,
 )

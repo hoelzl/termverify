@@ -156,6 +156,25 @@ def test_allow_list_configuration_emits_sorted_v1_endpoint_objects() -> None:
     }
 
 
+@pytest.mark.parametrize("timezone", ["UTC", "Etc/UTC", "Europe/Berlin"])
+def test_run_configuration_accepts_canonical_v1_timezone_names(timezone: str) -> None:
+    configuration = replace(_configuration(), timezone=timezone)
+
+    assert configuration.timezone == timezone
+    assert configuration.to_protocol()["timezone"] == timezone
+
+
+@pytest.mark.parametrize(
+    "timezone",
+    ["US/Eastern", "Europe/Kiev", "Mars/Olympus", "../UTC", "europe/Berlin"],
+)
+def test_run_configuration_rejects_noncanonical_v1_timezone_names(
+    timezone: str,
+) -> None:
+    with pytest.raises(ValueError, match="timezone registry"):
+        replace(_configuration(), timezone=timezone)
+
+
 @pytest.mark.parametrize(
     ("factory", "message"),
     [
