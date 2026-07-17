@@ -55,7 +55,7 @@ Every row has disposition **transfer intact to this named successor**.
 | Distribution and release governance | Resolvable canonical schema publication for the documented `$id` | The current unresolved host is not a publication contract. Runtime validation remains authoritative. |
 | Distribution and release governance | Release checklist, changelog/compatibility policy, security-disclosure process, and build/release provenance | Implemented as governance: reviewed checklist, changelog with pre-1.0 policy, private-disclosure process, and a tag-triggered attested draft-artifact workflow. No release is authorized, no index publishing exists, and the package remains pre-alpha. |
 | Distribution and release governance | Reviewed behavior-based coverage-ratchet activation | Implemented: the committed `fail_under` floor is the integer floor of the reviewed observed total (94.43% at activation), raises require sustained durable coverage, and lowering requires explicit owner review. |
-| Production terminal adapter | Direct native pseudoconsole ownership/close, native EOF and final-frame draining, process-tree teardown, cancellation/recovery, and truthful OS-level enforcement evidence | PR #53 remains partial binding-level feasibility evidence; no spike promotion or `pywinpty` dependency is authorized. |
+| Production terminal adapter | Direct native pseudoconsole ownership/close, native EOF and final-frame draining, process-tree teardown, cancellation/recovery, and truthful OS-level enforcement evidence | PR #53 remains partial binding-level feasibility evidence. The accepted dependency decision (`docs/agent/design/terminal-adapter-dependency-decision.md`) authorizes reviewed implementation slices with pinned `pywinpty`/ConPTY behind its verification plan; every criterion here remains unproven until that evidence lands. |
 
 ## Completion-definition amendments retained from the predecessor
 
@@ -212,6 +212,19 @@ verification plan. Prove native ownership, close, EOF/final-frame drain,
 process-tree teardown, cancellation/recovery, dimensions, and truthful constraint
 enforcement. PR #53 is a reproduction hypothesis and binding feasibility record,
 not production evidence.
+
+The owner accepted the dependency and verification decision on 2026-07-17
+(issue #102):
+[`terminal-adapter-dependency-decision.md`](../design/terminal-adapter-dependency-decision.md)
+selects pinned `pywinpty` with the ConPTY backend exclusively, fixes the
+public boundary to the existing `Adapter`/`ConstraintPorts` contract with
+fail-closed semantics, and defines the executable verification plan for
+ownership/close, EOF/final-frame drain, process-tree teardown,
+cancellation/recovery, dimensions, truthful receipts, and dependency
+governance. Acceptance authorizes reviewed implementation slices to add the
+pinned dependency behind that plan; no adapter exists, the spike remains
+unpromoted, and every claim in the transferred criterion stays unproven until
+its planned evidence lands.
 
 ## Risks and non-negotiables
 
