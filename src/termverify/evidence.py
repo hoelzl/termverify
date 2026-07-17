@@ -163,7 +163,7 @@ def _redact_transcript_record(record: Record) -> None:
         effective = payload.get("effective")
         constraint = payload.get("constraint")
         if constraint == "timezone" and "effective" in payload:
-            payload["effective"] = _redaction_marker("timezone")
+            payload["effective"] = "UTC"
         elif isinstance(constraint, str):
             _redact_constraint_config(constraint, effective)
         if payload.get("status") == "unsupported" and "effective" in payload:
@@ -253,7 +253,7 @@ def _redact_runtime_config(config: dict[str, JsonValue]) -> None:
     if isinstance(terminal, dict):
         _redact_terminal_config(terminal)
     if "timezone" in config:
-        config["timezone"] = _redaction_marker("timezone")
+        config["timezone"] = "UTC"
     filesystem = config.get("filesystem")
     if isinstance(filesystem, dict):
         _redact_filesystem_config(filesystem)

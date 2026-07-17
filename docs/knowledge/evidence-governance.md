@@ -68,9 +68,11 @@ boundary exception.
 Redaction happens inside the persistence boundary before a fixture writer,
 report renderer, or artifact publisher receives encoded bytes. The raw
 transcript codec validates and canonicalizes in memory but does not claim safe
-persistence. Redaction is deterministic and replaces a value with the exact
-marker `<redacted:reason>`; it must not retain the original value, its length,
-hash, or a reversible encoding.
+persistence. Redaction is deterministic and generally replaces a value with the
+exact marker `<redacted:reason>`; it must not retain the original value, its
+length, hash, or a reversible encoding. Registry-constrained timezone values use
+the fixed valid `UTC` sentinel instead, so post-redaction protocol validation
+cannot admit a permissive placeholder.
 
 Safe persistence classifies validated records before applying any generic
 free-text credential patterns. Every v1 string-bearing position has this
@@ -80,7 +82,7 @@ disposition:
 | --- | --- |
 | Envelope `protocol` and `kind`; capability `constraint` and `status`; clock, filesystem, network, input-mouse, process, and exit tagged-enum strings | Preserve after protocol validation. |
 | Envelope `run_id` and `id`; replay-subject format and selector tokens; decimal seed; locale | Preserve as replay structure after protocol validation. Credential regexes do not scan these fields. |
-| Timezone | Replace with `<redacted:timezone>` in both requested and effective configuration. |
+| Timezone | Replace with the fixed valid `UTC` sentinel in requested configuration and any effective value. Named requests can only occur on the structured unsupported path; enforced v1 timezone values are already `UTC`. |
 | Filesystem root and network allow-list host | Replace with deterministic sandbox/positional markers in both requested and effective configuration. |
 | Terminal capability names | Replace by ordered positional markers in both requested and effective configuration, preserving ordering, uniqueness, and equality. |
 | Input key names | Replace by ordered positional markers. Input text and clipboard text are blanket-redacted. |

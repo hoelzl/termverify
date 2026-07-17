@@ -45,7 +45,7 @@ Every row has disposition **transfer intact to this named successor**.
 
 | Workstream | Transferred criterion | Unsupported-until-approved boundary |
 | --- | --- | --- |
-| Deterministic vocabulary and configuration semantics | Named-timezone membership, tzdb source/version, canonical-versus-alias policy, update and compatibility semantics | `TimezoneReceipt` continues to reject named zones other than `UTC`; no ambient `zoneinfo` membership is inferred. |
+| Deterministic vocabulary and configuration semantics | Named-timezone enforcement evidence and any post-freeze registry evolution beyond the protocol-bound v1 registry | `TimezoneReceipt` continues to reject named zones other than `UTC`; no ambient `zoneinfo` membership or enforcement is inferred. |
 | Deterministic vocabulary and configuration semantics | Closed, versioned semantic key-name registry, including modifier/chord spelling and adapter mapping | The immutable/direct adapter surface continues to omit `input.key`; syntax-only transcript strings are not approved semantic names. |
 | Deterministic vocabulary and configuration semantics | Closed, versioned terminal-capability registry with observable semantics and enforcement evidence | Non-empty terminal-capability receipts remain rejected; requested/effective equality is not enforcement proof. |
 | Concurrent event correlation | Explicit correlation and ordering for concurrent inputs or unsolicited/asynchronous events | V1 remains single-flight; idle unsolicited body records remain invalid; no wall-clock quiet period is evidence of causality or quiescence. |
@@ -114,6 +114,17 @@ Define registry ownership, versioning, aliases, normalization, update policy,
 and enforcement evidence before exposing named timezone, key, or terminal
 capability semantics. Do not derive protocol meaning from ambient host registries,
 toolkit enums, terminfo, virtual-key codes, or escape sequences.
+
+The owner accepted the first focused contract slice on 2026-07-17. Requested
+timezone membership is now bound to the closed `termverify.timezone/v1`
+registry: literal `UTC` plus primary `Zone` names from pinned IANA TZDB 2026c,
+with exact case-sensitive spelling, no normalization, and no `Link`, `backzone`,
+or `factory` names. Runtime validation owns membership independently of ambient
+host data; schema validation remains deliberately non-exhaustive. V1 corrections
+remain owner-reviewed during inception, while post-freeze membership or meaning
+changes require a new transcript protocol version. This accepted request-level
+contract does not authorize named-timezone receipts: named enforcement evidence
+remains transferred and fail-closed.
 
 ### 2. Concurrent event correlation
 

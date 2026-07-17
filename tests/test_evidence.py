@@ -383,12 +383,10 @@ def test_safe_persistence_transforms_semantic_strings_in_lockstep(
     terminal = config["terminal"]
     assert isinstance(terminal, dict)
     terminal["capabilities"] = ["AKIA" + "A" * 16, "xterm-private"]
-    config["timezone"] = "private/timezone"
     timezone_result = records[4]["payload"]
     terminal_result = records[5]["payload"]
     assert isinstance(timezone_result, dict)
     assert isinstance(terminal_result, dict)
-    timezone_result["effective"] = config["timezone"]
     terminal_result["effective"] = deepcopy(terminal)
     records[9]["kind"] = "input.key"
     records[9]["payload"] = {
@@ -431,7 +429,7 @@ def test_safe_persistence_transforms_semantic_strings_in_lockstep(
     assert isinstance(persisted_started, dict)
     persisted_config = persisted_started["config"]
     assert isinstance(persisted_config, dict)
-    assert persisted_config["timezone"] == "<redacted:timezone>"
+    assert persisted_config["timezone"] == "UTC"
     persisted_terminal = persisted_config["terminal"]
     assert isinstance(persisted_terminal, dict)
     assert persisted_terminal["capabilities"] == [
@@ -440,7 +438,7 @@ def test_safe_persistence_transforms_semantic_strings_in_lockstep(
     ]
     assert persisted[4]["payload"] == {
         "constraint": "timezone",
-        "effective": "<redacted:timezone>",
+        "effective": "UTC",
         "status": "enforced",
     }
     assert persisted[5]["payload"] == {
@@ -478,6 +476,45 @@ def test_safe_persistence_transforms_semantic_strings_in_lockstep(
     assert persisted[-1]["payload"] == {
         "exit": {"kind": "signal", "value": "<redacted:signal>"}
     }
+
+
+def test_safe_persistence_maps_named_timezone_request_to_valid_utc_sentinel(
+    tmp_path: Path,
+) -> None:
+    records = parse_transcript(TRANSCRIPT_FIXTURE.read_bytes())
+    started_payload = records[0]["payload"]
+    assert isinstance(started_payload, dict)
+    config = started_payload["config"]
+    assert isinstance(config, dict)
+    config["timezone"] = "Europe/Berlin"
+    timezone_result = records[4]["payload"]
+    assert isinstance(timezone_result, dict)
+    timezone_result.clear()
+    timezone_result.update(
+        {
+            "constraint": "timezone",
+            "status": "unsupported",
+            "reason": "named timezone enforcement is unavailable",
+        }
+    )
+    terminal = records[5]
+    terminal["kind"] = "run.unsupported"
+    terminal["payload"] = {
+        "constraint": "timezone",
+        "code": "constraint-unsupported",
+        "message": "named timezone enforcement is unavailable",
+    }
+    del records[6:]
+    destination = tmp_path / "transcript.jsonl"
+
+    persist_transcript_evidence(destination, records)
+
+    persisted = parse_transcript(destination.read_bytes())
+    persisted_started = persisted[0]["payload"]
+    assert isinstance(persisted_started, dict)
+    persisted_config = persisted_started["config"]
+    assert isinstance(persisted_config, dict)
+    assert persisted_config["timezone"] == "UTC"
 
 
 @pytest.mark.parametrize("constraint", ["terminal", "network"])

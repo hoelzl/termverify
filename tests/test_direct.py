@@ -204,6 +204,38 @@ def test_start_stops_at_first_unsupported_constraint(constraint: str) -> None:
     assert application.calls == order[: index + 1]
 
 
+class _NamedTimezoneUnsupportedApplication(_NeverApplication):
+    def enforce_timezone(
+        self, run_id: str, requested: str
+    ) -> TimezoneReceipt | ConstraintUnsupported | AdapterFailure:
+        del run_id
+        self.calls.append("timezone")
+        assert requested == "Europe/Berlin"
+        return ConstraintUnsupported(
+            "timezone",
+            "constraint-unsupported",
+            "named timezone enforcement is unavailable",
+        )
+
+
+def test_canonical_named_timezone_request_can_report_structured_unsupported() -> None:
+    application = _NamedTimezoneUnsupportedApplication()
+    adapter = DirectAdapter(application)
+    configuration = replace(_configuration(), timezone="Europe/Berlin")
+
+    result = adapter.start("run-direct", configuration)
+
+    assert isinstance(result, StartUnsupported)
+    assert result.constraint == "timezone"
+    assert result.code == "constraint-unsupported"
+    assert result.enforced == (
+        SeedReceipt("run-direct", 42),
+        ClockReceipt("run-direct", ClockConfiguration(0)),
+        LocaleReceipt("run-direct", "en-US"),
+    )
+    assert application.calls == ["seed", "clock", "locale", "timezone"]
+
+
 class _RaisingLocaleApplication(_NeverApplication):
     def enforce_locale(
         self, run_id: str, requested: str

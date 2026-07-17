@@ -14,6 +14,7 @@ from termverify._language_tag import (
     is_well_formed_language_tag as _is_well_formed_language_tag,
 )
 from termverify._protocol_v1 import CONSTRAINT_NAMES, REQUIRED_CONFIG_MEMBERS
+from termverify._timezone_v1 import is_timezone_name
 
 type Record = dict[str, JsonValue]
 
@@ -463,7 +464,7 @@ def _validate_run_started(records: list[Record]) -> dict[str, JsonValue]:
     locale = config["locale"]
     if not isinstance(locale, str) or not _is_well_formed_language_tag(locale):
         raise TranscriptValidationError("run.started locale is invalid")
-    if not isinstance(config["timezone"], str) or not config["timezone"]:
+    if not is_timezone_name(config["timezone"]):
         raise TranscriptValidationError("run.started timezone is invalid")
     return config
 
@@ -540,6 +541,14 @@ def _validate_negotiation(
         if _has_unknown_generic_members(payload, allowed_members):
             raise TranscriptValidationError(
                 "capability result members are invalid for its status"
+            )
+        if (
+            constraint == "timezone"
+            and status == "enforced"
+            and payload.get("effective") != "UTC"
+        ):
+            raise TranscriptValidationError(
+                "named timezone enforcement is unavailable in v1"
             )
         if status == "enforced" and not _json_equivalent(
             payload.get("effective"), config[constraint]

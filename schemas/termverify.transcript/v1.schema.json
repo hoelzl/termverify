@@ -152,7 +152,11 @@
         },
         "clock": {"$ref": "#/$defs/clockConfig"},
         "locale": {"type": "string", "minLength": 1},
-        "timezone": {"type": "string", "minLength": 1},
+        "timezone": {
+          "type": "string",
+          "minLength": 1,
+          "$comment": "termverify.transcript runtime validation owns membership in the protocol-bound termverify.timezone/v1 registry."
+        },
         "terminal": {"$ref": "#/$defs/terminalConfig"},
         "filesystem": {"$ref": "#/$defs/filesystemConfig"},
         "network": {"$ref": "#/$defs/networkConfig"}
