@@ -1,0 +1,39 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions: {}
+
+jobs:
+  build-attest-draft:
+    name: Build, attest, and draft release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: false
+      - run: uv --no-config build
+      - run: uv --no-config run --no-project --with ./dist/*.whl python scripts/check_installed_package.py src/termverify/schemas/termverify.transcript/v1.schema.json
+        shell: bash
+      - run: uv --no-config run --no-project --with ./dist/*.tar.gz python scripts/check_installed_package.py src/termverify/schemas/termverify.transcript/v1.schema.json
+        shell: bash
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: dist/*
+      - name: Create draft GitHub release with artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" --draft --verify-tag --title "$TAG" --notes "Draft release for $TAG. Publishing requires the reviewed checklist in docs/developer-guide/release.md." dist/*
+        shell: bash

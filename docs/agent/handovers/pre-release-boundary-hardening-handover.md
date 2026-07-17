@@ -53,7 +53,7 @@ Every row has disposition **transfer intact to this named successor**.
 | Production containment | Network allow-list DNS, address normalization, redirects, proxies, loopback, subprocess inheritance, and failure semantics | Direct receipts remain deny-only; allow-list enforcement remains rejected; terminal/subprocess enforcement remains unsupported. |
 | Distribution and release governance | Installed schema access API and exact wheel/sdist resource contract | Implemented: the canonical schema is a packaged resource with public byte/object accessors, and isolated wheel and sdist installation checks verify byte identity with the committed copy. Canonical `$id` publication remains transferred and unresolved. |
 | Distribution and release governance | Resolvable canonical schema publication for the documented `$id` | The current unresolved host is not a publication contract. Runtime validation remains authoritative. |
-| Distribution and release governance | Release checklist, changelog/compatibility policy, security-disclosure process, and build/release provenance | Required before the first supported external artifact; no stable/public release claim is implied by the current pre-alpha package. |
+| Distribution and release governance | Release checklist, changelog/compatibility policy, security-disclosure process, and build/release provenance | Implemented as governance: reviewed checklist, changelog with pre-1.0 policy, private-disclosure process, and a tag-triggered attested draft-artifact workflow. No release is authorized, no index publishing exists, and the package remains pre-alpha. |
 | Distribution and release governance | Reviewed behavior-based coverage-ratchet activation | Implemented: the committed `fail_under` floor is the integer floor of the reviewed observed total (94.43% at activation), raises require sustained durable coverage, and lowering requires explicit owner review. |
 | Production terminal adapter | Direct native pseudoconsole ownership/close, native EOF and final-frame draining, process-tree teardown, cancellation/recovery, and truthful OS-level enforcement evidence | PR #53 remains partial binding-level feasibility evidence; no spike promotion or `pywinpty` dependency is authorized. |
 
@@ -189,6 +189,21 @@ current floor across the CI matrix;
 lowering it requires explicit owner review with recorded rationale
 (`docs/developer-guide/development.md`). This slice adds no per-file gates, no
 behavioral baselines, and no tests whose only purpose is to move the number.
+
+The owner accepted the third focused distribution slice on 2026-07-17 (issue
+#99): release governance controls. `CHANGELOG.md` records the pre-1.0
+compatibility policy and keeps package versioning explicitly distinct from the
+immutable transcript and registry protocol versions. `SECURITY.md` defines
+private disclosure through GitHub advisories with a truthful pre-alpha support
+scope. `docs/developer-guide/release.md` is the reviewed checklist: version
+bump and changelog in a human-reviewed PR, tag-triggered CI build, isolated
+installed-package contract checks, GitHub build-provenance attestation, and a
+draft-only GitHub release whose publication is a manual human decision. The
+`Release` workflow builds and attests draft artifacts only; it cannot publish
+to a package index because no such pipeline or credential exists. Accepting
+these controls authorizes no release: the first supported external artifact
+still requires the checklist's preconditions and the owner-reviewed completion
+state of this handover.
 
 ### 5. Production terminal adapter
 
