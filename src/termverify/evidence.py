@@ -7,11 +7,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Literal
 
+from termverify._json import JsonValue as JsonValue
 from termverify.transcript import Record, serialize_transcript
-
-type JsonValue = (
-    None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
-)
 
 _SENSITIVE_KEY_PARTS = frozenset(
     {

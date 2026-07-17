@@ -9,53 +9,17 @@ from typing import cast
 
 import rfc8785
 
-type JsonValue = (
-    None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
+from termverify._json import JsonValue as JsonValue
+from termverify._language_tag import (
+    is_well_formed_language_tag as _is_well_formed_language_tag,
 )
+from termverify._protocol_v1 import CONSTRAINT_NAMES, REQUIRED_CONFIG_MEMBERS
+
 type Record = dict[str, JsonValue]
 
 _PROTOCOL = "termverify.transcript/v1"
 _MAX_SEED = "18446744073709551615"
 _IDENTIFIER_PATTERN = re.compile(r"[a-z0-9._-]+")
-_GRANDFATHERED_LANGUAGE_TAGS = frozenset(
-    {
-        "art-lojban",
-        "cel-gaulish",
-        "en-gb-oed",
-        "i-ami",
-        "i-bnn",
-        "i-default",
-        "i-enochian",
-        "i-hak",
-        "i-klingon",
-        "i-lux",
-        "i-mingo",
-        "i-navajo",
-        "i-pwn",
-        "i-tao",
-        "i-tay",
-        "i-tsu",
-        "no-bok",
-        "no-nyn",
-        "sgn-be-fr",
-        "sgn-be-nl",
-        "sgn-ch-de",
-        "zh-guoyu",
-        "zh-hakka",
-        "zh-min",
-        "zh-min-nan",
-        "zh-xiang",
-    }
-)
-_CONSTRAINTS = (
-    "seed",
-    "clock",
-    "locale",
-    "timezone",
-    "terminal",
-    "filesystem",
-    "network",
-)
 _TERMINAL_KINDS = frozenset({"run.finished", "run.failed", "run.unsupported"})
 _INPUT_KINDS = frozenset(
     {
@@ -291,20 +255,12 @@ def _validate_lifecycle(records: list[Record]) -> None:
         raise TranscriptValidationError("run.started subject is missing")
     _validate_replay_subject(subject)
     config = started_payload.get("config")
-    required_config = {
-        "seed",
-        "clock",
-        "locale",
-        "timezone",
-        "terminal",
-        "filesystem",
-        "network",
-    }
     if (
         not isinstance(config, dict)
-        or not required_config <= config.keys()
+        or not config.keys() >= REQUIRED_CONFIG_MEMBERS
         or any(
-            key not in required_config and not key.startswith("x-") for key in config
+            key not in REQUIRED_CONFIG_MEMBERS and not key.startswith("x-")
+            for key in config
         )
     ):
         raise TranscriptValidationError("run.started config is incomplete")
@@ -439,7 +395,7 @@ def _validate_lifecycle(records: list[Record]) -> None:
         raise TranscriptValidationError("capability result payload must be an object")
     capability_payloads = cast(list[dict[str, JsonValue]], payloads)
     constraints = [payload.get("constraint") for payload in capability_payloads]
-    if constraints != list(_CONSTRAINTS[: len(capabilities)]):
+    if constraints != list(CONSTRAINT_NAMES[: len(capabilities)]):
         raise TranscriptValidationError("capability results are out of order")
     statuses = [payload.get("status") for payload in capability_payloads]
     if any(
@@ -492,7 +448,7 @@ def _validate_lifecycle(records: list[Record]) -> None:
             raise TranscriptValidationError(
                 "run.unsupported constraint or payload is invalid"
             )
-    elif len(capabilities) != len(_CONSTRAINTS):
+    elif len(capabilities) != len(CONSTRAINT_NAMES):
         negotiation_failed = (
             records[-1]["kind"] == "run.failed"
             and len(records) == len(capabilities) + 2
@@ -503,7 +459,7 @@ def _validate_lifecycle(records: list[Record]) -> None:
         raise TranscriptValidationError(
             "run.unsupported requires an unsupported capability result"
         )
-    if len(capabilities) == len(_CONSTRAINTS):
+    if len(capabilities) == len(CONSTRAINT_NAMES):
         _validate_execution_epochs(records[len(capabilities) + 1 : -1])
     if any(
         record["kind"] == "capability.result"
@@ -869,79 +825,6 @@ def _validate_evidence_times(records: list[Record], manual_time: int) -> None:
             raise TranscriptValidationError(
                 f"{record['kind']} at_ms does not match the manual clock"
             )
-
-
-def _is_well_formed_language_tag(value: str) -> bool:
-    if value == "C":
-        return True
-    if value.lower() in _GRANDFATHERED_LANGUAGE_TAGS:
-        return True
-
-    subtags = value.split("-")
-    if any(
-        not 1 <= len(subtag) <= 8 or not subtag.isascii() or not subtag.isalnum()
-        for subtag in subtags
-    ):
-        return False
-    if subtags[0].lower() == "x":
-        return len(subtags) > 1
-
-    primary = subtags[0]
-    if not primary.isalpha() or not 2 <= len(primary) <= 8:
-        return False
-    index = 1
-    if len(primary) <= 3:
-        extlang_count = 0
-        while (
-            index < len(subtags)
-            and len(subtags[index]) == 3
-            and subtags[index].isalpha()
-            and extlang_count < 3
-        ):
-            index += 1
-            extlang_count += 1
-    if index < len(subtags) and len(subtags[index]) == 4 and subtags[index].isalpha():
-        index += 1
-    if index < len(subtags) and (
-        (len(subtags[index]) == 2 and subtags[index].isalpha())
-        or (len(subtags[index]) == 3 and subtags[index].isdigit())
-    ):
-        index += 1
-
-    variants: set[str] = set()
-    while index < len(subtags) and (
-        5 <= len(subtags[index]) <= 8
-        or (len(subtags[index]) == 4 and subtags[index][0].isdigit())
-    ):
-        variant = subtags[index].lower()
-        if variant in variants:
-            return False
-        variants.add(variant)
-        index += 1
-
-    extension_singletons: set[str] = set()
-    while (
-        index < len(subtags)
-        and len(subtags[index]) == 1
-        and subtags[index].lower() != "x"
-    ):
-        singleton = subtags[index].lower()
-        if singleton in extension_singletons:
-            return False
-        extension_singletons.add(singleton)
-        index += 1
-        extension_start = index
-        while index < len(subtags) and len(subtags[index]) >= 2:
-            index += 1
-        if index == extension_start:
-            return False
-
-    if index < len(subtags) and subtags[index].lower() == "x":
-        index += 1
-        if index == len(subtags):
-            return False
-        index = len(subtags)
-    return index == len(subtags)
 
 
 def _json_equivalent(left: JsonValue, right: JsonValue) -> bool:
