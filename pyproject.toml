@@ -57,6 +57,13 @@ source = ["termverify"]
 [tool.coverage.report]
 show_missing = true
 skip_covered = true
+# No-regression ratchet floor: integer floor of the reviewed observed total
+# (94.43% on 2026-07-17). Raise only for sustained durable coverage; lowering
+# requires explicit owner review (docs/developer-guide/development.md).
+# precision = 2 makes the comparison a strict floor instead of granting a
+# hidden half-point of integer rounding grace.
+fail_under = 94
+precision = 2
 
 [tool.ruff]
 line-length = 88
