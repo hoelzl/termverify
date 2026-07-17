@@ -131,8 +131,10 @@ def test_lifecycle_phase_mutations_retain_diagnostic_category(
             "exit": {"kind": "code", "value": 1},
         }
 
-    with pytest.raises(TranscriptValidationError, match=message):
+    with pytest.raises(TranscriptValidationError) as exc_info:
         serialize_transcript(_reindex(records))
+
+    assert str(exc_info.value) == message
 
 
 @st.composite
