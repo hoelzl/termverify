@@ -30,10 +30,12 @@ owner-reviewed completion state recorded in the active handover under
    isolated installed-package contract checks against both artifacts,
    generates GitHub build-provenance attestations for them, and attaches them
    to a **draft** GitHub release.
-4. Verify the draft: artifact names and sizes, attestation subjects
+4. Replace the draft's placeholder notes with the changelog section for the
+   new version.
+5. Verify the draft: artifact names and sizes, attestation subjects
    (`gh attestation verify <artifact> --repo hoelzl/termverify`), and release
-   notes copied from the changelog.
-5. Publishing the draft release is a manual, human decision. There is no
+   notes matching the changelog.
+6. Publishing the draft release is a manual, human decision. There is no
    package-index (PyPI) publishing pipeline; adding one is a separate reviewed
    change with its own credentials and provenance decisions.
 
