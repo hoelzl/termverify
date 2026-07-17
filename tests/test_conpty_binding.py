@@ -26,28 +26,30 @@ _INITIAL_ROWS: Final = 24
 _INITIAL_COLUMNS: Final = 80
 _RESIZED_ROWS: Final = 30
 _RESIZED_COLUMNS: Final = 100
-_BURST_BYTES: Final = 262_144
+_BURST_CHUNK_BYTES: Final = 1024
+_BURST_CHUNKS: Final = 1024
+_BURST_BYTES: Final = _BURST_CHUNK_BYTES * _BURST_CHUNKS
 _TIMEOUT_SECONDS: Final = 30.0
 
-_CHILD_SCRIPT: Final = """\
+_CHILD_SCRIPT: Final = f"""\
 import os
 import sys
 
 def size():
     value = os.get_terminal_size(sys.stdout.fileno())
-    return f"{value.columns}x{value.lines}"
+    return f"{{value.columns}}x{{value.lines}}"
 
-print(f"TV_INITIAL:{size()}", flush=True)
+print(f"TV_INITIAL:{{size()}}", flush=True)
 first = sys.stdin.readline().strip()
-print(f"TV_INPUT:{first}", flush=True)
+print(f"TV_INPUT:{{first}}", flush=True)
 print("TV_BURST_START", flush=True)
-for _ in range(256):
-    sys.stdout.write("Z" * 1024)
+for _ in range({_BURST_CHUNKS}):
+    sys.stdout.write("Z" * {_BURST_CHUNK_BYTES})
     sys.stdout.flush()
-print("TV_BURST_DONE:262144", flush=True)
+print("TV_BURST_DONE:{_BURST_BYTES}", flush=True)
 second = sys.stdin.readline().strip()
-print(f"TV_RESIZED:{size()}", flush=True)
-print(f"TV_TRIGGER:{second}", flush=True)
+print(f"TV_RESIZED:{{size()}}", flush=True)
+print(f"TV_TRIGGER:{{second}}", flush=True)
 print("TV_WAITING", flush=True)
 sys.stdin.readline()
 """
@@ -116,9 +118,9 @@ def test_conpty_child_lifecycle_matches_spike_evidence() -> None:
 
     reader = threading.Thread(target=drain_output, name="tv-output", daemon=True)
     writer = threading.Thread(target=drain_input, name="tv-input", daemon=True)
-    reader.start()
-    writer.start()
     try:
+        reader.start()
+        writer.start()
         wait_for("TV_INITIAL:")
         input_queue.put("synthetic-input\r\n")
         wait_for("TV_INPUT:synthetic-input")
@@ -133,8 +135,10 @@ def test_conpty_child_lifecycle_matches_spike_evidence() -> None:
         closing.set()
         child.close(force=True)
         input_queue.put(None)
-        writer.join(_TIMEOUT_SECONDS)
-        reader.join(_TIMEOUT_SECONDS)
+        if writer.ident is not None:
+            writer.join(_TIMEOUT_SECONDS)
+        if reader.ident is not None:
+            reader.join(_TIMEOUT_SECONDS)
 
     assert not writer.is_alive()
     assert not reader.is_alive()

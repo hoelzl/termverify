@@ -46,7 +46,11 @@ class ConptyChild:
         return cls(process)
 
     def read(self, max_chars: int) -> str:
-        """Read up to ``max_chars`` decoded characters from the child."""
+        """Read a decoded chunk bounded by roughly ``max_chars`` bytes.
+
+        The underlying binding reads byte-oriented chunks and completes any
+        split multibyte character, so the bound is approximate.
+        """
         return str(self._process.read(max_chars))
 
     def write(self, text: str) -> None:
