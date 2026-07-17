@@ -9,12 +9,21 @@ reader-thread state as evidence. Driving the native object keeps every
 observable — output bytes, end-of-stream, liveness, exit status — a direct
 native signal.
 
+Process-tree containment uses a Windows job object created per spawn with
+``JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`` and neither breakaway limit, so every
+descendant the child starts inherits membership and cannot leave. Forced
+close terminates the whole tree atomically with ``TerminateJobObject``;
+releasing the binding closes the job handle, which makes the OS sweep any
+survivors even if this process dies abruptly. Disclosed boundary: the child
+is assigned to the job immediately after ``CreateProcess`` returns, so a
+process the child manages to start within that microseconds-wide window
+would fall outside the job; the binding does not claim pre-start assignment.
+
 The binding stays deliberately thin: every future adapter behavior above it
 must be testable cross-platform against an injected fake binding, so this
 native boundary is excluded from the coverage ratchet with recorded rationale
-in the developer guide. Nothing here claims process-tree teardown or
-cancellation recovery; those claims require the later verified slices of the
-accepted terminal-adapter decision.
+in the developer guide. Nothing here claims cancellation recovery; that claim
+requires the later verified slices of the accepted terminal-adapter decision.
 
 ``write`` intentionally returns ``None``: the ConPTY write return value is not
 a reliable byte-count receipt, and exposing it would fabricate evidence.
@@ -25,17 +34,20 @@ from __future__ import annotations
 import contextlib
 import os
 import shutil
-import signal
 import subprocess
 import sys
 import threading
 import time
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Final
 
 _CHILD_EXIT_WAIT_MS = 30_000
 _READ_CANCEL_TIMEOUT_SECONDS = 30.0
 _READ_CANCEL_RETRY_SECONDS = 0.01
+
+#: Exit code set on every process in the tree by a forced close. The value
+#: keeps parity with the previous single-process termination convention.
+FORCED_TERMINATION_EXIT_CODE: Final = 15
 
 
 class ConptyUnsupportedError(RuntimeError):
@@ -63,57 +75,169 @@ if sys.platform == "win32":
     from ctypes import wintypes
 
     _SYNCHRONIZE = 0x0010_0000
+    _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    _PROCESS_SET_QUOTA = 0x0100
+    _PROCESS_TERMINATE = 0x0001
     _WAIT_OBJECT_0 = 0
+    _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+    _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
 
-    def _wait_for_child_exit(pid: int, timeout_ms: int) -> bool:
-        """Wait on the child's real process handle until it terminates.
-
-        This is an OS wait on the process object, not a sleep: the return
-        value reflects the handle becoming signaled, and a missing handle
-        means the process was already gone.
-        """
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel32.OpenProcess.argtypes = [
-            wintypes.DWORD,
-            wintypes.BOOL,
-            wintypes.DWORD,
+    class _IoCounters(ctypes.Structure):
+        _fields_ = [
+            ("ReadOperationCount", ctypes.c_uint64),
+            ("WriteOperationCount", ctypes.c_uint64),
+            ("OtherOperationCount", ctypes.c_uint64),
+            ("ReadTransferCount", ctypes.c_uint64),
+            ("WriteTransferCount", ctypes.c_uint64),
+            ("OtherTransferCount", ctypes.c_uint64),
         ]
-        kernel32.OpenProcess.restype = wintypes.HANDLE
-        kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
-        kernel32.WaitForSingleObject.restype = wintypes.DWORD
-        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-        kernel32.CloseHandle.restype = wintypes.BOOL
-        handle = kernel32.OpenProcess(_SYNCHRONIZE, False, pid)
+
+    class _JobBasicLimits(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", ctypes.c_int64),
+            ("PerJobUserTimeLimit", ctypes.c_int64),
+            ("LimitFlags", wintypes.DWORD),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", wintypes.DWORD),
+            ("Affinity", ctypes.c_size_t),
+            ("PriorityClass", wintypes.DWORD),
+            ("SchedulingClass", wintypes.DWORD),
+        ]
+
+    class _JobExtendedLimits(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", _JobBasicLimits),
+            ("IoInfo", _IoCounters),
+            ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ]
+
+    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    _kernel32.OpenProcess.restype = wintypes.HANDLE
+    _kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    _kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    _kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    _kernel32.CloseHandle.restype = wintypes.BOOL
+    _kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+    _kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+    _kernel32.SetInformationJobObject.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+    ]
+    _kernel32.SetInformationJobObject.restype = wintypes.BOOL
+    _kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    _kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+    _kernel32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    _kernel32.TerminateJobObject.restype = wintypes.BOOL
+    _kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    _kernel32.TerminateProcess.restype = wintypes.BOOL
+
+    def _create_containment_job() -> int:
+        """Create a kill-on-close job object for one pseudoconsole child."""
+        job = _kernel32.CreateJobObjectW(None, None)
+        if not job:
+            raise OSError(f"CreateJobObject failed: {ctypes.get_last_error()}")
+        limits = _JobExtendedLimits()
+        limits.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if not _kernel32.SetInformationJobObject(
+            job,
+            _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+            ctypes.byref(limits),
+            ctypes.sizeof(limits),
+        ):
+            error = ctypes.get_last_error()
+            _kernel32.CloseHandle(job)
+            raise OSError(f"SetInformationJobObject failed: {error}")
+        return int(job)
+
+    def _open_containment_handle(pid: int) -> int:
+        """Open the child's real process handle for assignment and waits."""
+        handle = _kernel32.OpenProcess(
+            _SYNCHRONIZE
+            | _PROCESS_QUERY_LIMITED_INFORMATION
+            | _PROCESS_SET_QUOTA
+            | _PROCESS_TERMINATE,
+            False,
+            pid,
+        )
         if not handle:
-            return True
-        try:
-            return bool(
-                kernel32.WaitForSingleObject(handle, timeout_ms) == _WAIT_OBJECT_0
-            )
-        finally:
-            kernel32.CloseHandle(handle)
+            raise OSError(f"OpenProcess({pid}) failed: {ctypes.get_last_error()}")
+        return int(handle)
+
+    def _assign_to_job(job: int, process_handle: int) -> None:
+        if not _kernel32.AssignProcessToJobObject(job, process_handle):
+            raise OSError(f"AssignProcessToJobObject failed: {ctypes.get_last_error()}")
+
+    def _terminate_job(job: int, exit_code: int) -> None:
+        if not _kernel32.TerminateJobObject(job, exit_code):
+            raise OSError(f"TerminateJobObject failed: {ctypes.get_last_error()}")
+
+    def _terminate_process(process_handle: int, exit_code: int) -> None:
+        _kernel32.TerminateProcess(process_handle, exit_code)
+
+    def _wait_for_handle(handle: int, timeout_ms: int) -> bool:
+        """OS wait on a real handle; True once it is signaled, never a sleep."""
+        return bool(_kernel32.WaitForSingleObject(handle, timeout_ms) == _WAIT_OBJECT_0)
+
+    def _close_handle(handle: int) -> None:
+        _kernel32.CloseHandle(handle)
 
 else:
 
-    def _wait_for_child_exit(pid: int, timeout_ms: int) -> bool:
-        raise ConptyUnsupportedError(
+    def _unsupported() -> ConptyUnsupportedError:
+        return ConptyUnsupportedError(
             "the ConPTY binding requires Windows; this host has no ConPTY"
         )
+
+    def _create_containment_job() -> int:
+        raise _unsupported()
+
+    def _open_containment_handle(pid: int) -> int:
+        raise _unsupported()
+
+    def _assign_to_job(job: int, process_handle: int) -> None:
+        raise _unsupported()
+
+    def _terminate_job(job: int, exit_code: int) -> None:
+        raise _unsupported()
+
+    def _terminate_process(process_handle: int, exit_code: int) -> None:
+        raise _unsupported()
+
+    def _wait_for_handle(handle: int, timeout_ms: int) -> bool:
+        raise _unsupported()
+
+    def _close_handle(handle: int) -> None:
+        raise _unsupported()
 
 
 class ConptyChild:
     """Thin ownership wrapper around one native ConPTY pseudoconsole child."""
 
-    def __init__(self, pty: Any, pid: int) -> None:
+    def __init__(self, pty: Any, pid: int, job: int, process_handle: int) -> None:
         self._pty: Any | None = pty
         self._pid = pid
+        self._job: int | None = job
+        self._process_handle: int | None = process_handle
         self._exit_status: int | None = None
         self._lock = threading.Lock()
         self._pending_io = 0
 
     @classmethod
     def spawn(cls, argv: Sequence[str], *, rows: int, columns: int) -> ConptyChild:
-        """Spawn a child on a ConPTY pseudoconsole with explicit dimensions."""
+        """Spawn a contained child on a ConPTY pseudoconsole.
+
+        The child is assigned to a fresh kill-on-close job object before the
+        binding is returned. If containment cannot be established, the child
+        is terminated and the spawn fails closed: no uncontained session is
+        ever handed out.
+        """
         if os.name != "nt":
             raise ConptyUnsupportedError(
                 "the ConPTY binding requires Windows; this host has no ConPTY"
@@ -136,7 +260,26 @@ class ConptyChild:
         )
         if not pty.spawn(command, cmdline=cmdline, cwd=os.getcwd(), env=environment):
             raise OSError(f"ConPTY spawn reported failure for {command}")
-        return cls(pty, int(pty.pid))
+        pid = int(pty.pid)
+        job: int | None = None
+        process_handle: int | None = None
+        try:
+            job = _create_containment_job()
+            process_handle = _open_containment_handle(pid)
+            _assign_to_job(job, process_handle)
+        except OSError as error:
+            if process_handle is not None:
+                _terminate_process(process_handle, FORCED_TERMINATION_EXIT_CODE)
+                _close_handle(process_handle)
+            if job is not None:
+                _close_handle(job)
+            # Drop the native reference before raising so the exception
+            # traceback cannot pin the pseudoconsole handles.
+            del pty
+            raise OSError(
+                f"failed to contain ConPTY child {pid} in a job object"
+            ) from error
+        return cls(pty, pid, job, process_handle)
 
     @property
     def pid(self) -> int:
@@ -201,14 +344,22 @@ class ConptyChild:
         return False if pty is None else bool(pty.isalive())
 
     def close(self, *, force: bool) -> None:
-        """Release native ownership; with ``force``, terminate a live child.
+        """Release native ownership; with ``force``, terminate the child's tree.
 
-        The forced path terminates the child, waits on its real process
-        handle, and captures the native exit record before releasing the
-        handles. A release-only close (``force=False``) of a live child
-        records no exit status — the binding never observed a native exit
-        record — while the handle release itself makes ConPTY terminate the
-        attached client, which callers can observe at the OS level.
+        The forced path terminates the entire job — the child and every
+        descendant — atomically with ``TerminateJobObject`` (uniform exit
+        code :data:`FORCED_TERMINATION_EXIT_CODE`), waits on the child's real
+        process handle, and captures the native exit record before releasing
+        the handles.
+
+        A release-only close (``force=False``) of a live child records no
+        exit status — the binding never observed a native exit record — while
+        the pseudoconsole handle release itself makes ConPTY terminate the
+        attached client, which callers can observe at the OS level. The close
+        waits for that termination on the child's process handle and then
+        closes the job handle, whose kill-on-close limit sweeps any remaining
+        descendants; the no-kill path therefore cannot leak a process tree
+        either.
 
         Close first unpublishes the native object so no new I/O can start,
         then cancels pending native I/O until every in-flight read and write
@@ -222,21 +373,46 @@ class ConptyChild:
             if pty is None:
                 return
             self._pty = None
+            job = self._job
+            process_handle = self._process_handle
+            self._job = None
+            self._process_handle = None
+        child_exited = True
         try:
-            if force and pty.isalive():
-                # The child can exit between the liveness check and the kill;
-                # a kill refused for an already-gone process must not abort
-                # the close, and the handle wait below stays authoritative.
-                with contextlib.suppress(OSError):
-                    os.kill(self._pid, signal.SIGTERM)
-                if not _wait_for_child_exit(self._pid, _CHILD_EXIT_WAIT_MS):
-                    raise OSError(
-                        f"child process {self._pid} did not terminate on forced close"
-                    )
-            if not pty.isalive():
-                self._capture_exit_status(pty)
+            try:
+                if force and pty.isalive():
+                    if job is not None:
+                        _terminate_job(job, FORCED_TERMINATION_EXIT_CODE)
+                    if process_handle is not None and not _wait_for_handle(
+                        process_handle, _CHILD_EXIT_WAIT_MS
+                    ):
+                        raise OSError(
+                            f"child process {self._pid} did not terminate on"
+                            " forced close"
+                        )
+                if not pty.isalive():
+                    self._capture_exit_status(pty)
+            finally:
+                self._cancel_pending_io(pty)
+                # Release the binding's native reference deterministically;
+                # the destructor closes the pseudoconsole once the last
+                # in-flight frame unwinds.
+                del pty
+            if not force and process_handle is not None:
+                child_exited = _wait_for_handle(process_handle, _CHILD_EXIT_WAIT_MS)
         finally:
-            self._cancel_pending_io(pty)
+            if job is not None:
+                # Kill-on-close sweeps every remaining job member, so even a
+                # failed graceful path cannot leak the tree.
+                _close_handle(job)
+            if not child_exited and process_handle is not None:
+                child_exited = _wait_for_handle(process_handle, _CHILD_EXIT_WAIT_MS)
+            if process_handle is not None:
+                _close_handle(process_handle)
+        if not child_exited:
+            raise OSError(
+                f"child process {self._pid} did not terminate after handle release"
+            )
 
     def _cancel_pending_io(self, pty: Any) -> None:
         """Cancel native I/O until no read or write frame can block on ``pty``."""
