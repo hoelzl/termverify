@@ -1,8 +1,8 @@
 # Terminal Adapter Dependency and Verification Decision
 
 - **Status:** accepted — decided 2026-07-17 under the maintainer's delegated
-  autonomous authority, with independent adversarial agent review of the exact
-  candidate; this document is the "separately accepted dependency and
+  autonomous authority; the exact candidate passed independent adversarial
+  agent review before merge; this document is the "separately accepted dependency and
   verification decision" that the pre-release boundary hardening handover
   requires before any spike promotion or `pywinpty` dependency.
 - **Issue:** [#102](https://github.com/hoelzl/termverify/issues/102)
@@ -36,8 +36,9 @@ silently and never fabricates a receipt.
   child creation, initial dimensions, echoed input, a marker-bounded 1 MiB
   output burst on a dedicated reader thread, explicit resize, forced close,
   and an integer exit status on Windows 11 x64 across CPython 3.12–3.14.
-- Documented rejection trail: stdlib `pty` cannot work on Windows (no
-  `termios`, `os.openpty`, or `os.forkpty`); the raw `ctypes`
+- Documented rejection trail: stdlib `pty` cannot work on Windows (CPython
+  documents `pty` and `termios` as Unix-only, confirmed on the spike host,
+  which lacked `os.openpty` and `os.forkpty`); the raw `ctypes`
   STARTUPINFOEX/attribute-list surface proved too large and unsafe for a
   maintained binding and its prototype failed to attach the child; legacy
   WinPTY contradicts the ConPTY-first boundary decision.
@@ -45,9 +46,11 @@ silently and never fabricates a receipt.
   `pexpect`'s pty path) is POSIX-only. If implementation-time evidence
   invalidates `pywinpty`, selecting a replacement requires amending this
   document, not silent substitution.
-- `pywinpty` is MIT-licensed, actively maintained by the Spyder project, and
-  ships binary wheels; exact wheel coverage for every supported CPython and
-  architecture is verified, not assumed, in the plan below.
+- `pywinpty` is MIT-licensed (PyPI classifier and repository license),
+  maintained by a Spyder core developer in the `andfoy/pywinpty` repository,
+  and ships binary wheels; the single-maintainer bus factor is accepted risk,
+  and exact wheel coverage for every supported CPython and architecture is
+  verified, not assumed, in the plan below.
 
 ## Verification plan
 
