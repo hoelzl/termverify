@@ -8,9 +8,17 @@ source of truth for volatile work state.
 ## Active
 
 - [Phase 1 readiness hardening handover](phase-1-readiness-hardening-handover.md)
-  — **active**; the deterministic direct and partial terminal-feasibility slices
-  are reviewed, while resource/fixture scope, installed-schema, and
-  release-control dispositions still block the Phase 2 transition.
+  — **active**; the owner accepted the complete scope disposition, and
+  deterministic transcript resource governance plus the amended integrated gate
+  remain before the reviewed supersession transition. Phase 2 is inactive.
+
+## Draft
+
+- [Pre-release boundary hardening handover](pre-release-boundary-hardening-handover.md)
+  — **draft**; accepts the named deferred vocabulary, correlation, containment,
+  schema-distribution, terminal-production, and release-governance boundaries
+  only after the active Phase 1 handover passes its resource/amended gate and is
+  superseded in a later reviewed transition.
 
 ## Archive
 

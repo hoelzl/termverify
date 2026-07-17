@@ -249,8 +249,9 @@ PR #45 updated the v1 lifecycle validator and fixtures to enforce:
 These accepted inception-v1 lifecycle corrections add no generic member and do
 not authorize exhaustive schema work. PRs #47/#49 added the reviewed immutable
 contract and receipts; PR #51 added deterministic direct execution. The active
-Phase 1 handover still gates stable runtime publication and Phase 2 on resource,
-fixture, installed-schema, and release-control dispositions.
+Phase 1 handover now retains deterministic transcript resource governance and an
+amended behavior-based fixture gate. Installed-schema and release controls move
+to the draft pre-release successor; Phase 2 remains separately gated.
 
 ## Deferred decisions
 
