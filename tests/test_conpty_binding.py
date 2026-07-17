@@ -79,12 +79,31 @@ print("TV_UNREACHED", flush=True)
 
 # Deliberately spawning child: starts a long-lived grandchild, reports its
 # pid, then blocks. Tree-teardown evidence must terminate both processes.
+# The grandchild inherits the child's console, so pseudoconsole teardown can
+# reach it; the detached variant below isolates the job-object sweep.
 _SPAWNING_CHILD: Final = """\
 import subprocess
 import sys
 
 grand = subprocess.Popen(
     [sys.executable, "-I", "-c", "import time; time.sleep(300)"],
+)
+print(f"TV_GRANDCHILD:{grand.pid}", flush=True)
+print("TV_READY", flush=True)
+sys.stdin.readline()
+print("TV_UNREACHED", flush=True)
+"""
+
+# Variant whose grandchild runs with DETACHED_PROCESS: it has no console, so
+# closing the pseudoconsole cannot terminate it. Only the kill-on-close job
+# sweep can, which is exactly what its test isolates.
+_DETACHED_SPAWNING_CHILD: Final = """\
+import subprocess
+import sys
+
+grand = subprocess.Popen(
+    [sys.executable, "-I", "-c", "import time; time.sleep(300)"],
+    creationflags=subprocess.DETACHED_PROCESS,
 )
 print(f"TV_GRANDCHILD:{grand.pid}", flush=True)
 print("TV_READY", flush=True)
@@ -430,13 +449,15 @@ def test_forced_close_terminates_process_tree_at_os_level() -> None:
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
-def test_release_only_close_sweeps_descendants_via_job_close() -> None:
-    """Item 4: releasing ownership cannot leak descendants.
+def test_release_only_close_leaves_no_console_attached_descendant() -> None:
+    """Item 4: releasing ownership leaves no console-attached process behind.
 
-    The direct child still dies of the pseudoconsole handle release
-    (``STATUS_CONTROL_C_EXIT``, slice-2 evidence unchanged); the grandchild is
-    then terminated by the kill-on-close job releasing with the binding, so
-    even the no-kill close path leaves no process behind.
+    The direct child dies of the pseudoconsole handle release
+    (``STATUS_CONTROL_C_EXIT``, slice-2 evidence unchanged). The grandchild
+    here inherits the child's console, so the same pseudoconsole teardown
+    terminates it with the same status — this test deliberately does NOT
+    attribute the grandchild's death to the job sweep; the console-detached
+    test below isolates that mechanism.
     """
     child = _spawn(_SPAWNING_CHILD)
     drain = _Drain(child)
@@ -459,9 +480,83 @@ def test_release_only_close_sweeps_descendants_via_job_close() -> None:
         drain.join()
 
     assert child_code == _STATUS_CONTROL_C_EXIT
-    assert grand_code is not None
+    assert grand_code == _STATUS_CONTROL_C_EXIT
     assert child.exit_status is None
     assert not child.is_alive()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_release_only_close_job_sweep_kills_console_detached_descendant() -> None:
+    """Item 4: the kill-on-close job sweep, isolated from console teardown.
+
+    The grandchild runs with ``DETACHED_PROCESS``, so it has no console and
+    closing the pseudoconsole cannot terminate it — the only mechanism that
+    can is the kill-on-close job handle released by ``close(force=False)``.
+    Its OS-observed death is therefore attribution for the sweep itself, the
+    guarantee that also covers abrupt owner death. The sweep terminates job
+    members with exit code 0.
+    """
+    child = _spawn(_DETACHED_SPAWNING_CHILD)
+    drain = _Drain(child)
+    child_handle = _open_process_handle(child.pid)
+    grand_handle: int | None = None
+    try:
+        grand_handle = _open_process_handle(_grandchild_pid(drain))
+        assert child.is_alive()
+
+        child.close(force=False)
+
+        child_code = _wait_for_os_exit_code(child_handle, _OS_WAIT_TIMEOUT_MS)
+        grand_code = _wait_for_os_exit_code(grand_handle, _OS_WAIT_TIMEOUT_MS)
+    finally:
+        child.close(force=True)
+        if grand_handle is not None:
+            _terminate_process(grand_handle)
+            _close_process_handle(grand_handle)
+        _close_process_handle(child_handle)
+        drain.join()
+
+    assert child_code == _STATUS_CONTROL_C_EXIT
+    assert grand_code == 0
+    assert child.exit_status is None
+    assert not child.is_alive()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_spawn_containment_failure_terminates_child_and_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Item 4: a spawn that cannot be contained never hands out a session.
+
+    Containment assignment is fault-injected to fail; the spawn must raise
+    and the already-created child must be dead, proven by an OS handle wait
+    on a handle opened while the child was still alive.
+    """
+    import termverify._conpty as conpty_module
+
+    observed: dict[str, int] = {}
+    real_open = conpty_module._open_containment_handle
+
+    def observing_open(pid: int) -> int:
+        observed["handle"] = _open_process_handle(pid)
+        return real_open(pid)
+
+    def failing_assign(job: int, process_handle: int) -> None:
+        raise OSError("injected containment failure")
+
+    monkeypatch.setattr(conpty_module, "_open_containment_handle", observing_open)
+    monkeypatch.setattr(conpty_module, "_assign_to_job", failing_assign)
+    try:
+        with pytest.raises(OSError, match="failed to contain ConPTY child"):
+            _spawn(_BLOCKING_CHILD)
+        assert "handle" in observed
+        exit_code = _wait_for_os_exit_code(observed["handle"], _OS_WAIT_TIMEOUT_MS)
+    finally:
+        if "handle" in observed:
+            _terminate_process(observed["handle"])
+            _close_process_handle(observed["handle"])
+
+    assert exit_code == FORCED_TERMINATION_EXIT_CODE
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")

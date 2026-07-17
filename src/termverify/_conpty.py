@@ -79,6 +79,7 @@ if sys.platform == "win32":
     _PROCESS_SET_QUOTA = 0x0100
     _PROCESS_TERMINATE = 0x0001
     _WAIT_OBJECT_0 = 0
+    _WAIT_TIMEOUT = 0x102
     _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
     _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
 
@@ -182,8 +183,19 @@ if sys.platform == "win32":
         _kernel32.TerminateProcess(process_handle, exit_code)
 
     def _wait_for_handle(handle: int, timeout_ms: int) -> bool:
-        """OS wait on a real handle; True once it is signaled, never a sleep."""
-        return bool(_kernel32.WaitForSingleObject(handle, timeout_ms) == _WAIT_OBJECT_0)
+        """OS wait on a real handle; True once it is signaled, never a sleep.
+
+        A wait failure is a real error, not a timeout, and is raised as such
+        so it cannot masquerade as "the process did not terminate".
+        """
+        result = int(_kernel32.WaitForSingleObject(handle, timeout_ms))
+        if result == _WAIT_OBJECT_0:
+            return True
+        if result == _WAIT_TIMEOUT:
+            return False
+        raise OSError(
+            f"WaitForSingleObject failed ({result:#x}): {ctypes.get_last_error()}"
+        )
 
     def _close_handle(handle: int) -> None:
         _kernel32.CloseHandle(handle)
@@ -381,8 +393,11 @@ class ConptyChild:
         try:
             try:
                 if force and pty.isalive():
-                    if job is not None:
-                        _terminate_job(job, FORCED_TERMINATION_EXIT_CODE)
+                    if job is None:
+                        # Defensive: unreachable on the only construction
+                        # path; failing fast beats waiting on a live child.
+                        raise OSError("no containment job to terminate")
+                    _terminate_job(job, FORCED_TERMINATION_EXIT_CODE)
                     if process_handle is not None and not _wait_for_handle(
                         process_handle, _CHILD_EXIT_WAIT_MS
                     ):
@@ -393,11 +408,15 @@ class ConptyChild:
                 if not pty.isalive():
                     self._capture_exit_status(pty)
             finally:
-                self._cancel_pending_io(pty)
-                # Release the binding's native reference deterministically;
-                # the destructor closes the pseudoconsole once the last
-                # in-flight frame unwinds.
-                del pty
+                try:
+                    self._cancel_pending_io(pty)
+                finally:
+                    # Release the binding's native reference even when the
+                    # cancel loop raises: the propagating exception's
+                    # traceback must never pin the native object. The
+                    # destructor closes the pseudoconsole once the last
+                    # in-flight frame unwinds.
+                    del pty
             if not force and process_handle is not None:
                 child_exited = _wait_for_handle(process_handle, _CHILD_EXIT_WAIT_MS)
         finally:

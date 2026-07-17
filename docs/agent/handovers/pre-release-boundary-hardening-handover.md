@@ -279,7 +279,14 @@ termination on the child's process handle, then closes the job handle so
 the kill-on-close limit sweeps any remaining descendants — and the same
 sweep fires if the owning process dies abruptly. Durable Windows-matrix
 tests with a deliberately spawning child prove both paths by OS
-process-handle waits on the child and the grandchild. Disclosed boundary:
+process-handle waits on the child and the grandchild, with the two kill
+mechanisms attributed separately: a console-attached grandchild dies of the
+pseudoconsole teardown itself (`STATUS_CONTROL_C_EXIT`), while a
+console-detached grandchild — which the pseudoconsole cannot reach — is
+killed only by the job sweep (exit code 0), isolating the sweep as its own
+evidenced mechanism. A fault-injected containment failure at spawn is also
+proven fail-closed: the spawn raises and the already-created child is
+OS-observed terminated. Disclosed boundary:
 job assignment happens immediately after `CreateProcess` returns, so a
 process the child starts within that microseconds-wide window would fall
 outside the job; the binding documents this rather than claiming pre-start
