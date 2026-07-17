@@ -2,13 +2,13 @@
 
 > **Status:** delivered by
 > [PR #57](https://github.com/hoelzl/termverify/pull/57) on 2026-07-16. This
-> prompt is retained as the Slice 1 execution record; continue from the active
+> prompt is retained as the Slice 1 execution record; consult the archived
 > handover and ordered plan rather than rerunning it.
 
 ## Assignment
 
-Begin implementation of the active
-[`adversarial-review-remediation-handover.md`](../handovers/adversarial-review-remediation-handover.md)
+Begin implementation of the then-active
+[`adversarial-review-remediation-handover.md`](../handovers/archive/adversarial-review-remediation-handover.md)
 from current `main`. Do not stop after restating the plan: reproduce and deliver
 **Slice 1, the acronym-prefixed sensitive-key security fix**, as one complete,
 reviewable TDD change. Stop only at a real blocker or the candidate-bound review
@@ -48,7 +48,7 @@ acronym-fix PR**.
 3. `docs/knowledge/index.md`
 4. `docs/knowledge/evidence-governance.md`
 5. `docs/developer-guide/agent-workflow.md`
-6. `docs/agent/handovers/adversarial-review-remediation-handover.md`
+6. `docs/agent/handovers/archive/adversarial-review-remediation-handover.md`
 7. `.hermes/plans/2026-07-16_215137-adversarial-review-remediation.md`
 8. Both `docs/agent/design/adversarial-correctness-and-code-quality-review-*-2026-07-16.md` reports
 9. `src/termverify/evidence.py`

@@ -27,7 +27,7 @@ Sources:
 
 - `docs/agent/design/adversarial-correctness-and-code-quality-review-gpt-5.6-sol-2026-07-16.md`
 - `docs/agent/design/adversarial-correctness-and-code-quality-review-opus-4.8-2026-07-16.md`
-- `docs/agent/handovers/adversarial-review-remediation-handover.md`
+- `docs/agent/handovers/archive/adversarial-review-remediation-handover.md`
 
 ### Reconciled disposition
 
