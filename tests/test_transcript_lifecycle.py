@@ -75,6 +75,68 @@ def test_canonical_invalid_lifecycle_fixture_is_rejected(
         parse_transcript((FIXTURES / "invalid" / name).read_bytes())
 
 
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("record-kind", "record kind is not defined by v1"),
+        ("run-identity", "record run_id or id is invalid"),
+        ("run-config", "run.started seed is invalid"),
+        ("terminal", "run.finished exit is invalid"),
+        ("negotiation", "capability results are out of order"),
+        ("input", "input at_ms does not match the manual clock"),
+        ("diagnostic", "diagnostic payload is invalid"),
+        ("observation", "observation ui focus is not a region"),
+        ("execution-epoch", "input epoch must close before another input"),
+        ("evidence-time", "observation at_ms does not match the manual clock"),
+        ("exit-coherence", "observation process exit does not match run.finished exit"),
+    ],
+)
+def test_lifecycle_phase_mutations_retain_diagnostic_category(
+    mutation: str, message: str
+) -> None:
+    records = deepcopy(BASIC)
+    if mutation == "record-kind":
+        records[9]["kind"] = "future.record"
+    elif mutation == "run-identity":
+        records[1]["run_id"] = "another-run"
+    elif mutation == "run-config":
+        started_payload = cast(dict[str, JsonValue], records[0]["payload"])
+        config = cast(dict[str, JsonValue], started_payload["config"])
+        config["seed"] = "01"
+    elif mutation == "terminal":
+        terminal = cast(dict[str, JsonValue], records[-1]["payload"])
+        terminal["exit"] = {"kind": "code", "value": True}
+    elif mutation == "negotiation":
+        capability = cast(dict[str, JsonValue], records[1]["payload"])
+        capability["constraint"] = "clock"
+    elif mutation == "input":
+        input_payload = cast(dict[str, JsonValue], records[9]["payload"])
+        input_payload["at_ms"] = 1
+    elif mutation == "diagnostic":
+        diagnostic = _diagnostic()
+        cast(dict[str, JsonValue], diagnostic["payload"])["code"] = ""
+        records.insert(10, diagnostic)
+    elif mutation == "observation":
+        observation = cast(dict[str, JsonValue], records[10]["payload"])
+        cast(dict[str, JsonValue], observation["ui"])["focus"] = "missing"
+    elif mutation == "execution-epoch":
+        records.insert(10, deepcopy(records[9]))
+    elif mutation == "evidence-time":
+        observation = cast(dict[str, JsonValue], records[10]["payload"])
+        observation["at_ms"] = 1
+    else:
+        observation = cast(dict[str, JsonValue], records[10]["payload"])
+        observation["process"] = {
+            "state": "exited",
+            "exit": {"kind": "code", "value": 1},
+        }
+
+    with pytest.raises(TranscriptValidationError) as exc_info:
+        serialize_transcript(_reindex(records))
+
+    assert str(exc_info.value) == message
+
+
 @st.composite
 def _legal_execution_transcripts(
     draw: st.DrawFn,
