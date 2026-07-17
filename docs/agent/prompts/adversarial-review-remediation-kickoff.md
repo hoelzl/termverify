@@ -49,7 +49,7 @@ acronym-fix PR**.
 4. `docs/knowledge/evidence-governance.md`
 5. `docs/developer-guide/agent-workflow.md`
 6. `docs/agent/handovers/archive/adversarial-review-remediation-handover.md`
-7. `.hermes/plans/2026-07-16_215137-adversarial-review-remediation.md`
+7. `docs/agent/plans/2026-07-16_215137-adversarial-review-remediation.md`
 8. Both `docs/agent/design/adversarial-correctness-and-code-quality-review-*-2026-07-16.md` reports
 9. `src/termverify/evidence.py`
 10. `scripts/validate_evidence_governance.py`

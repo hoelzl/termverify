@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv --no-config sync:*)",
+      "Bash(uv --no-config run pytest:*)",
+      "Bash(uv --no-config run ruff:*)",
+      "Bash(uv --no-config run mypy:*)",
+      "Bash(uv --no-config run pre-commit:*)",
+      "Bash(uv --no-config run python scripts/:*)",
+      "Bash(uv --no-config build:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git worktree list:*)"
+    ]
+  }
+}

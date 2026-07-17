@@ -39,6 +39,7 @@ TermVerify is a Python library and reference tooling for verifying autonomous te
 | Developer guides and operating workflows | `docs/developer-guide/` |
 | Durable architecture, protocol, terminology, and verification knowledge | `docs/knowledge/` (OKF bundle) |
 | Agent design decisions, reuse assessments, and handovers | `docs/agent/design/` and `docs/agent/handovers/` |
+| Durable implementation plans for accepted initiatives | `docs/agent/plans/` |
 | Reusable agent playbooks | `skills/` only after their workflow is proven and stable |
 
 `docs/knowledge/` follows OKF: `index.md` files are navigation-only; every other Markdown document has YAML frontmatter with at least a `type` field.
@@ -69,3 +70,7 @@ worktrees; it defines the required isolation, setup, and cleanup rules.
 ## Agent-Harness Compatibility
 
 This file is portable by design. Do not rely on a vendor-specific instruction import, plugin, model, or tool. Hermes-specific or other harness-specific conveniences belong in optional integrations, never in the required build/test path.
+
+- `AGENTS.md` and the documents it references are the only authoritative agent instructions. Harness entry points (for example the root `CLAUDE.md` for Claude Code) must stay thin pointers to this file and may add only harness-mechanics notes, never project knowledge.
+- Write durable knowledge — decisions, plans, handovers, workflow rules — to the repository locations in the Documentation Placement table. Never leave it only in a harness's private memory, state directory, or session context.
+- Harness state directories (`.hermes/`, `.claude/`) are local-only and gitignored, except deliberately shared harness configuration such as `.claude/settings.json`. The authoritative copy of any plan or decision they contain must live under `docs/agent/`.
