@@ -2,10 +2,9 @@
 
 ## Handover metadata
 
-- **Status:** draft — the maintainer accepted the scope transfer on 2026-07-17,
-  but this successor does not become active until the remaining Phase 1
-  transcript-resource slice and amended completion gates pass and the reviewed
-  supersession/archive transition activates it.
+- **Status:** active — effective when the reviewed transition resolving issue
+  #87 merges. The predecessor's deterministic transcript-resource and amended
+  completion gates passed independent integrated review. Phase 2 is not active.
 - **Owner:** project maintainer
 - **Created:** 2026-07-17
 - **Updated:** 2026-07-17
@@ -13,13 +12,14 @@
   compatibility, enforcement, distribution, security, or release claims require
   executable evidence and independent human-readable review.
 - **Predecessor:**
-  [Phase 1 readiness hardening handover](phase-1-readiness-hardening-handover.md)
-  (active until the later supersession transition)
+  [Phase 1 readiness hardening handover](archive/phase-1-readiness-hardening-handover.md)
+  (superseded and archived in the same transition)
 - **Successor:** none
-- **Activation:** only after the predecessor's deterministic transcript-resource
-  limits and amended fixture/schema/workflow completion gates pass, an exact
-  candidate receives independent review, and the predecessor is marked
-  `superseded` and archived in the same reviewed transition.
+- **Activation:** authorized by the independent integrated review of exact merged
+  `main` at `806372efa3897b7c2d88c2f58b0c8a9abe9cb401`, tree
+  `bbf85b7b4ccae7a97bbc81016f70b25fe2be997e`, and effective when the separately
+  reviewed documentation transition resolving issue #87 merges and archives the
+  predecessor.
 - **Completion:** every transferred criterion below is implemented and verified,
   or is moved intact through another explicit owner-reviewed successor boundary;
   no unsupported semantic, containment, terminal, schema-publication, or release
@@ -27,17 +27,17 @@
 
 ## Purpose and boundaries
 
-This draft successor preserves the criteria that the maintainer explicitly
+This active successor preserves the criteria that the maintainer explicitly
 removed from the current Phase 1 implementation boundary on 2026-07-17. The
 transfer is scope governance, not evidence that any criterion is complete. It
 also does not activate Phase 2, transcript replay/comparison, sensitive evidence
 retention, behavioral baselines, artifact publication, or a production terminal
 adapter.
 
-The predecessor remains active for one implementation class: deterministic,
-fail-closed transcript byte, line, record-count, nesting, and structured-value
-limits with parser/serializer symmetry. This successor must not absorb or weaken
-that work before the predecessor's reviewed supersession transition.
+The predecessor completed deterministic, fail-closed transcript byte, line,
+record-count, nesting, and structured-value limits with parser/serializer
+symmetry before supersession. This successor does not absorb, weaken, or reopen
+that completed boundary.
 
 ## Accepted transferred scope
 
@@ -105,8 +105,8 @@ regression:
 
 Each workstream needs its own focused issue, branch, external sibling worktree,
 TDD evidence where behavior changes, full relevant validation, and exact-candidate
-independent review. Workstreams may proceed only after this handover becomes
-active and only when their public semantics and non-goals are accepted.
+independent review. A workstream may proceed only when its public semantics and
+non-goals are accepted.
 
 ### 1. Deterministic vocabulary and configuration semantics
 
@@ -161,10 +161,9 @@ not production evidence.
 
 ## Transition rules
 
-- Keep **draft** while the predecessor remains active.
-- Mark **active** only in the same reviewed change that marks the predecessor
-  `superseded`, archives it, updates the index, and proves the predecessor's
-  resource/amended-gate boundary passed.
+- This handover is **active** effective when the reviewed transition resolving
+  issue #87 marks the predecessor `superseded`, archives it, and updates the
+  index in the same merge.
 - Mark **blocked** only when all safe work depends on an unresolved owner decision,
   unavailable independent review, or external enforcement evidence.
 - Mark **complete** only when every transferred criterion is implemented and the

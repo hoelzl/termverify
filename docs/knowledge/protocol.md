@@ -10,12 +10,11 @@ tags: [protocol, jsonl, terminal, observations, determinism]
 This document defines the reviewed **design** for the first intended external
 protocol: `termverify.transcript/v1`. The repository contains a canonical codec,
 semantic lifecycle validator, non-exhaustive schema aid, and reviewed fixture and
-property coverage. The active Phase 1 handover now retains deterministic
-transcript resource governance through the fixed limits below and retains an
-amended behavior-based fixture gate. Installed-schema and release controls
-transfer intact to the draft pre-release successor before the first supported
-external artifact. Neither that transfer nor the current runtime activates Phase
-2.
+property coverage. The archived Phase 1 handover completed deterministic
+transcript resource governance through the fixed limits below and its amended
+behavior-based fixture gate. Installed-schema and release controls remain intact
+in the active pre-release successor before the first supported external artifact.
+Neither that transfer nor the current runtime activates Phase 2.
 
 ## Schema and runtime authority
 

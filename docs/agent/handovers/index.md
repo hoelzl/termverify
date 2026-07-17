@@ -7,21 +7,22 @@ source of truth for volatile work state.
 
 ## Active
 
-- [Phase 1 readiness hardening handover](phase-1-readiness-hardening-handover.md)
-  — **active**; the owner accepted the complete scope disposition, and
-  deterministic transcript resource governance plus the amended integrated gate
-  remain before the reviewed supersession transition. Phase 2 is inactive.
+- [Pre-release boundary hardening handover](pre-release-boundary-hardening-handover.md)
+  — **active**; accepts the transferred vocabulary, correlation, containment,
+  schema-distribution, terminal-production, and release-governance boundaries.
+  Each remains unsupported until separately accepted and implemented. Phase 2
+  is inactive.
 
 ## Draft
 
-- [Pre-release boundary hardening handover](pre-release-boundary-hardening-handover.md)
-  — **draft**; accepts the named deferred vocabulary, correlation, containment,
-  schema-distribution, terminal-production, and release-governance boundaries
-  only after the active Phase 1 handover passes its resource/amended gate and is
-  superseded in a later reviewed transition.
+None.
 
 ## Archive
 
+- [Phase 1 readiness hardening handover](archive/phase-1-readiness-hardening-handover.md)
+  — **superseded**; its amended completion boundary passed independent integrated
+  review, and every transferred criterion moved intact to the active Pre-release
+  Boundary Hardening successor. Phase 2 remains inactive.
 - [Adversarial review remediation handover](archive/adversarial-review-remediation-handover.md)
   — **complete**; Slices 1–8 and every accepted source-review disposition were
   integrated, reconciled, and accepted by final independent review through PR
