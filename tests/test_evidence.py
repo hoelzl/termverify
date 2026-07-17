@@ -1,16 +1,25 @@
 from __future__ import annotations
 
+import os
 from copy import deepcopy
 from pathlib import Path
+from tempfile import NamedTemporaryFile
+from types import TracebackType
+from typing import Literal, Protocol, Self, cast
 
 import pytest
 
+import termverify.evidence as evidence_module
 from termverify.evidence import (
     JsonValue,
     persist_transcript_evidence,
     redact_evidence,
 )
-from termverify.transcript import TranscriptValidationError, parse_transcript
+from termverify.transcript import (
+    TranscriptValidationError,
+    parse_transcript,
+    serialize_transcript,
+)
 
 TRANSCRIPT_FIXTURE = Path("tests/fixtures/transcripts/v1/valid/basic.jsonl")
 FAILED_TRANSCRIPT_FIXTURE = Path(
@@ -19,6 +28,86 @@ FAILED_TRANSCRIPT_FIXTURE = Path(
 UNSUPPORTED_TRANSCRIPT_FIXTURE = Path(
     "tests/fixtures/transcripts/v1/valid/unsupported-network.jsonl"
 )
+
+
+_StreamFailure = Literal["write", "short-write", "close", "close-held"]
+
+
+class _FailingTemporaryStream:
+    def __init__(
+        self,
+        stream: _TemporaryStream,
+        failure: _StreamFailure,
+    ) -> None:
+        self._stream = stream
+        self._failure = failure
+        self.name = stream.name
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        if self._failure == "close-held" and exc_value is None:
+            raise OSError("simulated held-open close failure")
+        self._stream.close()
+        if self._failure == "close" and exc_value is None:
+            raise OSError("simulated close failure")
+
+    def write(self, serialized: bytes) -> int:
+        if self._failure == "write":
+            self._stream.write(serialized[:1])
+            raise OSError("simulated write failure")
+        if self._failure == "short-write":
+            return self._stream.write(serialized[:1])
+        return self._stream.write(serialized)
+
+    def release(self) -> None:
+        self._stream.close()
+
+
+class _TemporaryStream(Protocol):
+    name: str
+
+    def write(self, serialized: bytes) -> int: ...
+
+    def close(self) -> None: ...
+
+
+def _install_failing_temporary_stream(
+    monkeypatch: pytest.MonkeyPatch,
+    failure: _StreamFailure,
+) -> list[_FailingTemporaryStream]:
+    created: list[_FailingTemporaryStream] = []
+
+    def failing_temporary_file(
+        *,
+        dir: str | os.PathLike[str] | None,
+        prefix: str,
+        suffix: str,
+        delete: bool,
+    ) -> _FailingTemporaryStream:
+        stream = _FailingTemporaryStream(
+            cast(
+                _TemporaryStream,
+                NamedTemporaryFile(  # noqa: SIM115 - wrapper owns the stream
+                    dir=dir,
+                    prefix=prefix,
+                    suffix=suffix,
+                    delete=delete,
+                ),
+            ),
+            failure,
+        )
+        created.append(stream)
+        return stream
+
+    monkeypatch.setattr(evidence_module, "NamedTemporaryFile", failing_temporary_file)
+    return created
 
 
 def _resequence(records: list[dict[str, JsonValue]]) -> None:
@@ -61,6 +150,192 @@ def test_persist_transcript_evidence_preserves_replay_subject(
     persisted_started = persisted[0]["payload"]
     assert isinstance(persisted_started, dict)
     assert persisted_started["subject"] == subject
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_safe_persistence_preserves_destination_state_when_replace_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    existing: bool,
+) -> None:
+    records = parse_transcript(TRANSCRIPT_FIXTURE.read_bytes())
+    destination = tmp_path / "transcript.jsonl"
+    previous = b"previous evidence\n"
+    if existing:
+        destination.write_bytes(previous)
+
+    def fail_replace(
+        source: str | bytes | os.PathLike[str],
+        target: str | bytes | os.PathLike[str],
+    ) -> None:
+        raise OSError("simulated replace failure")
+
+    monkeypatch.setattr(os, "replace", fail_replace)
+
+    with pytest.raises(OSError, match="simulated replace failure"):
+        persist_transcript_evidence(destination, records)
+
+    if existing:
+        assert destination.read_bytes() == previous
+    else:
+        assert not destination.exists()
+    assert list(tmp_path.iterdir()) == ([destination] if existing else [])
+
+
+@pytest.mark.parametrize("failure", ["write", "close"])
+@pytest.mark.parametrize("existing", [False, True])
+def test_safe_persistence_cleans_temporary_after_stream_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Literal["write", "close"],
+    existing: bool,
+) -> None:
+    records = parse_transcript(TRANSCRIPT_FIXTURE.read_bytes())
+    destination = tmp_path / "transcript.jsonl"
+    previous = b"previous evidence\n"
+    if existing:
+        destination.write_bytes(previous)
+    _install_failing_temporary_stream(monkeypatch, failure)
+
+    with pytest.raises(OSError, match=f"simulated {failure} failure"):
+        persist_transcript_evidence(destination, records)
+
+    if existing:
+        assert destination.read_bytes() == previous
+    else:
+        assert not destination.exists()
+    assert list(tmp_path.iterdir()) == ([destination] if existing else [])
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_safe_persistence_rejects_short_temporary_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    existing: bool,
+) -> None:
+    records = parse_transcript(TRANSCRIPT_FIXTURE.read_bytes())
+    destination = tmp_path / "transcript.jsonl"
+    previous = b"previous evidence\n"
+    if existing:
+        destination.write_bytes(previous)
+    _install_failing_temporary_stream(monkeypatch, "short-write")
+
+    with pytest.raises(OSError, match="short temporary write"):
+        persist_transcript_evidence(destination, records)
+
+    if existing:
+        assert destination.read_bytes() == previous
+    else:
+        assert not destination.exists()
+    assert list(tmp_path.iterdir()) == ([destination] if existing else [])
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_safe_persistence_preserves_primary_error_when_cleanup_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    existing: bool,
+) -> None:
+    records = parse_transcript(TRANSCRIPT_FIXTURE.read_bytes())
+    destination = tmp_path / "transcript.jsonl"
+    previous = b"previous evidence\n"
+    if existing:
+        destination.write_bytes(previous)
+    unlink = Path.unlink
+
+    def fail_replace(
+        source: str | bytes | os.PathLike[str],
+        target: str | bytes | os.PathLike[str],
+    ) -> None:
+        raise OSError("primary replace failure")
+
+    def fail_cleanup(path: Path, missing_ok: bool = False) -> None:
+        raise OSError("simulated cleanup failure")
+
+    monkeypatch.setattr(os, "replace", fail_replace)
+    monkeypatch.setattr(Path, "unlink", fail_cleanup)
+
+    temporary: list[Path] = []
+    try:
+        with pytest.raises(OSError, match="primary replace failure") as exc_info:
+            persist_transcript_evidence(destination, records)
+
+        notes = getattr(exc_info.value, "__notes__", [])
+        assert any("simulated cleanup failure" in note for note in notes)
+        temporary = [path for path in tmp_path.iterdir() if path != destination]
+        assert len(temporary) == 1
+        temporary_bytes = temporary[0].read_bytes()
+        assert (
+            serialize_transcript(parse_transcript(temporary_bytes)) == temporary_bytes
+        )
+        if existing:
+            assert destination.read_bytes() == previous
+        else:
+            assert not destination.exists()
+    finally:
+        for path in temporary:
+            unlink(path, missing_ok=True)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows denies unlink of open files")
+def test_safe_persistence_preserves_close_error_when_windows_holds_temporary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records = parse_transcript(TRANSCRIPT_FIXTURE.read_bytes())
+    destination = tmp_path / "transcript.jsonl"
+    previous = b"previous evidence\n"
+    destination.write_bytes(previous)
+    created = _install_failing_temporary_stream(monkeypatch, "close-held")
+
+    temporary: list[Path] = []
+    try:
+        with pytest.raises(
+            OSError, match="simulated held-open close failure"
+        ) as exc_info:
+            persist_transcript_evidence(destination, records)
+
+        notes = getattr(exc_info.value, "__notes__", [])
+        assert any("temporary evidence cleanup failed:" in note for note in notes)
+        assert destination.read_bytes() == previous
+        temporary = [path for path in tmp_path.iterdir() if path != destination]
+        assert len(temporary) == 1
+    finally:
+        for stream in created:
+            stream.release()
+        for path in temporary:
+            path.unlink(missing_ok=True)
+
+
+def test_safe_persistence_uses_unique_same_directory_temporary_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records = parse_transcript(TRANSCRIPT_FIXTURE.read_bytes())
+    destination = tmp_path / "nested" / "transcript.jsonl"
+    replaced_from: list[Path] = []
+    replace = os.replace
+
+    def record_replace(
+        source: str | bytes | os.PathLike[str],
+        target: str | bytes | os.PathLike[str],
+    ) -> None:
+        assert not isinstance(source, bytes)
+        replaced_from.append(Path(source))
+        replace(source, target)
+
+    monkeypatch.setattr(os, "replace", record_replace)
+
+    persist_transcript_evidence(destination, records)
+    first = destination.read_bytes()
+    persist_transcript_evidence(destination, records)
+
+    assert serialize_transcript(parse_transcript(first)) == first
+    assert destination.read_bytes() == first
+    assert len(set(replaced_from)) == 2
+    assert all(path.parent == destination.parent for path in replaced_from)
+    assert all(path.name.startswith(f".{destination.name}.") for path in replaced_from)
+    assert list(destination.parent.iterdir()) == [destination]
 
 
 def test_safe_persistence_preserves_valid_credential_shaped_structure(
