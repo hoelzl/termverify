@@ -9,3 +9,8 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Local agent-harness state (durable content belongs under docs/agent/)
+.hermes/
+.claude/*
+!.claude/settings.json

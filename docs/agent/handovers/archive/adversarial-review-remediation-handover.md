@@ -17,7 +17,7 @@
   whose owner-reviewed scope disposition and closure were recorded without
   reopening this completed remediation initiative.
 - **Source reviews:** [GPT-5.6 review](../../design/adversarial-correctness-and-code-quality-review-gpt-5.6-sol-2026-07-16.md) and [Opus 4.8 review](../../design/adversarial-correctness-and-code-quality-review-opus-4.8-2026-07-16.md).
-- **Execution plan:** [detailed implementation plan](../../../../.hermes/plans/2026-07-16_215137-adversarial-review-remediation.md).
+- **Execution plan:** [detailed implementation plan](../../plans/2026-07-16_215137-adversarial-review-remediation.md).
 - **Successor:** none
 - **Completion:** every confirmed finding in both source reviews has an explicit verified disposition; all accepted fixes are integrated; the evidence-policy gate is accepted and implemented or explicitly transferred; the full repository gate passes; and an independent final review accepts the integrated result.
 
