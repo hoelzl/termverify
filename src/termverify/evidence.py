@@ -173,9 +173,7 @@ def _redact_transcript_record(record: Record) -> None:
     elif kind == "input.key":
         keys = payload.get("keys")
         if isinstance(keys, list):
-            payload["keys"] = [
-                _redaction_marker(f"key-{index:04d}") for index, _key in enumerate(keys)
-            ]
+            payload["keys"] = ["Escape"]
     elif kind == "input.text" and "text" in payload:
         payload["text"] = _redaction_marker("input-text")
     elif kind == "input.clipboard_set" and "text" in payload:

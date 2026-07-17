@@ -66,6 +66,12 @@ custom equality from crossing an otherwise frozen public boundary.
 reviewed transcript-v1 configuration. That conversion is one-way: mutable wire
 objects are not stored inside the adapter contract.
 
+`KeyInput` represents one `termverify.key/v1` semantic chord. Its `keys` field
+requires an exact immutable tuple and applies the same closed registry, modifier
+ordering, and modified-only base rules as the transcript validator. It is part
+of `DispatchInput` beside `TextInput` and `Resize`; it is exported from
+`termverify.adapter` but, like the rest of this module, not from the package root.
+
 Construction rejects invalid integers, identifiers, dimensions, endpoint
 ordering, duplicate entries, malformed locale syntax, non-finite JSON numbers,
 and structurally inconsistent observations. Cross-record state rules such as
@@ -109,7 +115,6 @@ The types also encode the currently accepted semantic gates:
 
 This contract does not expose:
 
-- `input.key`, because the key-name registry is not approved;
 - mouse or clipboard dispatch, which are not needed by the first direct slice;
 - ambient time, randomness, locale, timezone, filesystem, terminal, or network
   access;
@@ -122,12 +127,13 @@ not an invitation to pass generic dictionaries through the protocol.
 
 ## Wire compatibility
 
-This PR does not change `termverify.transcript/v1`. The existing transcript
-validator remains the authority for wire acceptance. The immutable values are
-producer-side inputs whose eventual transcript conversion must still pass that
-validator and canonical serializer. Tuple use inside this Python API does not
-weaken the codec rule that protocol JSON arrays must be represented by lists at
-the parse/serialize boundary; `to_protocol()` and future producer conversion
+The semantic-key inception correction narrows `termverify.transcript/v1` from
+arbitrary non-empty key strings to the closed `termverify.key/v1` chord grammar.
+The transcript validator remains the authority for wire acceptance. Immutable
+adapter values are producer-side inputs whose eventual transcript conversion
+must still pass that validator and canonical serializer. Tuple use inside this
+Python API does not weaken the codec rule that protocol JSON arrays must be
+represented by lists at the parse/serialize boundary; future producer conversion
 must create fresh lists.
 
 ## Verification

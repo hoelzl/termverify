@@ -188,18 +188,22 @@ public receipt types with these semantics.
 
 ### Keys
 
-TermVerify will own a closed, versioned semantic key-name registry. Named
-non-text keys will be selected from or deliberately mapped to stable W3C UI
-Events `KeyboardEvent.key` meanings where they fit terminal interaction.
-Printable insertion remains `input.text`; the registry does not duplicate
-locale-dependent printable characters or expose physical keyboard locations.
-Toolkit names, OS virtual-key codes, escape byte sequences, curses names, and
-application-specific key enums are adapter mappings, not protocol values.
+TermVerify owns the closed, versioned `termverify.key/v1` registry. One
+`input.key.keys` array is one chord: unique modifiers in `Control`, `Alt`,
+`Shift`, `Meta` order, followed by exactly one base. Named non-text bases use
+stable W3C UI Events meanings where they fit terminal interaction; lowercase
+ASCII letters, digits, and `Space` are available only with `Control`, `Alt`, or
+`Meta`. Printable insertion remains `input.text`; physical locations are not
+represented. Names are exact and case-sensitive, with no aliases or
+normalization.
 
-The initial registry, modifier/chord notation, spelling, and case require their
-own executable compatibility review before `input.key` is exposed by a public
-adapter. Existing non-empty-string validation and fixture values establish only
-wire syntax, not an approved semantic registry.
+`KeyInput` exposes the same chord as an immutable tuple and participates in
+direct dispatch. Toolkit names, OS virtual-key codes, escape byte sequences,
+curses names, and application-specific key enums remain adapter mapping inputs,
+not protocol values. The direct adapter forwards approved values unchanged and
+uses its existing structured runtime-failure path when the application reports
+semantic key input unsupported; it never silently converts a key to text or
+terminal bytes.
 
 ### Terminal capabilities
 
@@ -258,7 +262,7 @@ gated.
 
 This contract intentionally does not decide:
 
-- the initial key-name or terminal-capability entries;
+- the initial terminal-capability entries;
 - explicit correlation for concurrent or unsolicited events;
 - timezone database/version/alias policy;
 - terminal filesystem containment or network allow-list semantics;

@@ -43,10 +43,10 @@ that completed boundary.
 
 Every row has disposition **transfer intact to this named successor**.
 
-| Workstream | Transferred criterion | Unsupported-until-approved boundary |
+| Workstream | Transferred criterion | Current boundary |
 | --- | --- | --- |
 | Deterministic vocabulary and configuration semantics | Named-timezone enforcement evidence and any post-freeze registry evolution beyond the protocol-bound v1 registry | `TimezoneReceipt` continues to reject named zones other than `UTC`; no ambient `zoneinfo` membership or enforcement is inferred. |
-| Deterministic vocabulary and configuration semantics | Closed, versioned semantic key-name registry, including modifier/chord spelling and adapter mapping | The immutable/direct adapter surface continues to omit `input.key`; syntax-only transcript strings are not approved semantic names. |
+| Deterministic vocabulary and configuration semantics | Closed, versioned semantic key-name registry, including modifier/chord spelling and adapter mapping | Implemented as protocol-owned `termverify.key/v1`, immutable `KeyInput`, and direct dispatch that forwards it unchanged. Terminal-byte/toolkit mapping and key-support negotiation remain separate unsupported work. |
 | Deterministic vocabulary and configuration semantics | Closed, versioned terminal-capability registry with observable semantics and enforcement evidence | Non-empty terminal-capability receipts remain rejected; requested/effective equality is not enforcement proof. |
 | Concurrent event correlation | Explicit correlation and ordering for concurrent inputs or unsolicited/asynchronous events | V1 remains single-flight; idle unsolicited body records remain invalid; no wall-clock quiet period is evidence of causality or quiescence. |
 | Production containment | Filesystem root mapping and lifecycle, traversal, symlink/reparse-point handling, child-process inheritance/containment, cleanup, and failure semantics | Direct execution may route an explicit application port but does not prove OS containment; terminal/subprocess enforcement remains unsupported. |
@@ -99,7 +99,10 @@ regression:
 - same-directory unique temporary writes, close, and atomic safe replacement at
   the accepted no-`fsync`, no-crash-durability level;
 - narrow shared v1 internals and behavior-preserving lifecycle-validator
-  decomposition.
+  decomposition;
+- closed `termverify.key/v1` membership and chord grammar, immutable `KeyInput`,
+  direct dispatch without text/byte fallback, and registry-valid safe-evidence
+  key transformation.
 
 ## Workstream gates
 
@@ -125,6 +128,20 @@ remain owner-reviewed during inception, while post-freeze membership or meaning
 changes require a new transcript protocol version. This accepted request-level
 contract does not authorize named-timezone receipts: named enforcement evidence
 remains transferred and fail-closed.
+
+The owner accepted the second focused contract slice on 2026-07-17. Semantic
+key input is now bound to the closed `termverify.key/v1` component registry and
+one-chord array grammar: exact case-sensitive names, canonical unique modifier
+ordering, no aliases or normalization, and no toolkit, virtual-key, or escape
+byte values. Unmodified printable insertion remains `input.text`. The immutable
+adapter exposes `KeyInput`, and direct dispatch forwards it unchanged; an
+application that cannot execute it uses the existing structured runtime-failure
+and abort path rather than post-readiness `run.unsupported` or silent fallback.
+Safe persistence replaces every chord with the valid `["Escape"]` sentinel and
+revalidates. Runtime validation owns the registry beyond the deliberately
+non-exhaustive schema. Post-freeze membership or meaning changes require a new
+transcript and key-registry version. Terminal encoding and capability evidence
+remain outside this slice.
 
 ### 2. Concurrent event correlation
 
@@ -157,8 +174,9 @@ not production evidence.
 
 ## Risks and non-negotiables
 
-- Do not expose unresolved key, capability, timezone, filesystem, network, or
-  terminal semantics through permissive syntax or fabricated receipts.
+- Do not expose unresolved capability, timezone-enforcement, filesystem,
+  network, terminal-mapping, or other semantics through permissive syntax or
+  fabricated receipts.
 - Do not infer quiescence, drain completion, or causality from wall-clock silence.
 - Do not promote the ConPTY spike or add `pywinpty` without a separately accepted
   dependency and verification decision.

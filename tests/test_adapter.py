@@ -16,6 +16,7 @@ from termverify.adapter import (
     ConstraintUnsupported,
     Cursor,
     Diagnostic,
+    DispatchInput,
     EnforcedConstraints,
     EpochCompleted,
     Event,
@@ -24,6 +25,7 @@ from termverify.adapter import (
     FilesystemReceipt,
     Frame,
     JsonInput,
+    KeyInput,
     LocaleReceipt,
     ManualTime,
     NetworkConfiguration,
@@ -305,6 +307,10 @@ def test_observation_validates_structure_and_freezes_application_values() -> Non
 
 
 def test_inputs_and_diagnostics_validate_manual_time() -> None:
+    assert KeyInput(at_ms=ManualTime(0), keys=("Control", "c")).keys == (
+        "Control",
+        "c",
+    )
     assert TextInput(at_ms=ManualTime(0), text="hello").text == "hello"
     assert Resize(at_ms=ManualTime(1), columns=100, rows=40).columns == 100
     assert ClockAdvance(at_ms=ManualTime(5), delta_ms=5).delta_ms == 5
@@ -317,8 +323,26 @@ def test_inputs_and_diagnostics_validate_manual_time() -> None:
         ClockAdvance(at_ms=ManualTime(0), delta_ms=0)
     with pytest.raises(ValueError, match="positive"):
         Resize(at_ms=ManualTime(0), columns=0, rows=24)
+    with pytest.raises(TypeError, match="tuple"):
+        KeyInput(at_ms=ManualTime(0), keys=cast(Any, ["Enter"]))
+    with pytest.raises(ValueError, match="termverify.key/v1"):
+        KeyInput(at_ms=ManualTime(0), keys=("enter",))
     with pytest.raises(ValueError, match="code"):
         Diagnostic(at_ms=ManualTime(0), code="", message="bad")
+
+
+def test_key_input_is_immutable_and_rejects_noncanonical_chords() -> None:
+    input_event = KeyInput(
+        at_ms=ManualTime(0),
+        keys=("Control", "Alt", "Shift", "Meta", "F12"),
+    )
+
+    with pytest.raises(FrozenInstanceError):
+        input_event.keys = ("Escape",)  # type: ignore[misc]
+    with pytest.raises(TypeError, match="at_ms"):
+        KeyInput(at_ms=cast(ManualTime, 0), keys=("Enter",))
+    with pytest.raises(ValueError, match="termverify.key/v1"):
+        KeyInput(at_ms=ManualTime(0), keys=("Shift", "a"))
 
 
 def test_receipts_are_constraint_specific_run_bound_and_immutable() -> None:
@@ -715,7 +739,7 @@ class _FakeAdapter:
         assert configuration == _configuration()
         return Started(_constraints(run_id), _observation())
 
-    def dispatch(self, input_event: TextInput | Resize) -> EpochCompleted:
+    def dispatch(self, input_event: DispatchInput) -> EpochCompleted:
         return EpochCompleted(observation=_observation(input_event.at_ms))
 
     def advance_clock(self, input_event: ClockAdvance) -> EpochCompleted:

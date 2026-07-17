@@ -20,6 +20,7 @@ from termverify.adapter import (
     EpochCompleted,
     EpochResult,
     FilesystemReceipt,
+    KeyInput,
     LocaleReceipt,
     ManualTime,
     NetworkReceipt,
@@ -83,7 +84,7 @@ class DirectApplication(
     def initialize(self) -> EpochCompleted | TerminalResult | AdapterFailure: ...
 
     def dispatch(
-        self, input_event: TextInput | Resize
+        self, input_event: DispatchInput
     ) -> EpochCompleted | TerminalResult | AdapterFailure: ...
 
     def advance_clock(
@@ -418,8 +419,8 @@ class DirectAdapter:
         return started
 
     def dispatch(self, input_event: DispatchInput) -> EpochResult:
-        if type(input_event) not in (TextInput, Resize):
-            raise TypeError("dispatch input must be TextInput or Resize")
+        if type(input_event) not in (KeyInput, TextInput, Resize):
+            raise TypeError("dispatch input must be KeyInput, TextInput, or Resize")
         with self._state_lock:
             if self._state != "idle":
                 raise RuntimeError("direct adapter is not idle")

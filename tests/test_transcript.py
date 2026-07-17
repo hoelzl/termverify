@@ -2018,14 +2018,78 @@ def test_serialize_transcript_rejects_unknown_generic_input_member() -> None:
         serialize_transcript(transcript)
 
 
-def test_serialize_transcript_rejects_key_input_without_normalized_keys() -> None:
+@pytest.mark.parametrize(
+    "keys",
+    [
+        [],
+        ["enter"],
+        ["  "],
+        ["NotAKey"],
+        ["é"],
+        ["Ctrl", "c"],
+        ["Control", "C"],
+        ["Control", "é"],
+        ["Control+c"],
+        ["Control", "Control", "c"],
+        ["Shift", "Control", "c"],
+        ["Control"],
+        ["Enter", "Tab"],
+        ["c"],
+        ["Shift", "a"],
+        ["1"],
+        ["Space"],
+        ["\x1b[A"],
+        [1],
+        "Enter",
+    ],
+)
+def test_transcript_codec_rejects_noncanonical_semantic_key_chords(
+    keys: JsonValue,
+) -> None:
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
     transcript = parse_transcript(fixture)
     transcript[9]["kind"] = "input.key"
-    transcript[9]["payload"] = {"at_ms": 0, "keys": []}
+    transcript[9]["payload"] = {"at_ms": 0, "keys": keys}
 
     with pytest.raises(TranscriptValidationError, match="input.key"):
         serialize_transcript(transcript)
+
+    encoded = b"".join(
+        json.dumps(
+            record, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        ).encode()
+        + b"\n"
+        for record in transcript
+    )
+    with pytest.raises(TranscriptValidationError, match="input.key"):
+        parse_transcript(encoded)
+
+
+@pytest.mark.parametrize(
+    "keys",
+    [
+        ["Enter"],
+        ["F1"],
+        ["Shift", "Tab"],
+        ["Control", "c"],
+        ["Control", "Alt", "Shift", "Meta", "F12"],
+        ["Alt", "1"],
+        ["Control", "0"],
+        ["Meta", "z"],
+        ["Control", "Space"],
+    ],
+)
+def test_transcript_codec_round_trips_canonical_semantic_key_chords(
+    keys: list[str],
+) -> None:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    transcript[9]["kind"] = "input.key"
+    transcript[9]["payload"] = {"at_ms": 0, "keys": cast(JsonValue, keys)}
+
+    encoded = serialize_transcript(transcript)
+
+    assert parse_transcript(encoded) == transcript
+    assert serialize_transcript(parse_transcript(encoded)) == encoded
 
 
 def test_serialize_transcript_rejects_resize_with_non_positive_dimensions() -> None:
@@ -2570,7 +2634,7 @@ def test_serialize_transcript_rejects_malformed_finished_exit() -> None:
 def _transcript_with_payload_kind(kind: str) -> tuple[list[dict[str, JsonValue]], int]:
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
     body_payloads: dict[str, dict[str, JsonValue]] = {
-        "input.key": {"at_ms": 0, "keys": ["enter"]},
+        "input.key": {"at_ms": 0, "keys": ["Enter"]},
         "input.text": {"at_ms": 0, "text": "hello"},
         "input.resize": {"at_ms": 0, "columns": 80, "rows": 24},
         "input.mouse": {

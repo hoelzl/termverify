@@ -391,7 +391,7 @@ def test_safe_persistence_transforms_semantic_strings_in_lockstep(
     records[9]["kind"] = "input.key"
     records[9]["payload"] = {
         "at_ms": 0,
-        "keys": ["xox" + "b-1234567890-secret", "private-key-name"],
+        "keys": ["Control", "Alt", "Shift", "Meta", "F12"],
     }
     observation_payload = records[10]["payload"]
     assert isinstance(observation_payload, dict)
@@ -448,7 +448,7 @@ def test_safe_persistence_transforms_semantic_strings_in_lockstep(
     }
     assert persisted[9]["payload"] == {
         "at_ms": 0,
-        "keys": ["<redacted:key-0000>", "<redacted:key-0001>"],
+        "keys": ["Escape"],
     }
     persisted_observation = persisted[10]
     assert persisted_observation["x-redacted-0000"] == "<redacted:extension>"
@@ -598,8 +598,8 @@ def test_safe_persistence_preserves_order_beyond_four_digit_markers(
         ),
         (
             "input.key",
-            {"at_ms": 0, "keys": ["private-key"]},
-            {"at_ms": 0, "keys": ["<redacted:key-0000>"]},
+            {"at_ms": 0, "keys": ["Control", "c"]},
+            {"at_ms": 0, "keys": ["Escape"]},
         ),
         (
             "input.resize",

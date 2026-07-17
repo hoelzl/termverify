@@ -10,6 +10,7 @@ from typing import cast
 import rfc8785
 
 from termverify._json import JsonValue as JsonValue
+from termverify._key_v1 import is_key_chord
 from termverify._language_tag import (
     is_well_formed_language_tag as _is_well_formed_language_tag,
 )
@@ -667,13 +668,9 @@ def _validate_inputs(records: list[Record], manual_time: int) -> None:
             raise TranscriptValidationError("input.stop forbids additional members")
         if record["kind"] == "input.key":
             keys = input_payload.get("keys")
-            if (
-                not isinstance(keys, list)
-                or not keys
-                or not all(isinstance(key, str) and key for key in keys)
-            ):
+            if not is_key_chord(keys):
                 raise TranscriptValidationError(
-                    "input.key requires non-empty normalized keys"
+                    "input.key requires one canonical termverify.key/v1 chord"
                 )
         if record["kind"] == "input.resize":
             dimensions = (input_payload.get("columns"), input_payload.get("rows"))

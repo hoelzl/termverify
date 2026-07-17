@@ -22,7 +22,9 @@ TermVerify provides a common foundation for:
 The repository is in its foundation phase. The reviewed transcript design has
 an initial codec, semantic validator, mandatory safe transcript-persistence
 boundary, immutable producer-side adapter contract, and deterministic in-process
-direct runtime. A narrow Windows ConPTY spike validates basic child creation,
+direct runtime. Requested timezone names and semantic key chords use closed,
+protocol-owned v1 registries; semantic keys also have an immutable direct-dispatch
+representation. A narrow Windows ConPTY spike validates basic child creation,
 independent channel servicing, resize, and binding-level process termination and
 exit observation. Native pseudoconsole close/drain remains unproven, and no
 production terminal adapter or containment boundary exists yet. Configuration
