@@ -24,11 +24,20 @@ an initial codec, semantic validator, mandatory safe transcript-persistence
 boundary, immutable producer-side adapter contract, and deterministic in-process
 direct runtime. Requested timezone names and semantic key chords use closed,
 protocol-owned v1 registries; semantic keys also have an immutable direct-dispatch
-representation. A narrow Windows ConPTY spike validates basic child creation,
-independent channel servicing, resize, and binding-level process termination and
-exit observation. Native pseudoconsole close/drain remains unproven, and no
-production terminal adapter or containment boundary exists yet. Configuration
-values or receipt construction alone do not prove constraint enforcement.
+representation. The canonical transcript schema ships inside the package with a
+public access API, and isolated installation checks verify the wheel and sdist
+resource contract; the schema's `$id` is an identifier without a resolvable
+published host, and runtime validation remains authoritative. A strict
+no-regression coverage floor gates the full suite, and release governance —
+changelog and pre-1.0 compatibility policy, private security disclosure,
+reviewed release checklist, and a tag-triggered attested draft-artifact
+workflow — is defined although no release is authorized and nothing is
+published to a package index. A narrow Windows ConPTY spike validates basic
+child creation, independent channel servicing, resize, and binding-level
+process termination and exit observation. Native pseudoconsole close/drain
+remains unproven, and no production terminal adapter or containment boundary
+exists yet. Configuration values or receipt construction alone do not prove
+constraint enforcement.
 
 ## Design principles
 
