@@ -2,10 +2,9 @@
 
 ## Handover metadata
 
-- **Status:** active — Slices 1–5 are integrated through PR #66 after
-  exact-candidate review. Narrow shared internals are the next ordered slice;
-  lifecycle decomposition and atomic persistence remain. Atomic-write
-  durability still has its separate decision gate.
+- **Status:** blocked — Slices 1–7 are integrated through PR #72 after
+  exact-candidate review. Only Slice 8 atomic persistence remains, and its
+  safe-mode durability level requires the project maintainer's decision below.
 - **Owner:** project maintainer
 - **Created:** 2026-07-16
 - **Updated:** 2026-07-17
@@ -61,6 +60,16 @@ This handover is not an issue tracker. Use one focused issue, branch, external s
   independent exact-candidate approval with no Critical, High, Medium, or Low
   findings; 589 tests passed with 94% branch coverage and all 10 exact-head CI
   checks succeeded.
+- Narrow shared internals merged through
+  [PR #70](https://github.com/hoelzl/termverify/pull/70). The exact candidate
+  received independent approval with no findings; 603 tests passed with 94%
+  branch coverage and all 10 exact-head CI checks succeeded.
+- Lifecycle-validator decomposition merged through
+  [PR #72](https://github.com/hoelzl/termverify/pull/72). Its first exact review
+  identified one Low test-precision finding, which was corrected before the
+  replacement candidate received independent approval with no findings. The
+  final candidate passed 614 tests with 94% branch coverage and all 10
+  exact-head CI checks.
 - Confirmed-good boundaries to preserve include duplicate-member rejection, RFC 8785 canonical-byte checking, lifecycle/epoch validation, exact receipt binding, deep-frozen adapter JSON values, single-flight runtime state, post-redaction semantic revalidation, and the deliberately non-exhaustive schema boundary.
 - **Not independently rerun while originally authoring this handover:** the
   reviews' mutation probes and fuzz campaigns. Slice 1 separately reproduced its
@@ -142,21 +151,17 @@ This handover is not an issue tracker. Use one focused issue, branch, external s
 - **Disposition:** fixed by PR #64 with collision-safe detail preservation,
   cleanup-safe startup failure handling, and consolidated result classification.
 
-### P2 — duplication and layering create correctness-drift risk — partially fixed
+### P2 — duplication and layering create correctness-drift risk — fixed
 
 - **Historical evidence at the reviewed revision:** `_validate_lifecycle()` was
   569 lines with reported complexity `F (276)`; dispatch/clock classification
   tails were nearly identical and `stop()` repeated terminal handling.
-- **Current remaining evidence:** lifecycle validation remains concentrated;
-  adapter imports a codec-private locale predicate; constraint order and JSON
-  aliases remain duplicated.
-- **Remaining impact:** future protocol corrections can still land incompletely
-  or break a separate compatibility boundary.
-- **Required remaining outcome:** behavior-preserving lifecycle helper
+- **Required outcome:** behavior-preserving lifecycle helper
   extraction, neutral locale grammar, and cautiously shared stable vocabulary.
 - **Disposition:** direct-runtime result classification was consolidated in PR
-  #64. Neutral shared internals and lifecycle decomposition remain Slices 6 and
-  7 respectively.
+  #64, narrow shared internals in PR #70, and lifecycle validation into explicit
+  procedural phases in PR #72. Exhaustive synchronization tests keep evidence
+  classification independent of shared codec vocabulary.
 
 ### P3 — direct evidence writes can truncate on failure
 
@@ -271,7 +276,7 @@ semantic-field decision and focused invariant tests were implemented in PR #66.
 
 ### 4. Narrow shared internals
 
-**Status:** next ordered workstream (Slice 6).
+**Status:** completed through PR #70.
 
 **Objective:** remove private cross-layer coupling and low-value vocabulary duplication.
 
@@ -282,7 +287,7 @@ semantic-field decision and focused invariant tests were implemented in PR #66.
 3. Share the JSON value alias without breaking current import surfaces.
 4. Keep evidence classification independent and add exhaustive defined-kind coverage tests.
 
-**Dependencies:** satisfied by merged Slices 1–5; complete before lifecycle
+**Dependencies:** satisfied by merged Slices 1–5 and completed before lifecycle
 extraction.
 
 **Acceptance criteria:**
@@ -293,7 +298,7 @@ extraction.
 
 ### 5. Lifecycle-validator decomposition
 
-**Status:** pending Slice 7 after shared-internal stabilization.
+**Status:** completed through PR #72.
 
 **Objective:** turn `_validate_lifecycle()` into a readable procedural orchestrator with cohesive pure helpers.
 
@@ -303,7 +308,7 @@ extraction.
 2. Extract phases in current validation order, one at a time.
 3. Preserve exception classes, public diagnostic categories, valid canonical bytes, and all lifecycle semantics.
 
-**Dependencies:** follows serializer correctness and shared-internal work to avoid churn.
+**Dependencies:** satisfied by serializer correctness and shared-internal work.
 
 **Acceptance criteria:**
 
@@ -313,7 +318,7 @@ extraction.
 
 ### 6. Atomic safe persistence
 
-**Status:** pending Slice 8 and the safe-mode durability decision recorded above.
+**Status:** blocked pending Slice 8's safe-mode durability decision recorded above.
 
 **Objective:** leave old evidence intact if a replacement write fails.
 
