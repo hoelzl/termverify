@@ -303,13 +303,54 @@ no generic v1 meaning.
 
 | Kind | Required payload members |
 | --- | --- |
-| `input.key` | `keys`: non-empty ordered array of non-empty normalized key-name strings |
+| `input.key` | `keys`: ordered array containing one canonical `termverify.key/v1` semantic chord |
 | `input.text` | `text`: Unicode string |
 | `input.resize` | positive integer `columns` and `rows` |
 | `input.mouse` | `action`: `press`, `release`, `move`, or `scroll`; non-negative integer `column` and `row`; `button` (`left`, `middle`, or `right`) for `press`/`release`; non-zero integer `delta` for `scroll` |
 | `input.clock_advanced` | positive integer `delta_ms`; `at_ms` equals the preceding manual time plus `delta_ms` |
 | `input.clipboard_set` | `text`: Unicode string |
 | `input.stop` | no additional members |
+
+### Semantic key chords
+
+TermVerify owns the closed `termverify.key/v1` registry. An `input.key` record
+represents one simultaneous semantic chord; a sequence of keystrokes requires
+multiple input records and therefore multiple quiescent input epochs. The
+`keys` array contains zero or more modifiers followed by exactly one base key.
+Modifiers are unique and, when present, appear in this canonical order:
+`Control`, `Alt`, `Shift`, `Meta`.
+
+The exact v1 component registry has 67 entries:
+
+- modifiers: `Control`, `Alt`, `Shift`, `Meta`;
+- named bases: `Enter`, `Tab`, `Escape`, `Backspace`, `Delete`, `Insert`,
+  `ArrowUp`, `ArrowDown`, `ArrowLeft`, `ArrowRight`, `Home`, `End`, `PageUp`,
+  `PageDown`, and `F1` through `F12`;
+- modified-only bases: lowercase ASCII `a` through `z`, ASCII `0` through `9`,
+  and `Space`.
+
+A modified-only base requires at least one of `Control`, `Alt`, or `Meta`.
+`Shift` alone does not make a printable base valid. Thus `["Control", "c"]`,
+`["Alt", "1"]`, and `["Control", "Space"]` are valid; `["c"]`, `["1"]`,
+`["Space"]`, and `["Shift", "a"]` are invalid. Unmodified printable insertion,
+including an ordinary space or uppercase letter, uses `input.text`.
+
+Names are exact and case-sensitive. V1 performs no trimming, case folding,
+Unicode normalization, alias rewriting, or modifier reordering. Toolkit names,
+OS virtual-key codes, physical-key locations, curses names, and terminal escape
+sequences are not protocol values. In particular, `Ctrl`, `Cmd`, `Option`,
+`Esc`, `Return`, lowercase `enter`, chord strings such as `Ctrl+C`, and encoded
+bytes such as `\u001b[A` are invalid. `Space` is TermVerify's semantic name for
+the space key when it participates in an approved modified chord; it is not a
+raw whitespace identifier.
+
+Neither `input.key` nor `input.text` is a raw terminal-byte channel. An adapter
+maps a valid semantic value to its own application boundary and must fail rather
+than silently translate an unknown value, alias, or ambiguous escape sequence.
+An `x-` extension cannot add registry entries or change chord meaning. The
+reviewed registry order is digest-bound in executable tests using newline-joined
+UTF-8 names with a final LF; its SHA-256 is
+`4db9a08e9eea24e48abb34f2d27d7d5936cd76f3843fda954f956266e2204a82`.
 
 For `input.mouse`, `button` and `delta` are forbidden for `move`; `delta` is
 forbidden for `press` and `release`; and `button` is forbidden for `scroll`.
@@ -369,6 +410,11 @@ artifact freezes this inception policy: after that boundary, only optional `x-`
 extensions are additive within a version, and new generic semantics, member
 types or meanings, canonicalization, ordering rules, or stable error codes
 require a new protocol version.
+
+That freeze includes `termverify.key/v1` membership, spelling, component roles,
+modifier ordering, and chord validity. A post-freeze change to any of them
+requires a new transcript protocol and key-registry version; ambient toolkit or
+host registry growth never changes v1.
 
 An inception transcript without `subject` is invalid and no tool may guess its
 identity from ambient or undocumented out-of-band context. A caller with the

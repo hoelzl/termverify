@@ -1,9 +1,10 @@
 # Phase 1 Immutable Adapter Python Contract
 
-- **Status:** accepted and implemented by PRs
+- **Status:** accepted and implemented; initial surface by PRs
   [#47](https://github.com/hoelzl/termverify/pull/47) and
-  [#49](https://github.com/hoelzl/termverify/pull/49)
-- **Date:** 2026-07-16
+  [#49](https://github.com/hoelzl/termverify/pull/49), amended by the accepted
+  `termverify.key/v1` boundary
+- **Date:** 2026-07-17
 - **Depends on:** the accepted
   [execution contract](phase-1-adapter-execution-contract.md)
 - **Scope:** public, framework-neutral Python values and structural protocols;
@@ -17,8 +18,9 @@ boundaries explicit:
 
 1. `Adapter.start()` returns `Started`, `StartTerminated`, `StartUnsupported`, or
    `StartFailed`.
-2. `Adapter.dispatch()` accepts only the currently approved `TextInput` and
-   `Resize` values and returns `EpochCompleted` or `TerminalResult`.
+2. `Adapter.dispatch()` accepts only the currently approved `KeyInput`,
+   `TextInput`, and `Resize` values and returns `EpochCompleted` or
+   `TerminalResult`.
 3. `Adapter.advance_clock()` accepts `ClockAdvance` separately so manual time
    cannot be confused with host waiting.
 4. `Adapter.stop()` accepts `Stop` and always returns `TerminalResult`.
@@ -66,6 +68,12 @@ custom equality from crossing an otherwise frozen public boundary.
 reviewed transcript-v1 configuration. That conversion is one-way: mutable wire
 objects are not stored inside the adapter contract.
 
+`KeyInput` represents one `termverify.key/v1` semantic chord. Its `keys` field
+requires an exact immutable tuple and applies the same closed registry, modifier
+ordering, and modified-only base rules as the transcript validator. It is part
+of `DispatchInput` beside `TextInput` and `Resize`; it is exported from
+`termverify.adapter` but, like the rest of this module, not from the package root.
+
 Construction rejects invalid integers, identifiers, dimensions, endpoint
 ordering, duplicate entries, malformed locale syntax, non-finite JSON numbers,
 and structurally inconsistent observations. Cross-record state rules such as
@@ -109,7 +117,6 @@ The types also encode the currently accepted semantic gates:
 
 This contract does not expose:
 
-- `input.key`, because the key-name registry is not approved;
 - mouse or clipboard dispatch, which are not needed by the first direct slice;
 - ambient time, randomness, locale, timezone, filesystem, terminal, or network
   access;
@@ -122,12 +129,13 @@ not an invitation to pass generic dictionaries through the protocol.
 
 ## Wire compatibility
 
-This PR does not change `termverify.transcript/v1`. The existing transcript
-validator remains the authority for wire acceptance. The immutable values are
-producer-side inputs whose eventual transcript conversion must still pass that
-validator and canonical serializer. Tuple use inside this Python API does not
-weaken the codec rule that protocol JSON arrays must be represented by lists at
-the parse/serialize boundary; `to_protocol()` and future producer conversion
+The semantic-key inception correction narrows `termverify.transcript/v1` from
+arbitrary non-empty key strings to the closed `termverify.key/v1` chord grammar.
+The transcript validator remains the authority for wire acceptance. Immutable
+adapter values are producer-side inputs whose eventual transcript conversion
+must still pass that validator and canonical serializer. Tuple use inside this
+Python API does not weaken the codec rule that protocol JSON arrays must be
+represented by lists at the parse/serialize boundary; future producer conversion
 must create fresh lists.
 
 ## Verification

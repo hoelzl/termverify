@@ -70,9 +70,10 @@ report renderer, or artifact publisher receives encoded bytes. The raw
 transcript codec validates and canonicalizes in memory but does not claim safe
 persistence. Redaction is deterministic and generally replaces a value with the
 exact marker `<redacted:reason>`; it must not retain the original value, its
-length, hash, or a reversible encoding. Registry-constrained timezone values use
-the fixed valid `UTC` sentinel instead, so post-redaction protocol validation
-cannot admit a permissive placeholder.
+length, hash, or a reversible encoding. Registry-constrained timezone and
+semantic-key values use the fixed valid `UTC` and `["Escape"]` sentinels
+respectively, so post-redaction protocol validation cannot admit a permissive
+placeholder.
 
 Safe persistence classifies validated records before applying any generic
 free-text credential patterns. Every v1 string-bearing position has this
@@ -85,7 +86,7 @@ disposition:
 | Timezone | Replace with the fixed valid `UTC` sentinel in requested configuration and any effective value. Named requests can only occur on the structured unsupported path; enforced v1 timezone values are already `UTC`. |
 | Filesystem root and network allow-list host | Replace with deterministic sandbox/positional markers in both requested and effective configuration. |
 | Terminal capability names | Replace by ordered positional markers in both requested and effective configuration, preserving ordering, uniqueness, and equality. |
-| Input key names | Replace by ordered positional markers. Input text and clipboard text are blanket-redacted. |
+| Input semantic key chord | Replace the entire chord with the fixed registry-valid `["Escape"]` sentinel, revealing neither the original base nor modifiers. Input text and clipboard text are blanket-redacted. |
 | Observation state and event data | Blanket-redact. Event type is blanket-redacted. |
 | UI region ID and focus | Replace through one deterministic per-UI ID map so focus still names its region. |
 | UI region role and UI mode | Blanket-redact. Frame lines use one marker per original position. |

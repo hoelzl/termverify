@@ -190,6 +190,18 @@ def test_runtime_owns_timezone_registry_membership_beyond_schema() -> None:
         serialize_transcript(records)
 
 
+def test_runtime_owns_semantic_key_registry_and_chord_grammar_beyond_schema() -> None:
+    schema = _schema()
+    assert "termverify.key/v1" in schema["$comment"]
+    records = parse_transcript(FIXTURE_PATH.read_bytes())
+    records[9]["kind"] = "input.key"
+    records[9]["payload"] = {"at_ms": 0, "keys": ["enter"]}
+
+    assert Draft202012Validator(schema).is_valid(records[9])
+    with pytest.raises(TranscriptValidationError, match="input.key"):
+        serialize_transcript(records)
+
+
 def test_runtime_owns_network_pair_uniqueness_beyond_schema() -> None:
     records = parse_transcript(FIXTURE_PATH.read_bytes())
     payload = records[0]["payload"]

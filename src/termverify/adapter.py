@@ -10,6 +10,7 @@ from types import MappingProxyType
 from typing import Literal, Protocol, cast
 
 from termverify._json import JsonValue
+from termverify._key_v1 import is_key_chord
 from termverify._language_tag import is_well_formed_language_tag
 from termverify._protocol_v1 import CONSTRAINT_NAMES, ConstraintName
 from termverify._timezone_v1 import is_timezone_name
@@ -37,6 +38,7 @@ __all__ = [
     "Frame",
     "FrozenJsonValue",
     "JsonInput",
+    "KeyInput",
     "LocaleReceipt",
     "ManualTime",
     "NetworkConfiguration",
@@ -484,6 +486,20 @@ class TextInput:
             raise TypeError("at_ms must be ManualTime")
         if type(self.text) is not str:
             raise TypeError("text must be a string")
+
+
+@dataclass(frozen=True, slots=True)
+class KeyInput:
+    at_ms: ManualTime
+    keys: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if type(self.at_ms) is not ManualTime:
+            raise TypeError("at_ms must be ManualTime")
+        if type(self.keys) is not tuple:
+            raise TypeError("keys must be a tuple")
+        if not is_key_chord(self.keys):
+            raise ValueError("keys must be one canonical termverify.key/v1 chord")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1000,7 +1016,7 @@ class StartTerminated:
 
 
 type StartResult = Started | StartTerminated | StartUnsupported | StartFailed
-type DispatchInput = TextInput | Resize
+type DispatchInput = KeyInput | TextInput | Resize
 type EpochResult = EpochCompleted | TerminalResult
 
 

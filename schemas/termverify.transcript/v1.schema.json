@@ -3,7 +3,7 @@
   "$id": "https://termverify.dev/schemas/termverify.transcript/v1.schema.json",
   "title": "TermVerify transcript v1 record",
   "description": "A non-exhaustive structural and local-validation aid for one UTF-8 JSONL record. Schema acceptance is not a conformance verdict; termverify.transcript remains authoritative for all protocol acceptance, including rules or record kinds not encoded here.",
-  "$comment": "This inception schema specializes run.started. Other payload kinds retain envelope validation until the separate schema-conformance workstream defines and tests them.",
+  "$comment": "This inception schema specializes run.started. Other payload kinds retain envelope validation until the separate schema-conformance workstream defines and tests them. Runtime validation owns termverify.key/v1 registry membership, canonical chord structure, modifier ordering, and modified-only base-key rules for input.key.",
   "$defs": {
     "selectorToken": {
       "type": "string",

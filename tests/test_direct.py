@@ -15,10 +15,12 @@ from termverify.adapter import (
     ConstraintUnsupported,
     Cursor,
     Diagnostic,
+    DispatchInput,
     EnforcedConstraints,
     EpochCompleted,
     FilesystemConfiguration,
     FilesystemReceipt,
+    KeyInput,
     LocaleReceipt,
     ManualTime,
     NetworkConfiguration,
@@ -26,7 +28,6 @@ from termverify.adapter import (
     Observation,
     ProcessObservation,
     Region,
-    Resize,
     RunConfiguration,
     RunFailed,
     RunFinished,
@@ -125,7 +126,7 @@ class _Application(_Ports):
         return EpochCompleted(_observation())
 
     def dispatch(
-        self, input_event: TextInput | Resize
+        self, input_event: DispatchInput
     ) -> EpochCompleted | TerminalResult | AdapterFailure:
         return EpochCompleted(_observation(input_event.at_ms))
 
@@ -291,6 +292,63 @@ def test_dispatch_returns_application_reported_quiescent_observation() -> None:
     assert result == EpochCompleted(_observation())
 
 
+class _CapturingKeyApplication(_Application):
+    def __init__(self) -> None:
+        super().__init__()
+        self.dispatched: DispatchInput | None = None
+
+    def dispatch(
+        self, input_event: DispatchInput
+    ) -> EpochCompleted | TerminalResult | AdapterFailure:
+        self.dispatched = input_event
+        return super().dispatch(input_event)
+
+
+def test_dispatch_forwards_semantic_key_input_unchanged() -> None:
+    application = _CapturingKeyApplication()
+    adapter = DirectAdapter(application)
+    assert isinstance(adapter.start("run-direct", _configuration()), Started)
+    input_event = KeyInput(ManualTime(0), ("Control", "c"))
+
+    result = adapter.dispatch(input_event)
+
+    assert result == EpochCompleted(_observation())
+    assert application.dispatched is input_event
+
+
+class _UnsupportedKeyApplication(_Application):
+    def dispatch(
+        self, input_event: DispatchInput
+    ) -> EpochCompleted | TerminalResult | AdapterFailure:
+        if type(input_event) is KeyInput:
+            return AdapterFailure(
+                "adapter-runtime-failed",
+                "semantic key input is unsupported",
+                {"input_kind": "key", "reason": "unsupported"},
+            )
+        return super().dispatch(input_event)
+
+
+def test_application_key_input_unsupported_is_structured_runtime_failure() -> None:
+    application = _UnsupportedKeyApplication()
+    adapter = DirectAdapter(application)
+    assert isinstance(adapter.start("run-direct", _configuration()), Started)
+
+    result = adapter.dispatch(KeyInput(ManualTime(0), ("Enter",)))
+
+    assert result == TerminalResult(
+        None,
+        RunFailed(
+            AdapterFailure(
+                "adapter-runtime-failed",
+                "semantic key input is unsupported",
+                {"input_kind": "key", "reason": "unsupported"},
+            )
+        ),
+    )
+    assert application.aborts == [ManualTime(0)]
+
+
 def test_dispatch_is_rejected_before_readiness() -> None:
     adapter = DirectAdapter(_Application())
 
@@ -308,7 +366,7 @@ def test_dispatch_requires_the_current_manual_time() -> None:
 
 class _WrongTimeApplication(_Application):
     def dispatch(
-        self, input_event: TextInput | Resize
+        self, input_event: DispatchInput
     ) -> EpochCompleted | TerminalResult | AdapterFailure:
         del input_event
         return EpochCompleted(_observation(1))
@@ -446,7 +504,7 @@ def test_started_construction_failure_aborts_and_becomes_terminal(
 
 class _RaisingDispatch(_Application):
     def dispatch(
-        self, input_event: TextInput | Resize
+        self, input_event: DispatchInput
     ) -> EpochCompleted | TerminalResult | AdapterFailure:
         del input_event
         raise RuntimeError("host-specific exception text")
@@ -603,7 +661,7 @@ class _DetailedRuntimeFailureWithFailingAbort(_Application):
         self.details = details
 
     def dispatch(
-        self, input_event: TextInput | Resize
+        self, input_event: DispatchInput
     ) -> EpochCompleted | TerminalResult | AdapterFailure:
         del input_event
         return AdapterFailure(
@@ -670,7 +728,7 @@ def test_operation_methods_reject_the_wrong_input_contract_type() -> None:
     adapter = DirectAdapter(_Application())
     assert isinstance(adapter.start("run-direct", _configuration()), Started)
 
-    with pytest.raises(TypeError, match="TextInput or Resize"):
+    with pytest.raises(TypeError, match="KeyInput, TextInput, or Resize"):
         adapter.dispatch(cast(Any, ClockAdvance(ManualTime(1), 1)))
     with pytest.raises(TypeError, match="ClockAdvance"):
         adapter.advance_clock(cast(Any, TextInput(ManualTime(0), "wrong")))
@@ -680,7 +738,7 @@ def test_operation_methods_reject_the_wrong_input_contract_type() -> None:
 
 class _WrongTerminalTime(_Application):
     def dispatch(
-        self, input_event: TextInput | Resize
+        self, input_event: DispatchInput
     ) -> EpochCompleted | TerminalResult | AdapterFailure:
         del input_event
         return TerminalResult(_observation(1), RunFinished.code(0))
@@ -696,7 +754,7 @@ class _NaturalExitApplication(_Application):
         )
 
     def dispatch(
-        self, input_event: TextInput | Resize
+        self, input_event: DispatchInput
     ) -> EpochCompleted | TerminalResult | AdapterFailure:
         return self._result(input_event.at_ms)
 
@@ -857,7 +915,7 @@ class _RuntimeFailureApplication(_Application):
     )
 
     def dispatch(
-        self, input_event: TextInput | Resize
+        self, input_event: DispatchInput
     ) -> EpochCompleted | TerminalResult | AdapterFailure:
         del input_event
         return self.failure
@@ -900,7 +958,7 @@ class _PrewrappedRuntimeFailure(_Application):
     )
 
     def dispatch(
-        self, input_event: TextInput | Resize
+        self, input_event: DispatchInput
     ) -> EpochCompleted | TerminalResult | AdapterFailure:
         del input_event
         return self.result
@@ -956,7 +1014,7 @@ class _ClassificationApplication(_Application):
         self.result = result
 
     def dispatch(
-        self, input_event: TextInput | Resize
+        self, input_event: DispatchInput
     ) -> EpochCompleted | TerminalResult | AdapterFailure:
         del input_event
         return cast(EpochCompleted | TerminalResult | AdapterFailure, self.result)
@@ -1054,7 +1112,7 @@ class _ReentrantApplication(_Application):
     reentrant_error: RuntimeError | None = None
 
     def dispatch(
-        self, input_event: TextInput | Resize
+        self, input_event: DispatchInput
     ) -> EpochCompleted | TerminalResult | AdapterFailure:
         assert self.adapter is not None
         try:
@@ -1084,7 +1142,7 @@ class _BlockingApplication(_Application):
         self.release = Event()
 
     def dispatch(
-        self, input_event: TextInput | Resize
+        self, input_event: DispatchInput
     ) -> EpochCompleted | TerminalResult | AdapterFailure:
         self.entered.set()
         if not self.release.wait(timeout=5):
