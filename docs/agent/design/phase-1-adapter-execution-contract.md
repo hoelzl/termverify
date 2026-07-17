@@ -248,10 +248,11 @@ PR #45 updated the v1 lifecycle validator and fixtures to enforce:
 
 These accepted inception-v1 lifecycle corrections add no generic member and do
 not authorize exhaustive schema work. PRs #47/#49 added the reviewed immutable
-contract and receipts; PR #51 added deterministic direct execution. The active
-Phase 1 handover now retains deterministic transcript resource governance and an
-amended behavior-based fixture gate. Installed-schema and release controls move
-to the draft pre-release successor; Phase 2 remains separately gated.
+contract and receipts; PR #51 added deterministic direct execution. The archived
+Phase 1 handover completed deterministic transcript resource governance and its
+amended behavior-based fixture gate. Installed-schema and release controls remain
+transferred to the active pre-release successor; Phase 2 remains separately
+gated.
 
 ## Deferred decisions
 
@@ -261,12 +262,12 @@ This contract intentionally does not decide:
 - explicit correlation for concurrent or unsolicited events;
 - timezone database/version/alias policy;
 - terminal filesystem containment or network allow-list semantics;
-- transcript, line, record-count, nesting, or structured-value resource limits;
 - schema package access and canonical `$id` hosting;
 - production PTY API or dependency selection;
 - sensitive evidence retention, baseline enablement, or artifact upload.
 
-Each requires a focused issue and independently reviewable acceptance evidence.
+Each remaining decision requires a focused issue and independently reviewable
+acceptance evidence.
 
 ## Acceptance evidence
 

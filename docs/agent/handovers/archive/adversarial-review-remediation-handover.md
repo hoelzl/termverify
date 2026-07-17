@@ -12,10 +12,10 @@
   `5270a09be39cd1c2a8d964b0cff7224797f7bdd1` received independent integrated
   approval with no Critical, High, Medium, or Low findings.
 - **Predecessor:** none; this focused remediation initiative was nested within,
-  but did not replace, the active
-  [Phase 1 readiness hardening handover](../phase-1-readiness-hardening-handover.md),
-  whose owner-reviewed scope disposition was recorded later without reopening
-  this completed remediation initiative.
+  but did not replace, the later-superseded
+  [Phase 1 readiness hardening handover](phase-1-readiness-hardening-handover.md),
+  whose owner-reviewed scope disposition and closure were recorded without
+  reopening this completed remediation initiative.
 - **Source reviews:** [GPT-5.6 review](../../design/adversarial-correctness-and-code-quality-review-gpt-5.6-sol-2026-07-16.md) and [Opus 4.8 review](../../design/adversarial-correctness-and-code-quality-review-opus-4.8-2026-07-16.md).
 - **Execution plan:** [detailed implementation plan](../../../../.hermes/plans/2026-07-16_215137-adversarial-review-remediation.md).
 - **Successor:** none

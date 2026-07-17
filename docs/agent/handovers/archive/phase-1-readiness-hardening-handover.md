@@ -2,51 +2,48 @@
 
 ## Handover metadata
 
-- **Status:** active — the maintainer accepted the complete scope disposition on
-  2026-07-17. Deterministic transcript resource governance remains the final
-  Phase 1 implementation class; the amended fixture/schema/workflow completion
-  definition and the draft successor boundary below must then pass integrated
-  review. Phase 2 is not active.
+- **Status:** superseded — effective when the reviewed transition resolving
+  issue #87 merges. The predecessor's amended completion boundary passed, and
+  the named Pre-release Boundary Hardening successor accepts every transferred
+  criterion intact. Phase 2 is not active.
 - **Owner:** project maintainer
 - **Created:** 2026-07-15
 - **Updated:** 2026-07-17
-- **Review required:** yes — accepted protocol compatibility,
-  deterministic-enforcement, evidence-security, schema-authority, and
-  baseline-governance decisions require executable implementation and
-  independent human-readable review.
+- **Review required:** satisfied for the predecessor boundary — independent
+  integrated review approved exact merged `main` at
+  `806372efa3897b7c2d88c2f58b0c8a9abe9cb401`, tree
+  `bbf85b7b4ccae7a97bbc81016f70b25fe2be997e`, with no findings and the verdict
+  `APPROVE_TRANSITION_AUTHORING`. The archival transition itself requires a
+  separate exact-candidate approval before merge.
 - **Predecessor:**
-  [Quality hardening handover](archive/quality-hardening-handover.md)
-- **Successor:** draft
-  [Pre-release boundary hardening handover](pre-release-boundary-hardening-handover.md),
-  which becomes active only in the later reviewed supersession/archive
-  transition.
-- **Completion boundary:** implement and independently review deterministic
-  transcript byte, line, record-count, nesting, and structured-value limits;
-  verify behavior-based executable coverage for every supported path under the
-  amended fixture definition; preserve the deliberately non-exhaustive schema
-  and existing pinned workflow-security boundary; pass the integrated gate; and
-  transfer every disposition-3 criterion intact by activating the named
-  successor. That transfer makes this handover `superseded`, not `complete`.
+  [Quality hardening handover](quality-hardening-handover.md)
+- **Successor:** active on this transition's merge —
+  [Pre-release boundary hardening handover](../pre-release-boundary-hardening-handover.md)
+- **Completion boundary:** satisfied — deterministic transcript limits were
+  implemented and independently reviewed; behavior-based supported-path
+  coverage, the deliberately non-exhaustive schema boundary, and the retained
+  pinned workflow-security controls passed integrated review; and every
+  disposition-3 criterion transfers intact to the active successor. That
+  transfer makes this handover `superseded`, not `complete`.
 
 ## Purpose and boundaries
 
-This handover transfers the July 2026 adversarial foundation review into a
-bounded prerequisite initiative. TermVerify's conceptual architecture remains
-sound. Since that review, the public immutable adapter contracts and deterministic
-direct execution slice have landed, but transcript/evidence completion criteria
-and stable-publication claims remain gated below. Phase 1 now continues only
-through the accepted transcript-resource slice and the integrated supersession
-gate recorded below. The named successor remains draft until that boundary
-passes.
+This archived handover records how the July 2026 adversarial foundation review
+became a bounded prerequisite initiative. TermVerify's conceptual architecture
+remained sound while the initiative delivered immutable adapter contracts,
+deterministic direct execution, safe evidence, transcript resource governance,
+and the amended integrated completion gate. Stable-publication and production
+boundaries transfer to the named successor rather than being claimed complete.
 
-**Current in scope:**
+**Final predecessor scope completed before supersession:**
 
-- implement deterministic, fail-closed transcript byte, line-byte, record-count,
-  nesting, and structured-value limits with parser/serializer symmetry;
-- verify the amended behavior-based fixture matrix, non-exhaustive schema role,
-  and retained pinned workflow-security boundary against the integrated result;
-- activate the named successor and supersede/archive this handover only after
-  those gates and an exact-candidate independent review pass.
+- deterministic, fail-closed transcript byte, line-byte, record-count, nesting,
+  and structured-value limits with parser/serializer symmetry were implemented;
+- the amended behavior-based fixture matrix, non-exhaustive schema role, and
+  retained pinned workflow-security boundary were verified against the
+  integrated result;
+- the named successor accepts all transferred criteria and becomes active in the
+  same reviewed transition that supersedes and archives this handover.
 
 **Transferred or otherwise out of current implementation scope:**
 
@@ -58,7 +55,7 @@ passes.
 - exhaustive schema expansion or an additional workflow checker without a
   separate accepted workstream;
 - automatic baseline approval or automatic acceptance of changed behavior;
-- broad refactoring unrelated to the remaining resource boundary.
+- broad refactoring unrelated to the predecessor's accepted resource work.
 
 This document is not an issue tracker. Create one focused GitHub issue and one
 independently reviewable pull request for each coherent workstream or accepted
@@ -184,7 +181,7 @@ prerequisite was filed:
   terminal-capability vocabularies. At that reconciliation point these defaults
   still required a durable contract. PRs #43–#51 subsequently implemented the
   execution, immutable-value, receipt, and direct-runtime slices; the key and
-  terminal-capability registries now transfer to the draft successor.
+  terminal-capability registries were later transferred to the named successor.
 
 The adapter-contract entry gate remains closed after PR #39. Remaining gates
 include the execution-epoch, readiness, quiescence, draining, vocabulary, and
@@ -221,9 +218,9 @@ The following intended Phase 1 slices are now executable and reviewed:
   dependency-vulnerability checks, and an exact-tree independent review.
 
 The closure audit originally found the following open or conflicting criteria.
-The maintainer resolved every scope conflict on 2026-07-17. Issue #85 completes
-the remaining resource-governance implementation; the amended integrated gate
-and exact-candidate review remain before this handover can be superseded:
+The maintainer resolved every scope conflict on 2026-07-17. Issue #85 and PR #86
+completed the remaining resource-governance implementation; the amended
+integrated gate and exact-candidate review subsequently passed:
 
 - **Resource governance — implemented within Phase 1 by issue #85:** parsing and
   serialization now enforce symmetric fixed ceilings of 32 MiB per transcript,
@@ -248,7 +245,7 @@ and exact-candidate review remain before this handover can be superseded:
 
 Key and non-empty terminal-capability vocabularies, named-timezone policy,
 network allow-list semantics, and production OS/PTY enforcement are accepted
-transfers to the draft successor rather than claimed Phase 1 evidence. Current
+transfers to the named successor rather than claimed Phase 1 evidence. Current
 direct execution avoids ambient enforcement guessing through explicit
 application ports and exact receipt binding, but syntax-level selectors remain
 semantically unapproved.
@@ -264,42 +261,45 @@ exactly one outcome:
 | Literal complete fixture and compatibility corpus | **Remove through amended completion definition** | Require reviewed behavior-based executable coverage of every supported path; use canonical fixtures where exact bytes/compatibility identity matter and focused/generated tests elsewhere. |
 | Exhaustive additional per-kind Draft 2020-12 schema coverage | **Remove through amended completion definition** | The schema remains a non-exhaustive structural/local aid. Runtime validation remains authoritative; schema/runtime agreement is required for encoded rules only. |
 | Additional workflow syntax/policy checker | **Remove through amended completion definition** | Retain the existing pinned `zizmor` and OSV-Scanner controls; require another checker only after reviewed evidence of maintained, non-duplicative signal. |
-| Named-timezone membership, tzdb version, alias, update, and compatibility policy | **Transfer intact** | Draft successor: deterministic vocabulary and configuration semantics. Named-zone receipts remain rejected except `UTC`. |
-| Semantic key-name registry | **Transfer intact** | Draft successor: deterministic vocabulary and configuration semantics. `input.key` remains absent from the immutable/direct surface. |
-| Semantic terminal-capability registry and enforcement evidence | **Transfer intact** | Draft successor: deterministic vocabulary and configuration semantics. Non-empty capability receipts remain rejected. |
-| Concurrent or unsolicited-event correlation | **Transfer intact** | Draft successor: concurrent event correlation. V1 remains single-flight with no idle unsolicited body records. |
-| Filesystem mapping/lifecycle/traversal/link/reparse/child/cleanup/failure semantics | **Transfer intact** | Draft successor: production containment. Direct application-port routing is not OS-containment proof; terminal/subprocess enforcement remains unsupported. |
-| Network allow-list DNS/address/redirect/proxy/loopback/inheritance/failure semantics | **Transfer intact** | Draft successor: production containment. Direct receipts remain deny-only; terminal/subprocess enforcement remains unsupported. |
-| Installed schema access and canonical `$id` publication | **Transfer intact** | Draft successor: distribution and release governance, required before the first supported external artifact. |
-| Direct native pseudoconsole close, native EOF/final-frame drain, and process-tree teardown beyond PR #53 | **Transfer intact** | Draft successor: production terminal adapter. The spike remains partial binding-level evidence. |
-| Release/changelog/compatibility, security disclosure, provenance, and coverage-ratchet controls | **Transfer intact** | Draft successor: distribution and release governance, required before the first supported external artifact. |
+| Named-timezone membership, tzdb version, alias, update, and compatibility policy | **Transfer intact** | Named successor: deterministic vocabulary and configuration semantics. Named-zone receipts remain rejected except `UTC`. |
+| Semantic key-name registry | **Transfer intact** | Named successor: deterministic vocabulary and configuration semantics. `input.key` remains absent from the immutable/direct surface. |
+| Semantic terminal-capability registry and enforcement evidence | **Transfer intact** | Named successor: deterministic vocabulary and configuration semantics. Non-empty capability receipts remain rejected. |
+| Concurrent or unsolicited-event correlation | **Transfer intact** | Named successor: concurrent event correlation. V1 remains single-flight with no idle unsolicited body records. |
+| Filesystem mapping/lifecycle/traversal/link/reparse/child/cleanup/failure semantics | **Transfer intact** | Named successor: production containment. Direct application-port routing is not OS-containment proof; terminal/subprocess enforcement remains unsupported. |
+| Network allow-list DNS/address/redirect/proxy/loopback/inheritance/failure semantics | **Transfer intact** | Named successor: production containment. Direct receipts remain deny-only; terminal/subprocess enforcement remains unsupported. |
+| Installed schema access and canonical `$id` publication | **Transfer intact** | Named successor: distribution and release governance, required before the first supported external artifact. |
+| Direct native pseudoconsole close, native EOF/final-frame drain, and process-tree teardown beyond PR #53 | **Transfer intact** | Named successor: production terminal adapter. The spike remains partial binding-level evidence. |
+| Release/changelog/compatibility, security disclosure, provenance, and coverage-ratchet controls | **Transfer intact** | Named successor: distribution and release governance, required before the first supported external artifact. |
 
 Workstream 4's fail-closed evidence and baseline boundary is complete for the
-current disabled-retention/disabled-publication scope. Workstream 5 is reconciled
-by this audit candidate but remains subject to its candidate-bound review.
+current disabled-retention/disabled-publication scope. Workstream 5 was
+reconciled and independently reviewed before this supersession transition.
 
-Consequently this handover remains active only for the integrated amended-gate
-review. The pre-release successor is draft, and no Phase 2 handover is created or
-activated. Native ConPTY close/drain and production containment remain successor
-work; they are not misclassified as completed Phase 1 evidence.
+### Final integrated closure and supersession basis
 
-The remaining transition sequence is intentionally narrow:
-
-1. verify the issue #85 deterministic resource-limit implementation together
-   with the amended behavior-based fixture matrix, deliberately non-exhaustive
-   schema boundary, and retained pinned workflow-security controls against the
-   integrated candidate;
-2. run the full completion gate and independently review the exact integrated
-   Phase 1 boundary;
-3. in a later reviewed transition, activate the named successor so it accepts
-   every disposition-3 criterion intact, mark this handover `superseded`, move it
-   to `archive/`, and update the index in the same change;
-4. keep Phase 2 inactive unless a separate owner-reviewed phase-boundary decision
-   explicitly activates it.
-
-These are separate implementation/review slices. None may expand the transcript
-wire shape, turn the standard schema into an exhaustive conformance oracle, or
-activate sensitive artifacts or baselines implicitly.
+- Issue #85 and PR #86 implemented deterministic resource governance. The final
+  reviewed commit `752b2d5114552f56c226fa75b3e02ce9aec5890d`, tree
+  `bbf85b7b4ccae7a97bbc81016f70b25fe2be997e`, received exact-candidate approval
+  with no findings; all 10 exact-head checks passed.
+- The independent integrated closure review examined merged `main` at
+  `806372efa3897b7c2d88c2f58b0c8a9abe9cb401`, the same tree, and reconciled the
+  complete union of source-review findings. It found no Critical, High, Medium,
+  or Low findings and ended `APPROVE_TRANSITION_AUTHORING`.
+- Its immutable export passed 662 tests with 94% branch coverage, Ruff, strict
+  mypy, both pre-commit stages, wheel/sdist builds and isolated imports,
+  knowledge and evidence validators, local-link and credential-sensitive checks,
+  and a clean synthetic Git status. All 10 exact-main GitHub checks passed.
+- The review verified behavior-based evidence for every supported path, runtime
+  authority over the deliberately non-exhaustive schema, and the retained pinned
+  zizmor and OSV-Scanner controls.
+- Every disposition-3 criterion remains intact in the named successor. Native
+  ConPTY close/drain, production containment, schema distribution/publication,
+  release governance, and deterministic vocabularies remain unsupported until
+  separately accepted and implemented.
+- The documentation-only transition resolving issue #87 becomes effective on
+  merge after its own exact-candidate independent review. It does not alter the
+  transcript wire shape, activate sensitive artifacts or baselines, or authorize
+  Phase 2.
 
 ### Original confirmed P0 defects
 
@@ -327,7 +327,7 @@ activate sensitive artifacts or baselines implicitly.
 
 - Identifier grammar and RFC 5646/`C` locale syntax are now enforced. The
   named-timezone vocabulary, alias, registry-version, and update policy remains
-  unimplemented and transfers intact to the draft successor; direct receipts
+  unimplemented and transfers intact to the active successor; direct receipts
   continue to reject named zones other than `UTC`.
 - Required terminal capabilities can be omitted when the echoed effective value
   omits them too; nested configuration objects are not consistently closed.
@@ -485,10 +485,10 @@ items recorded in the closure audit above.
 
 ## Historical workstreams and accepted disposition
 
-The original workstreams below are retained for provenance. The accepted
-2026-07-17 table above governs current execution: only Workstream 1's transcript
-resource limits remain Phase 1 implementation work; transferred and amended
-criteria must not be reopened here.
+The original workstreams below are retained for provenance. At the accepted
+2026-07-17 disposition, only Workstream 1's transcript resource limits remained
+Phase 1 implementation work; that boundary is now complete and reviewed.
+Transferred and amended criteria must not be reopened in this archived handover.
 
 ### 1. Restore transcript contract integrity
 
@@ -711,7 +711,7 @@ Also require:
 
 - green CI and Security workflows across the declared OS/Python matrix;
 - isolated wheel and sdist tests for the transcript API; installed schema access
-  belongs to the draft successor;
+  belongs to the active successor;
 - independent review of protocol, evidence, baseline, and public API decisions;
 - adversarial fixture/property results attached to the relevant PRs;
 - no unreviewed baseline or CI artifact publication.
@@ -737,14 +737,11 @@ Also require:
 
 ## Transition rules
 
-- Mark **blocked** when an owner decision prevents all remaining safe work, a
-  required independent review is unavailable, or a platform enforcement claim
-  cannot be demonstrated.
-- Keep **active** while prerequisite work can proceed without crossing an
-  unresolved decision gate.
-- This handover's accepted path is **superseded**, not complete: first verify the
-  transcript-resource slice and amended completion gates, then activate the named
-  successor so it accepts every transferred criterion intact.
-- On **superseded**, move this document to
-  `docs/agent/handovers/archive/`, update `docs/agent/handovers/index.md`, and
-  preserve the final decisions and evidence.
+- This handover is **superseded**, not complete, effective when the reviewed
+  transition resolving issue #87 merges.
+- The named successor accepts every transferred criterion intact and becomes the
+  active handover in that same merge.
+- This archived document preserves the final decisions, implementation evidence,
+  amended completion definition, integrated review, and transfer boundary.
+- Supersession does not activate Phase 2; that still requires a separate
+  owner-reviewed phase-boundary decision.

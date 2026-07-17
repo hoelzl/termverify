@@ -66,9 +66,9 @@ interface constraints above; they do not demonstrate a production adapter.
 ## Consequences and follow-up
 
 - Canonical lifecycle fixtures and deterministic execution-contract tests now
-  exist. The active Phase 1 handover retains deterministic transcript resource
-  governance and an amended behavior-based fixture gate; installed schema access
-  transfers to the draft pre-release successor.
+  exist. The archived Phase 1 handover completed deterministic transcript
+  resource governance and its amended behavior-based fixture gate; installed
+  schema access remains transferred to the active pre-release successor.
 - The first production Windows adapter must provide direct, reviewable evidence
   for native pseudoconsole ownership, close, EOF/final-frame draining,
   process-tree teardown, and truthful OS-level enforcement. PR #53 is not that
