@@ -28,6 +28,7 @@ import re
 import signal
 import sys
 import threading
+import time
 from typing import Final
 
 import pytest
@@ -268,6 +269,7 @@ def test_forced_close_terminates_child_observed_at_os_level() -> None:
 
         os_exit_code = _wait_for_os_exit_code(handle, _OS_WAIT_TIMEOUT_MS)
     finally:
+        child.close(force=True)
         _close_process_handle(handle)
         drain.join()
 
@@ -275,7 +277,9 @@ def test_forced_close_terminates_child_observed_at_os_level() -> None:
     assert child.exit_status == int(signal.SIGTERM)
     assert not child.is_alive()
     assert "TV_UNREACHED" not in drain.text()
-    assert isinstance(drain.wait_for_end(), ConptyEndOfStreamError | ConptyClosedError)
+    # Close unpublishes the native object before terminating the child, so a
+    # read interrupted by the close surfaces the closed classification.
+    assert isinstance(drain.wait_for_end(), ConptyClosedError)
     with pytest.raises(ConptyClosedError):
         child.read()
     with pytest.raises(ConptyClosedError):
@@ -304,9 +308,48 @@ def test_release_only_close_releases_native_handles_child_observably() -> None:
 
         os_exit_code = _wait_for_os_exit_code(handle, _OS_WAIT_TIMEOUT_MS)
     finally:
+        child.close(force=True)
         _close_process_handle(handle)
         drain.join()
 
+    assert os_exit_code == _STATUS_CONTROL_C_EXIT
+    assert child.exit_status is None
+    assert not child.is_alive()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_release_only_close_releases_handles_despite_held_read_exception() -> None:
+    """Item 2 regression: a read racing the close cannot pin the native handles.
+
+    The reader is deliberately parked on an *empty* pipe before the close, so
+    the close's cancellation surfaces inside a blocking native read. The
+    terminal exception is captured and held alive across the OS wait: if the
+    exception's traceback still referenced the native object, the destructor
+    (and ``ClosePseudoConsole``) could not run and the child would survive.
+    Observing ``STATUS_CONTROL_C_EXIT`` while the exception is held proves the
+    handles were released regardless.
+    """
+    child = _spawn(_BLOCKING_CHILD)
+    drain = _Drain(child)
+    handle = _open_process_handle(child.pid)
+    try:
+        drain.wait_for_marker("TV_READY")
+        # Arrangement, not evidence: give the reader time to drain residual
+        # frames and re-enter a blocking read on the now-quiet pipe, the
+        # interleaving that previously leaked a raw native error whose
+        # traceback pinned the handles.
+        time.sleep(0.5)
+
+        child.close(force=False)
+
+        terminal = drain.wait_for_end()
+        os_exit_code = _wait_for_os_exit_code(handle, _OS_WAIT_TIMEOUT_MS)
+    finally:
+        child.close(force=True)
+        _close_process_handle(handle)
+        drain.join()
+
+    assert isinstance(terminal, ConptyClosedError)
     assert os_exit_code == _STATUS_CONTROL_C_EXIT
     assert child.exit_status is None
     assert not child.is_alive()
@@ -351,7 +394,7 @@ def test_conpty_child_lifecycle_matches_spike_evidence() -> None:
         drain.join()
 
     assert not writer.is_alive()
-    assert isinstance(drain.wait_for_end(), ConptyEndOfStreamError | ConptyClosedError)
+    assert isinstance(drain.wait_for_end(), ConptyClosedError)
     assert not child.is_alive()
     assert type(child.exit_status) is int
 

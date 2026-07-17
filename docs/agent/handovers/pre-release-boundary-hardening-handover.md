@@ -252,11 +252,17 @@ binding; and a release-only close proves deterministic native handle release
 because ConPTY itself terminates the attached client with
 `STATUS_CONTROL_C_EXIT`, observed entirely outside the binding, while the
 binding truthfully records no exit status it never observed. Close
-unpublishes the native object before cancelling in-flight native reads until
-each returns, so a read that raced the close cannot hold the handles open.
-Process-tree teardown, cancellation/recovery taxonomy, dimensions receipts,
-enforcement receipts, and evidence normalization remain unproven and
-fail-closed.
+unpublishes the native object, cancels in-flight native reads and writes
+until each returns, classifies I/O interrupted by close as the closed error
+instead of leaking raw native failures, and drops frame-local native
+references before raising so a held exception traceback cannot pin the
+handles; a regression test closes while a reader is parked on an empty pipe
+and observes the client's `STATUS_CONTROL_C_EXIT` termination while the
+terminal exception is still held. End-of-stream classification is only
+claimed while the binding is open, because a close may abandon buffered
+output. Process-tree teardown, cancellation/recovery taxonomy, dimensions
+receipts, enforcement receipts, and evidence normalization remain unproven
+and fail-closed.
 
 ## Risks and non-negotiables
 

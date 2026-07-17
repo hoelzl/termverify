@@ -49,9 +49,12 @@ class ConptyClosedError(RuntimeError):
 class ConptyEndOfStreamError(Exception):
     """Raised by ``read`` when the native output pipe reports end-of-stream.
 
-    Windows pipe semantics deliver all buffered output before the read side
-    observes the broken pipe, so every byte the pseudoconsole emitted has been
-    returned by earlier ``read`` calls when this is raised.
+    Only raised while the binding is open: a read interrupted by ``close``
+    raises :class:`ConptyClosedError` instead, because close may abandon
+    buffered output. On this genuine end-of-stream path Windows pipe
+    semantics deliver all buffered output before the read side observes the
+    broken pipe, so every byte the pseudoconsole emitted has been returned by
+    earlier ``read`` calls when this is raised.
     """
 
 
@@ -106,7 +109,7 @@ class ConptyChild:
         self._pid = pid
         self._exit_status: int | None = None
         self._lock = threading.Lock()
-        self._pending_reads = 0
+        self._pending_io = 0
 
     @classmethod
     def spawn(cls, argv: Sequence[str], *, rows: int, columns: int) -> ConptyChild:
@@ -143,32 +146,46 @@ class ConptyChild:
     def read(self) -> str:
         """Block until pseudoconsole output is available and return it.
 
-        Raises :class:`ConptyEndOfStreamError` when the native output pipe
-        reports end-of-stream after the child has exited; the native exit
-        status has been captured by then. A native read failure while the
-        child is still alive is re-raised unchanged.
+        Raises :class:`ConptyEndOfStreamError` when the binding is still open
+        and the native output pipe reports end-of-stream after the child has
+        exited; the native exit status has been captured by then. Raises
+        :class:`ConptyClosedError` when the binding is closed before or while
+        the read is in flight. Any other native read failure — the binding
+        open, the child alive — is re-raised unchanged.
         """
-        with self._lock:
-            pty = self._pty
-            if pty is None:
-                raise ConptyClosedError("the ConPTY binding is closed")
-            self._pending_reads += 1
+        pty = self._begin_io()
         try:
             return str(pty.read(blocking=True))
         except Exception as error:
-            if not pty.isalive():
-                self._capture_exit_status(pty)
-                raise ConptyEndOfStreamError(
-                    "the native ConPTY output pipe reported end-of-stream"
-                ) from error
-            raise
+            replacement = self._classify_io_failure(pty, end_of_stream=True)
+            # Drop the frame-local native reference before raising: the
+            # exception's traceback keeps this frame alive, and a pinned
+            # native object would defer the handle release indefinitely.
+            del pty
+            if replacement is None:
+                raise
+            raise replacement from error
         finally:
-            with self._lock:
-                self._pending_reads -= 1
+            self._end_io()
 
     def write(self, text: str) -> None:
-        """Write ``text`` to the child without claiming a byte-count receipt."""
-        self._require_open().write(text)
+        """Write ``text`` to the child without claiming a byte-count receipt.
+
+        Raises :class:`ConptyClosedError` when the binding is closed before
+        or while the write is in flight; other native write failures are
+        re-raised unchanged.
+        """
+        pty = self._begin_io()
+        try:
+            pty.write(text)
+        except Exception as error:
+            replacement = self._classify_io_failure(pty, end_of_stream=False)
+            del pty
+            if replacement is None:
+                raise
+            raise replacement from error
+        finally:
+            self._end_io()
 
     def resize(self, *, rows: int, columns: int) -> None:
         """Resize the pseudoconsole explicitly."""
@@ -193,11 +210,12 @@ class ConptyChild:
         record — while the handle release itself makes ConPTY terminate the
         attached client, which callers can observe at the OS level.
 
-        Close first unpublishes the native object so no new read can start,
-        then cancels pending native I/O until every in-flight read has
-        returned. The native handles are therefore released as soon as the
-        last frame still holding the object unwinds, never left behind a
-        read that blocked after a single cancellation was already spent.
+        Close first unpublishes the native object so no new I/O can start,
+        then cancels pending native I/O until every in-flight read and write
+        has returned. Interrupted I/O surfaces :class:`ConptyClosedError` with
+        its frame-local native reference dropped, so a held exception cannot
+        pin the native object and the handles are released as soon as the
+        last frame still holding it unwinds.
         """
         with self._lock:
             pty = self._pty
@@ -206,7 +224,11 @@ class ConptyChild:
             self._pty = None
         try:
             if force and pty.isalive():
-                os.kill(self._pid, signal.SIGTERM)
+                # The child can exit between the liveness check and the kill;
+                # a kill refused for an already-gone process must not abort
+                # the close, and the handle wait below stays authoritative.
+                with contextlib.suppress(OSError):
+                    os.kill(self._pid, signal.SIGTERM)
                 if not _wait_for_child_exit(self._pid, _CHILD_EXIT_WAIT_MS):
                     raise OSError(
                         f"child process {self._pid} did not terminate on forced close"
@@ -214,20 +236,20 @@ class ConptyChild:
             if not pty.isalive():
                 self._capture_exit_status(pty)
         finally:
-            self._cancel_pending_reads(pty)
+            self._cancel_pending_io(pty)
 
-    def _cancel_pending_reads(self, pty: Any) -> None:
-        """Cancel native I/O until no read frame can still block on ``pty``."""
+    def _cancel_pending_io(self, pty: Any) -> None:
+        """Cancel native I/O until no read or write frame can block on ``pty``."""
         deadline = time.monotonic() + _READ_CANCEL_TIMEOUT_SECONDS
         while True:
             with self._lock:
-                pending = self._pending_reads
+                pending = self._pending_io
             if pending == 0:
                 return
             with contextlib.suppress(Exception):
                 pty.cancel_io()
             if time.monotonic() >= deadline:
-                raise OSError("pending native ConPTY reads did not cancel during close")
+                raise OSError("pending native ConPTY I/O did not cancel during close")
             time.sleep(_READ_CANCEL_RETRY_SECONDS)
 
     @property
@@ -243,6 +265,41 @@ class ConptyChild:
         if pty is None:
             raise ConptyClosedError("the ConPTY binding is closed")
         return pty
+
+    def _begin_io(self) -> Any:
+        """Atomically take the native object and count the in-flight call."""
+        with self._lock:
+            pty = self._pty
+            if pty is None:
+                raise ConptyClosedError("the ConPTY binding is closed")
+            self._pending_io += 1
+            return pty
+
+    def _end_io(self) -> None:
+        with self._lock:
+            self._pending_io -= 1
+
+    def _classify_io_failure(
+        self, pty: Any, *, end_of_stream: bool
+    ) -> Exception | None:
+        """Map a native I/O failure to the binding's honest exception, if any.
+
+        A failure observed after ``close`` unpublished the native object is
+        the close's own cancellation (or indistinguishable from it) and
+        becomes :class:`ConptyClosedError` — never an end-of-stream claim,
+        because close may have abandoned buffered output. A read failure on
+        an open binding with a dead child is the native end-of-stream signal.
+        Anything else is the caller's to see unchanged (``None``).
+        """
+        if not pty.isalive():
+            self._capture_exit_status(pty)
+        if self._pty is None:
+            return ConptyClosedError("the ConPTY binding was closed during native I/O")
+        if end_of_stream and not pty.isalive():
+            return ConptyEndOfStreamError(
+                "the native ConPTY output pipe reported end-of-stream"
+            )
+        return None
 
     def _capture_exit_status(self, pty: Any) -> None:
         status = pty.get_exitstatus()
