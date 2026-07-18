@@ -371,6 +371,36 @@ cross-platform, fake-driven, and fully ratcheted. Epoch machinery, marker
 protocol, stop semantics, and Windows integration evidence remain slices 3
 and 4, fail-closed until they land.
 
+The owner accepted adapter slice 3 on 2026-07-18 (issue #119, adversarially
+reviewed): the `ConptyAdapter` epoch machinery, entirely fake-driven and
+fully ratcheted. Readiness is defined solely by a configurable exact marker
+scanned in stream order (split chunks handled); the private-OSC default
+remains **provisional** with no ConPTY passthrough claim — that evidence is
+slice 4, and configurability is the mitigation. Raw chunks are fed to the
+injected normalizer unmodified and retained as ordered `terminal.output`
+events; observations carry the effective dimensions and the normalizer
+snapshot at the epoch's manual time, with frame/dimension agreement enforced
+fail-closed. The classification matrix is implemented as designed:
+end-of-stream yields the observed native exit record (a missing or invalid
+record is a structured failure, never fabricated); spawn, normalizer,
+native, unexpected-close, and concurrent-I/O outcomes are structured
+failures; every terminal result force-closes the binding with close
+failures disclosed. The mandatory explicit abort deadline is armed via an
+injectable watchdog before each blocking read and can only produce a
+structured failure disclosing the policy; adversarial review forced
+deadline attribution to be epoch-scoped, so an expiry aborts exactly the
+epoch that armed it — even when a marker was still read — and only the
+genuine aftermath of a deadline-driven close is ever attributed to the
+deadline. Forced stop records the observed exit with a forced-termination
+disclosure diagnostic bounding evidence at the last marker; `KeyInput`
+uses the structured runtime-failure path. Disclosed follow-up for slice 4:
+the watchdog wraps only reads per the accepted design; binding evidence
+(issue #110) showed no conin write backpressure on the verified matrix,
+and whether writes also need deadline protection is a slice-4
+consideration. Windows integration evidence — real ConPTY path, marker
+passthrough, cooperative fixture child, end-to-end dimensions observation —
+remains slice 4 and fail-closed.
+
 ## Risks and non-negotiables
 
 - Do not expose unresolved capability, timezone-enforcement, filesystem,
