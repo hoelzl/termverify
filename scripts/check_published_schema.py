@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import runpy
 import sys
+import time
 import urllib.request
 from collections.abc import Callable
 from pathlib import Path
@@ -19,6 +20,8 @@ from typing import cast
 
 CANONICAL_BASE_URL = "https://termverify.dev"
 FETCH_TIMEOUT_SECONDS = 30.0
+FETCH_ATTEMPTS = 8
+FETCH_RETRY_DELAY_SECONDS = 15.0
 
 _BUILDER = runpy.run_path(
     str(Path(__file__).with_name("build_site.py")),
@@ -38,6 +41,38 @@ def verify_published_bytes(url: str, published: bytes, committed: bytes) -> None
             f"published schema at {url} does not match the committed resource:"
             f" published {len(published)} bytes, committed {len(committed)} bytes"
         )
+
+
+def published_url(base_url: str, resource: Path) -> str:
+    """Return the canonical published URL for one schema resource."""
+    return f"{base_url.rstrip('/')}/{_SITE_SCHEMA_PREFIX}/{resource.as_posix()}"
+
+
+def verify_with_retry(
+    url: str,
+    committed: bytes,
+    *,
+    fetcher: Callable[[str], bytes],
+    attempts: int = FETCH_ATTEMPTS,
+    delay_seconds: float = FETCH_RETRY_DELAY_SECONDS,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    """Verify one published schema, retrying transient errors and stale bytes.
+
+    Retries cover both fetch failures (fresh deployment, DNS or TLS not yet
+    settled) and byte mismatches (CDN still serving the previous deployment).
+    The final attempt's failure propagates unchanged.
+    """
+    for attempt in range(attempts):
+        if attempt:
+            sleep(delay_seconds)
+        try:
+            verify_published_bytes(url, fetcher(url), committed)
+        except (OSError, AssertionError):
+            if attempt == attempts - 1:
+                raise
+        else:
+            return
 
 
 def _fetch(url: str) -> bytes:
@@ -65,9 +100,9 @@ def main() -> int:
     arguments = parser.parse_args()
 
     for resource in _discover_schema_resources(arguments.schemas_root):
-        url = f"{arguments.base_url}/{_SITE_SCHEMA_PREFIX}/{resource.as_posix()}"
+        url = published_url(arguments.base_url, resource)
         committed = (arguments.schemas_root / resource).read_bytes()
-        verify_published_bytes(url, _fetch(url), committed)
+        verify_with_retry(url, committed, fetcher=_fetch)
         print(f"byte-identical: {url}")
     return 0
 

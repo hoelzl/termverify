@@ -47,14 +47,17 @@ Registrar and DNS: IONOS (`termverify.dev`). The configured records:
 GitHub-side state: the domain is a **verified domain** on the owner account
 (this closes the Pages domain-takeover window and must stay verified), and
 the repository's Pages settings use build source **GitHub Actions** with
-custom domain `termverify.dev`. "Enforce HTTPS" is enabled once GitHub's
-certificate exists; the `.dev` TLD is HSTS-preloaded, so the site is
-HTTPS-only regardless.
+custom domain `termverify.dev`. "Enforce HTTPS" is enabled (certificate
+issued and enforcement turned on 2026-07-19); the `.dev` TLD is
+HSTS-preloaded, so the site is HTTPS-only regardless. Keep both the domain
+verification and HTTPS enforcement in place.
 
 ## Troubleshooting
 
-- **Verify job fails with a byte mismatch** right after a deploy: usually
-  CDN propagation lag. Re-run the failed job; if it still fails, compare
+- **Verify job fails** right after a deploy: the checker already retries
+  fetch errors and stale bytes for roughly two minutes per URL, so a
+  failure usually means more than CDN propagation lag. Re-run the failed
+  job once; if it still fails, compare
   `curl -s https://termverify.dev/schemas/termverify.transcript/v1.schema.json | sha256sum`
   against the committed file.
 - **Certificate or connection errors** on `termverify.dev`: check the apex

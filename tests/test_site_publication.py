@@ -30,6 +30,11 @@ _CHECKER = runpy.run_path(
 verify_published_bytes = cast(
     Callable[[str, bytes, bytes], None], _CHECKER["verify_published_bytes"]
 )
+verify_with_retry = cast(
+    Callable[..., None],
+    _CHECKER["verify_with_retry"],
+)
+published_url = cast(Callable[[str, Path], str], _CHECKER["published_url"])
 CANONICAL_BASE_URL = cast(str, _CHECKER["CANONICAL_BASE_URL"])
 
 COMMITTED_SCHEMAS_ROOT = Path("src/termverify/schemas")
@@ -72,6 +77,10 @@ class TestDiscovery:
         root.mkdir()
         with pytest.raises(ValueError, match="no schema resources"):
             discover_schema_resources(root)
+
+    def test_missing_root_fails_closed_with_clear_message(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="not a directory"):
+            discover_schema_resources(tmp_path / "absent")
 
 
 class TestBuildSite:
@@ -136,6 +145,12 @@ class TestBuildSite:
         with pytest.raises(ValueError, match="not empty"):
             build_site(COMMITTED_SCHEMAS_ROOT, output)
 
+    def test_refuses_output_path_that_is_a_file(self, tmp_path: Path) -> None:
+        output = tmp_path / "site"
+        output.write_bytes(b"a file, not a directory")
+        with pytest.raises(ValueError, match="not a directory"):
+            build_site(COMMITTED_SCHEMAS_ROOT, output)
+
 
 class TestVerifyPublishedBytes:
     def test_identical_bytes_pass(self) -> None:
@@ -155,3 +170,70 @@ class TestVerifyPublishedBytes:
 
     def test_canonical_base_url_is_the_owner_domain(self) -> None:
         assert CANONICAL_BASE_URL == "https://termverify.dev"
+
+
+class TestPublishedUrl:
+    def test_joins_base_and_schema_path(self) -> None:
+        url = published_url("https://termverify.dev", Path("example/v1.schema.json"))
+        assert url == "https://termverify.dev/schemas/example/v1.schema.json"
+
+    def test_trailing_slash_on_base_is_normalized(self) -> None:
+        url = published_url("https://termverify.dev/", Path("example/v1.schema.json"))
+        assert url == "https://termverify.dev/schemas/example/v1.schema.json"
+
+
+class TestVerifyWithRetry:
+    URL = "https://termverify.dev/schemas/example/v1.schema.json"
+
+    def test_transient_fetch_errors_are_retried_until_success(self) -> None:
+        outcomes: list[object] = [OSError("no route"), OSError("reset"), b"ok\n"]
+        delays: list[float] = []
+
+        def fetcher(url: str) -> bytes:
+            outcome = outcomes.pop(0)
+            if isinstance(outcome, bytes):
+                return outcome
+            raise cast(OSError, outcome)
+
+        verify_with_retry(
+            self.URL,
+            b"ok\n",
+            fetcher=fetcher,
+            attempts=5,
+            delay_seconds=7.0,
+            sleep=delays.append,
+        )
+        assert not outcomes
+        assert delays == [7.0, 7.0]
+
+    def test_stale_bytes_are_retried_then_fail_after_all_attempts(self) -> None:
+        calls: list[str] = []
+        delays: list[float] = []
+
+        def fetcher(url: str) -> bytes:
+            calls.append(url)
+            return b"stale\n"
+
+        with pytest.raises(AssertionError, match="does not match"):
+            verify_with_retry(
+                self.URL,
+                b"fresh\n",
+                fetcher=fetcher,
+                attempts=3,
+                delay_seconds=1.0,
+                sleep=delays.append,
+            )
+        assert calls == [self.URL] * 3
+        assert delays == [1.0, 1.0]
+
+    def test_immediate_match_neither_retries_nor_sleeps(self) -> None:
+        delays: list[float] = []
+        verify_with_retry(
+            self.URL,
+            b"ok\n",
+            fetcher=lambda url: b"ok\n",
+            attempts=5,
+            delay_seconds=9.0,
+            sleep=delays.append,
+        )
+        assert delays == []

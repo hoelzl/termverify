@@ -33,8 +33,16 @@ def discover_schema_resources(schemas_root: Path) -> tuple[Path, ...]:
     Every file must sit exactly one directory deep as
     ``<protocol>/<version>.schema.json``; anything else fails closed.
     """
+    if not schemas_root.is_dir():
+        raise ValueError(f"schema root {schemas_root} is not a directory")
     resources: list[Path] = []
     for path in sorted(schemas_root.rglob("*")):
+        if path.is_symlink():
+            relative = path.relative_to(schemas_root)
+            raise ValueError(
+                f"symlink in schema tree: {relative.as_posix()!r};"
+                " only regular files are publishable"
+            )
         if path.is_dir():
             continue
         relative = path.relative_to(schemas_root)
@@ -92,8 +100,11 @@ def _landing_page(published: tuple[str, ...]) -> str:
 
 def build_site(schemas_root: Path, output_dir: Path) -> tuple[str, ...]:
     """Build the site into ``output_dir`` and return published schema paths."""
-    if output_dir.exists() and any(output_dir.iterdir()):
-        raise ValueError(f"output directory {output_dir} is not empty")
+    if output_dir.exists():
+        if not output_dir.is_dir():
+            raise ValueError(f"output path {output_dir} is not a directory")
+        if any(output_dir.iterdir()):
+            raise ValueError(f"output directory {output_dir} is not empty")
     resources = discover_schema_resources(schemas_root)
     published = tuple(
         f"{SITE_SCHEMA_PREFIX}/{resource.as_posix()}" for resource in resources
