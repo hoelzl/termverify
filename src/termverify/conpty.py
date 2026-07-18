@@ -49,7 +49,6 @@ Readiness and quiescence are defined only by observable evidence:
 
 from __future__ import annotations
 
-import contextlib
 import threading
 from collections.abc import Callable, Sequence
 from typing import Final, Literal, Protocol, cast, runtime_checkable
@@ -379,7 +378,7 @@ class ConptyAdapter:
         self._pending = ""
         self._columns = 0
         self._rows = 0
-        self._deadline_fired = threading.Event()
+        self._deadline_closed = False
 
     def _set_state(self, state: _State) -> None:
         with self._state_lock:
@@ -430,11 +429,14 @@ class ConptyAdapter:
 
     # --- epoch loop --------------------------------------------------------
 
-    def _read_chunk(self, child: ConptyChildPort) -> str:
+    def _read_chunk(self, child: ConptyChildPort, expired: threading.Event) -> str:
         def expire() -> None:
-            self._deadline_fired.set()
-            with contextlib.suppress(Exception):
+            expired.set()
+            try:
                 child.close(force=True)
+            except Exception:
+                return
+            self._deadline_closed = True
 
         disarm = self._watchdog.arm(self._abort_deadline_ms, expire)
         try:
@@ -508,12 +510,14 @@ class ConptyAdapter:
             process=process,
         )
 
-    def _read_epoch_chunks(self, child: ConptyChildPort, chunks: list[str]) -> None:
+    def _read_epoch_chunks(
+        self, child: ConptyChildPort, chunks: list[str], expired: threading.Event
+    ) -> None:
         """Read until one readiness marker is observed in stream order."""
         if self._scan_for_marker():
             return
         while True:
-            chunk = self._read_chunk(child)
+            chunk = self._read_chunk(child, expired)
             chunks.append(chunk)
             self._feed(chunk)
             self._pending += chunk
@@ -587,22 +591,37 @@ class ConptyAdapter:
         self,
         at_ms: ManualTime,
         write: Callable[[], None] | None,
+        write_step: str,
         write_failure: str,
     ) -> EpochResult:
         child = cast(ConptyChildPort, self._child)
         chunks: list[str] = []
+        # Deadline attribution is deliberately scoped: `expired` records an
+        # expiry during THIS epoch's reads, and `_deadline_closed` records
+        # that some expiry actually force-closed the binding (whose aftermath
+        # any later failure then is). A failed expiry close in an earlier
+        # epoch must never relabel an unrelated later failure.
+        expired = threading.Event()
         try:
             if write is not None:
                 try:
                     write()
                 except Exception as error:
-                    raise _EpochFailure(write_failure, {"during": "write"}) from error
-            self._read_epoch_chunks(child, chunks)
+                    raise _EpochFailure(
+                        write_failure, {"during": write_step}
+                    ) from error
+            self._read_epoch_chunks(child, chunks, expired)
+            if expired.is_set():
+                # The deadline expired during this epoch even though a marker
+                # was still observed (the forced close failed or lost the
+                # race): the abort policy fired, so no successful epoch may
+                # be claimed.
+                return self._deadline_abort(at_ms)
             observation = self._observation(at_ms, chunks, None)
         except ConptyEndOfStreamError:
             return self._finish_from_exit(at_ms, chunks)
         except _EpochFailure as failure:
-            if self._deadline_fired.is_set():
+            if expired.is_set() or self._deadline_closed:
                 return self._deadline_abort(at_ms)
             return self._fail_runtime(at_ms, failure.message, failure.details)
         self._set_time_and_state(at_ms, "idle")
@@ -686,7 +705,7 @@ class ConptyAdapter:
                 {"during": "normalizer"},
             )
         initial_ms = ManualTime(configuration.clock.initial_ms)
-        result = self._run_epoch(initial_ms, None, "")
+        result = self._run_epoch(initial_ms, None, "", "")
         if type(result) is EpochCompleted:
             return Started(constraints=constraints, observation=result.observation)
         terminal_result = cast(TerminalResult, result)
@@ -728,6 +747,7 @@ class ConptyAdapter:
             return self._run_epoch(
                 input_event.at_ms,
                 write_text,
+                "write",
                 "the input text could not be written to the child",
             )
         resize = cast(Resize, input_event)
@@ -741,7 +761,7 @@ class ConptyAdapter:
             self._columns = resize.columns
 
         return self._run_epoch(
-            resize.at_ms, apply_resize, "the resize could not be applied"
+            resize.at_ms, apply_resize, "resize", "the resize could not be applied"
         )
 
     def advance_clock(self, input_event: ClockAdvance) -> EpochResult:
@@ -756,7 +776,7 @@ class ConptyAdapter:
             ):
                 raise ValueError("clock advance must move the current manual time")
             self._state = "active"
-        return self._run_epoch(input_event.at_ms, None, "")
+        return self._run_epoch(input_event.at_ms, None, "", "")
 
     def stop(self, input_event: Stop) -> TerminalResult:
         if type(input_event) is not Stop:

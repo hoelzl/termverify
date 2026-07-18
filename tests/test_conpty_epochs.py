@@ -660,7 +660,7 @@ def test_resize_failure_is_a_runtime_failure() -> None:
 
     assert type(result) is TerminalResult
     assert type(result.outcome) is RunFailed
-    assert result.outcome.failure.details == {"during": "write"}
+    assert result.outcome.failure.details == {"during": "resize"}
     assert binding.child.closes == [True]
 
 
@@ -725,21 +725,38 @@ def test_expire_close_failure_still_classifies_the_deadline_abort() -> None:
     assert details == {"abort-deadline-ms": _DEADLINE_MS, "close": "failed"}
 
 
-def test_late_watchdog_fire_aborts_the_next_epoch() -> None:
+def test_deadline_expiry_racing_a_successful_read_still_aborts() -> None:
     binding = _FakeBinding(_FakeChild([_MARKER, "echo" + _MARKER]))
     watchdog = _FakeWatchdog(fire_at_disarm=2)
     adapter = _adapter(binding, watchdog=watchdog)
     started = adapter.start("run-conpty", _configuration())
     assert type(started) is Started
 
-    completed = adapter.dispatch(TextInput(ManualTime(0), "x"))
-    assert type(completed) is EpochCompleted
-
-    result = adapter.dispatch(TextInput(ManualTime(0), "y"))
+    result = adapter.dispatch(TextInput(ManualTime(0), "x"))
 
     assert type(result) is TerminalResult
     assert type(result.outcome) is RunFailed
     assert result.outcome.failure.details == {"abort-deadline-ms": _DEADLINE_MS}
+    assert binding.child.closed
+
+
+def test_deadline_expiry_with_failed_close_never_yields_success() -> None:
+    child = _FakeChild([_MARKER, "late" + _MARKER], close_error=OSError("close failed"))
+    binding = _FakeBinding(child)
+    watchdog = _FakeWatchdog(fire_at_arm=2)
+    adapter = _adapter(binding, watchdog=watchdog)
+    started = adapter.start("run-conpty", _configuration())
+    assert type(started) is Started
+
+    result = adapter.dispatch(TextInput(ManualTime(0), "x"))
+
+    assert type(result) is TerminalResult
+    assert type(result.outcome) is RunFailed
+    assert result.outcome.failure.details == {
+        "abort-deadline-ms": _DEADLINE_MS,
+        "close": "failed",
+    }
+    assert "deadline" in result.outcome.failure.message
 
 
 def test_close_failure_after_exit_is_a_runtime_failure() -> None:
