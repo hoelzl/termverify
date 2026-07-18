@@ -55,7 +55,7 @@ Every row has disposition **transfer intact to this named successor**.
 | Distribution and release governance | Resolvable canonical schema publication for the documented `$id` | The current unresolved host is not a publication contract. Runtime validation remains authoritative. |
 | Distribution and release governance | Release checklist, changelog/compatibility policy, security-disclosure process, and build/release provenance | Implemented as governance: reviewed checklist, changelog with pre-1.0 policy, private-disclosure process, and a tag-triggered attested draft-artifact workflow. No release is authorized, no index publishing exists, and the package remains pre-alpha. |
 | Distribution and release governance | Reviewed behavior-based coverage-ratchet activation | Implemented: the committed `fail_under` floor is the integer floor of the reviewed observed total (94.43% at activation), raises require sustained durable coverage, and lowering requires explicit owner review. |
-| Production terminal adapter | Direct native pseudoconsole ownership/close, native EOF and final-frame draining, process-tree teardown, cancellation/recovery, and truthful OS-level enforcement evidence | The accepted dependency decision (`docs/agent/design/terminal-adapter-dependency-decision.md`) authorizes reviewed implementation slices with pinned `pywinpty`/ConPTY behind its verification plan. Slice 2 landed durable Windows-matrix evidence for native ownership/close and EOF/final-frame drain (plan items 2–3); process-tree teardown, cancellation/recovery, dimensions receipts, and every enforcement claim remain unproven until their planned evidence lands. |
+| Production terminal adapter | Direct native pseudoconsole ownership/close, native EOF and final-frame draining, process-tree teardown, cancellation/recovery, and truthful OS-level enforcement evidence | The accepted dependency decision (`docs/agent/design/terminal-adapter-dependency-decision.md`) authorizes reviewed implementation slices with pinned `pywinpty`/ConPTY behind its verification plan. Slices 2–3 landed durable Windows-matrix evidence for native ownership/close, EOF/final-frame drain, and job-object process-tree teardown (plan items 2–4); cancellation/recovery, dimensions receipts, and every enforcement claim remain unproven until their planned evidence lands. |
 
 ## Completion-definition amendments retained from the predecessor
 
@@ -263,6 +263,36 @@ claimed while the binding is open, because a close may abandon buffered
 output. Process-tree teardown, cancellation/recovery taxonomy, dimensions
 receipts, enforcement receipts, and evidence normalization remain unproven
 and fail-closed.
+
+Implementation slice 3 landed on 2026-07-17 (issue #108), covering
+verification-plan item 4: process-tree teardown. Every spawn now assigns the
+child to a fresh Windows job object with
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` and neither breakaway limit before the
+binding is handed out; a containment failure terminates the just-spawned
+child and fails the spawn closed. Forced close terminates the whole tree
+atomically with `TerminateJobObject` (uniform exit code 15, preserving the
+slice-2 exit-code evidence) and waits on the child's already-held process
+handle, eliminating the previous pid-based kill and its recycle window.
+Release-only close keeps its slice-2 semantics for the direct child
+(pseudoconsole release, `STATUS_CONTROL_C_EXIT`), waits for that
+termination on the child's process handle, then closes the job handle so
+the kill-on-close limit sweeps any remaining descendants — and the same
+sweep fires if the owning process dies abruptly. Durable Windows-matrix
+tests with a deliberately spawning child prove both paths by OS
+process-handle waits on the child and the grandchild, with the two kill
+mechanisms attributed separately: a console-attached grandchild dies of the
+pseudoconsole teardown itself (`STATUS_CONTROL_C_EXIT`), while a
+console-detached grandchild — which the pseudoconsole cannot reach — is
+killed only by the job sweep (exit code 0), isolating the sweep as its own
+evidenced mechanism. A fault-injected containment failure at spawn is also
+proven fail-closed: the spawn raises and the already-created child is
+OS-observed terminated. Disclosed boundary:
+job assignment happens immediately after `CreateProcess` returns, so a
+process the child starts within that microseconds-wide window would fall
+outside the job; the binding documents this rather than claiming pre-start
+assignment. Cancellation/recovery taxonomy, dimensions receipts,
+enforcement receipts, and evidence normalization remain unproven and
+fail-closed.
 
 ## Risks and non-negotiables
 
