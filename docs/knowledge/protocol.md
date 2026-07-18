@@ -208,10 +208,14 @@ Terminal record payloads are:
 
 Every defined record payload and nested generic protocol object is closed to
 its listed members plus uninterpreted `x-` extensions. In particular,
-`capability.result` permits `effective` only with `enforced` and `reason` only
-with `unsupported`. Application-defined JSON values such as observation
-`state`, event `data`, diagnostic `details`, and error `details` remain open
-semantic values rather than generic protocol objects.
+`capability.result` permits `effective`, `tier`, and `delivery` only with
+`enforced` and `reason` only with `unsupported`; `delivery` additionally
+requires the `delivered` tier. Application-defined JSON values such as
+observation `state`, event `data`, diagnostic `details`, and error `details`
+remain open semantic values rather than generic protocol objects. The
+`delivery.env` object is a value map of delivered environment-variable names,
+not a generic protocol object: its member names are exact variable names with
+no `x-` extension semantics.
 
 `message` is diagnostic only. Consumers use stable `code` values for behavior;
 v1 reserves `adapter-start-failed`, `adapter-runtime-failed`,
@@ -286,17 +290,48 @@ The adapter-facing contract is:
   network access by default. An adapter that cannot enforce a requested
   constraint must not claim a verified run.
 - It emits one `capability.result` for each attempted constraint through the
-  first unsupported constraint, with `constraint`, `status`, and optional
-  `effective`/`reason` members. `status` is exactly `enforced` or
-  `unsupported`; a `supported-but-not-enforced` state is invalid. The first
-  unsupported result terminates the transcript with `run.unsupported` and no
-  input dispatch.
+  first unsupported constraint, with `constraint`, `status`, and
+  status-dependent `effective`/`tier`/`delivery`/`reason` members. `status` is
+  exactly `enforced` or `unsupported`; a `supported-but-not-enforced` state is
+  invalid. The first unsupported result terminates the transcript with
+  `run.unsupported` and no input dispatch.
 
 `capability.result.payload.constraint` is one of `seed`, `clock`, `locale`,
 `timezone`, `terminal`, `filesystem`, or `network`; it follows the table order
 above. For `enforced`, `effective` is required and is the applied configuration
-value. For `unsupported`, `reason` is required and the next record is the
-matching `run.unsupported` terminal record.
+value, and `tier` is required and states the enforcement tier (below). For
+`unsupported`, `reason` is required and the next record is the matching
+`run.unsupported` terminal record.
+
+### Enforcement tiers
+
+`termverify.enforcement-tier/v1` is a closed, case-sensitive vocabulary owned
+by this protocol version exactly like the timezone and key registries: exact
+membership, no aliases or normalization, runtime validation authoritative.
+Post-freeze membership or meaning changes require a new vocabulary version.
+Its members, in decreasing claim strength:
+
+| Tier | Claim |
+| --- | --- |
+| `os` | The constraint is applied by an operating-system mechanism at the subject boundary; evidence exists at the OS level. |
+| `constructive` | The constraint is applied by construction of the controlled in-process runtime: the emitting port asserts that the subject reaches the constrained resource only through it. Stating it truthfully is part of the injected application's port contract. |
+| `delivered` | The requested value was placed, exactly as recorded, into the subject's spawn environment; honoring it is subject cooperation. Nothing is enforced. |
+
+Every `enforced` capability result carries a mandatory `tier`. A
+`delivered`-tier result additionally carries a mandatory `delivery` object —
+`{"env": {name: value, ...}, "cwd"?: string}` — recording the exact non-empty
+environment variables delivered for that constraint; `cwd` is required for
+`filesystem` (the delivered working directory) and forbidden for every other
+constraint, and no other tier may carry a `delivery`. Membership in the
+vocabulary is not evidence that an emitter exists: which tier a negotiation
+path may state is fixed by the accepted cooperation-tier design and validated
+fail-closed at runtime during receipt binding (an adapter's own terminal
+negotiation may state `os`; ports injected into the ConPTY adapter may state
+only `delivered`; ports negotiated by the direct adapter may state only
+`constructive`). A transcript records the stated tier but cannot know the
+emitting path, so transcript validation checks vocabulary membership and the
+tier/`delivery` pairing only. A receipt never claims the subject honored a
+delivered value, and no tier claims containment.
 
 This leaves applications responsible for exposing controllable ports; it keeps
 the deterministic core independent from ambient time, randomness, terminal,

@@ -440,11 +440,13 @@ def test_safe_persistence_transforms_semantic_strings_in_lockstep(
         "constraint": "timezone",
         "effective": "UTC",
         "status": "enforced",
+        "tier": "constructive",
     }
     assert persisted[5]["payload"] == {
         "constraint": "terminal",
         "effective": persisted_terminal,
         "status": "enforced",
+        "tier": "constructive",
     }
     assert persisted[9]["payload"] == {
         "at_ms": 0,
@@ -580,6 +582,7 @@ def test_safe_persistence_preserves_order_beyond_four_digit_markers(
         "constraint": constraint,
         "effective": persisted_config[constraint],
         "status": "enforced",
+        "tier": "constructive",
     }
 
 
@@ -912,11 +915,13 @@ def test_persist_transcript_evidence_redacts_sandbox_and_network_identity(
         "constraint": "filesystem",
         "effective": persisted_config["filesystem"],
         "status": "enforced",
+        "tier": "constructive",
     }
     assert persisted[7]["payload"] == {
         "constraint": "network",
         "effective": persisted_config["network"],
         "status": "enforced",
+        "tier": "constructive",
     }
 
 

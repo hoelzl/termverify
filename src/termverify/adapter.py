@@ -9,6 +9,11 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal, Protocol, cast
 
+from termverify._enforcement_tier_v1 import (
+    ENFORCEMENT_TIERS,
+    EnforcementTier,
+    is_enforcement_tier,
+)
 from termverify._json import JsonValue
 from termverify._key_v1 import is_key_chord
 from termverify._language_tag import is_well_formed_language_tag
@@ -16,6 +21,7 @@ from termverify._protocol_v1 import CONSTRAINT_NAMES, ConstraintName
 from termverify._timezone_v1 import is_timezone_name
 
 __all__ = [
+    "ENFORCEMENT_TIERS",
     "Adapter",
     "AdapterFailure",
     "ClockAdvance",
@@ -25,10 +31,12 @@ __all__ = [
     "ConstraintPorts",
     "ConstraintUnsupported",
     "Cursor",
+    "DeliveryRecord",
     "Diagnostic",
     "DispatchInput",
     "EnforcedConstraints",
     "EnforcementReceipt",
+    "EnforcementTier",
     "EpochCompleted",
     "EpochResult",
     "Event",
@@ -590,33 +598,96 @@ class RunFailed:
             raise ValueError("runtime failure code must be adapter-runtime-failed")
 
 
+@dataclass(frozen=True, slots=True, init=False)
+class DeliveryRecord:
+    """Exact spawn-environment delivery claimed by a delivered-tier receipt.
+
+    The record is the claim: exactly these variables (and, for filesystem,
+    exactly this working directory) were placed into the subject's spawn
+    environment. Nothing is enforced, and the record never claims the
+    subject honored the delivery.
+    """
+
+    env: Mapping[str, str]
+    cwd: str | None
+
+    def __init__(self, env: Mapping[str, str], cwd: str | None = None) -> None:
+        if not isinstance(env, Mapping):
+            raise TypeError("delivery env must be a mapping of environment variables")
+        frozen: dict[str, str] = {}
+        for name, value in env.items():
+            if type(name) is not str or not name:
+                raise ValueError("delivery env names must be non-empty strings")
+            if type(value) is not str or not value:
+                raise ValueError("delivery env values must be non-empty strings")
+            frozen[name] = value
+        if not frozen:
+            raise ValueError("delivery must record at least one environment variable")
+        if cwd is not None and (type(cwd) is not str or not cwd):
+            raise ValueError("delivery cwd must be a non-empty string or None")
+        object.__setattr__(self, "env", MappingProxyType(frozen))
+        object.__setattr__(self, "cwd", cwd)
+
+
+def _validate_tier_and_delivery(
+    tier: object, delivery: object, *, names_working_directory: bool = False
+) -> None:
+    """Validate the `termverify.enforcement-tier/v1` tier/delivery pairing."""
+    if not is_enforcement_tier(tier):
+        raise ValueError("tier is not in the v1 enforcement-tier vocabulary")
+    if delivery is not None and type(delivery) is not DeliveryRecord:
+        raise TypeError("delivery must be a DeliveryRecord")
+    if tier == "delivered":
+        if delivery is None:
+            raise ValueError("a delivered-tier receipt requires a delivery record")
+    elif delivery is not None:
+        raise ValueError("only a delivered-tier receipt may carry a delivery record")
+    if delivery is None:
+        return
+    if names_working_directory:
+        if delivery.cwd is None:
+            raise ValueError(
+                "filesystem delivery must name the delivered working directory"
+            )
+    elif delivery.cwd is not None:
+        raise ValueError("only filesystem delivery may name a working directory")
+
+
 @dataclass(frozen=True, slots=True)
 class SeedReceipt:
     run_id: str
     effective: int
+    tier: EnforcementTier
+    delivery: DeliveryRecord | None = None
 
     def __post_init__(self) -> None:
         _validate_run_id(self.run_id)
         _require_plain_int(self.effective, "effective seed")
         if self.effective > _MAX_SEED:
             raise ValueError("effective seed must fit an unsigned 64-bit integer")
+        _validate_tier_and_delivery(self.tier, self.delivery)
 
 
 @dataclass(frozen=True, slots=True)
 class ClockReceipt:
     run_id: str
     effective: ClockConfiguration
+    tier: EnforcementTier
+    delivery: DeliveryRecord | None = None
 
     def __post_init__(self) -> None:
         _validate_run_id(self.run_id)
         if type(self.effective) is not ClockConfiguration:
             raise TypeError("effective clock has the wrong type")
+        _validate_tier_and_delivery(self.tier, self.delivery)
 
 
 @dataclass(frozen=True, slots=True)
 class LocaleReceipt:
     run_id: str
     effective: str
+    tier: EnforcementTier
+    delivery: DeliveryRecord | None = None
 
     def __post_init__(self) -> None:
         _validate_run_id(self.run_id)
@@ -624,12 +695,15 @@ class LocaleReceipt:
             self.effective
         ):
             raise ValueError("effective locale is invalid")
+        _validate_tier_and_delivery(self.tier, self.delivery)
 
 
 @dataclass(frozen=True, slots=True)
 class TimezoneReceipt:
     run_id: str
     effective: str
+    tier: EnforcementTier
+    delivery: DeliveryRecord | None = None
 
     def __post_init__(self) -> None:
         _validate_run_id(self.run_id)
@@ -638,12 +712,15 @@ class TimezoneReceipt:
             raise ValueError(
                 "named timezone enforcement requires the deferred timezone policy"
             )
+        _validate_tier_and_delivery(self.tier, self.delivery)
 
 
 @dataclass(frozen=True, slots=True)
 class TerminalReceipt:
     run_id: str
     effective: TerminalConfiguration
+    tier: EnforcementTier
+    delivery: DeliveryRecord | None = None
 
     def __post_init__(self) -> None:
         _validate_run_id(self.run_id)
@@ -653,23 +730,31 @@ class TerminalReceipt:
             raise ValueError(
                 "terminal capability registry is not approved for enforcement"
             )
+        _validate_tier_and_delivery(self.tier, self.delivery)
 
 
 @dataclass(frozen=True, slots=True)
 class FilesystemReceipt:
     run_id: str
     effective: FilesystemConfiguration
+    tier: EnforcementTier
+    delivery: DeliveryRecord | None = None
 
     def __post_init__(self) -> None:
         _validate_run_id(self.run_id)
         if type(self.effective) is not FilesystemConfiguration:
             raise TypeError("effective filesystem has the wrong type")
+        _validate_tier_and_delivery(
+            self.tier, self.delivery, names_working_directory=True
+        )
 
 
 @dataclass(frozen=True, slots=True)
 class NetworkReceipt:
     run_id: str
     effective: NetworkConfiguration
+    tier: EnforcementTier
+    delivery: DeliveryRecord | None = None
 
     def __post_init__(self) -> None:
         _validate_run_id(self.run_id)
@@ -677,6 +762,7 @@ class NetworkReceipt:
             raise TypeError("effective network has the wrong type")
         if self.effective.mode != "deny":
             raise ValueError("allow-list network enforcement is deferred")
+        _validate_tier_and_delivery(self.tier, self.delivery)
 
 
 type EnforcementReceipt = (

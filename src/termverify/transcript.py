@@ -9,6 +9,7 @@ from typing import cast
 
 import rfc8785
 
+from termverify._enforcement_tier_v1 import is_enforcement_tier
 from termverify._json import JsonValue as JsonValue
 from termverify._key_v1 import is_key_chord
 from termverify._language_tag import (
@@ -535,7 +536,7 @@ def _validate_negotiation(
         if not isinstance(constraint, str):
             raise TranscriptValidationError("capability result constraint is invalid")
         allowed_members = (
-            frozenset({"constraint", "status", "effective"})
+            frozenset({"constraint", "status", "effective", "tier", "delivery"})
             if status == "enforced"
             else frozenset({"constraint", "status", "reason"})
         )
@@ -543,6 +544,8 @@ def _validate_negotiation(
             raise TranscriptValidationError(
                 "capability result members are invalid for its status"
             )
+        if status == "enforced":
+            _validate_capability_tier(constraint, payload)
         if (
             constraint == "timezone"
             and status == "enforced"
@@ -594,6 +597,56 @@ def _validate_negotiation(
             "run.unsupported requires an unsupported capability result"
         )
     return capabilities
+
+
+def _validate_capability_tier(constraint: str, payload: dict[str, JsonValue]) -> None:
+    """Validate the `termverify.enforcement-tier/v1` tier/delivery pairing.
+
+    The tier states how strong the enforcement claim is; a delivered-tier
+    result additionally records the exact delivered spawn environment. Which
+    tier a negotiation path may state is runtime receipt-binding validation
+    inside the adapters — a transcript records the stated tier but cannot
+    know the emitting path.
+    """
+    tier = payload.get("tier")
+    if not is_enforcement_tier(tier):
+        raise TranscriptValidationError(
+            "capability result tier is not in the v1 enforcement-tier vocabulary"
+        )
+    if tier != "delivered":
+        if "delivery" in payload:
+            raise TranscriptValidationError(
+                "only a delivered-tier capability result may carry a delivery"
+            )
+        return
+    delivery = payload.get("delivery")
+    if not isinstance(delivery, dict):
+        raise TranscriptValidationError(
+            "a delivered-tier capability result requires a delivery object"
+        )
+    if _has_unknown_generic_members(delivery, frozenset({"env", "cwd"})):
+        raise TranscriptValidationError("capability delivery members are invalid")
+    env = delivery.get("env")
+    if not isinstance(env, dict) or not env:
+        raise TranscriptValidationError(
+            "capability delivery env must be a non-empty object"
+        )
+    for name, value in env.items():
+        if not name or not isinstance(value, str) or not value:
+            raise TranscriptValidationError(
+                "capability delivery env must map non-empty variable names"
+                " to non-empty string values"
+            )
+    if constraint == "filesystem":
+        cwd = delivery.get("cwd")
+        if not isinstance(cwd, str) or not cwd:
+            raise TranscriptValidationError(
+                "filesystem capability delivery must name a non-empty cwd"
+            )
+    elif "cwd" in delivery:
+        raise TranscriptValidationError(
+            "only filesystem capability delivery may name a cwd"
+        )
 
 
 def _validate_manual_clock(config: dict[str, JsonValue]) -> int:

@@ -25,6 +25,7 @@ from termverify.adapter import (
     ConstraintName,
     ConstraintPorts,
     ConstraintUnsupported,
+    DeliveryRecord,
     FilesystemConfiguration,
     FilesystemReceipt,
     LocaleReceipt,
@@ -89,8 +90,18 @@ class _Binding:
         raise OSError("this negotiation fake refuses to spawn a child")
 
 
+def _delivery(constraint: str) -> DeliveryRecord:
+    """One structurally valid fake delivery record per constraint."""
+    if constraint == "filesystem":
+        return DeliveryRecord(
+            env={"TERMVERIFY_FS_ROOT": "C:\\sandbox\\fixture-root"},
+            cwd="C:\\sandbox\\fixture-root",
+        )
+    return DeliveryRecord(env={f"TERMVERIFY_{constraint.upper()}": "value"})
+
+
 class _EnforcingPorts:
-    """Fake ports that enforce every non-terminal constraint truthfully."""
+    """Fake injected ports stating the delivered tier for every constraint."""
 
     def __init__(self) -> None:
         self.calls: list[str] = []
@@ -99,25 +110,25 @@ class _EnforcingPorts:
         self, run_id: str, requested: int
     ) -> SeedReceipt | ConstraintUnsupported | AdapterFailure:
         self.calls.append("seed")
-        return SeedReceipt(run_id, requested)
+        return SeedReceipt(run_id, requested, "delivered", _delivery("seed"))
 
     def enforce_clock(
         self, run_id: str, requested: ClockConfiguration
     ) -> ClockReceipt | ConstraintUnsupported | AdapterFailure:
         self.calls.append("clock")
-        return ClockReceipt(run_id, requested)
+        return ClockReceipt(run_id, requested, "delivered", _delivery("clock"))
 
     def enforce_locale(
         self, run_id: str, requested: str
     ) -> LocaleReceipt | ConstraintUnsupported | AdapterFailure:
         self.calls.append("locale")
-        return LocaleReceipt(run_id, requested)
+        return LocaleReceipt(run_id, requested, "delivered", _delivery("locale"))
 
     def enforce_timezone(
         self, run_id: str, requested: str
     ) -> TimezoneReceipt | ConstraintUnsupported | AdapterFailure:
         self.calls.append("timezone")
-        return TimezoneReceipt(run_id, requested)
+        return TimezoneReceipt(run_id, requested, "delivered", _delivery("timezone"))
 
     def enforce_terminal(
         self, run_id: str, requested: TerminalConfiguration
@@ -128,13 +139,15 @@ class _EnforcingPorts:
         self, run_id: str, requested: FilesystemConfiguration
     ) -> FilesystemReceipt | ConstraintUnsupported | AdapterFailure:
         self.calls.append("filesystem")
-        return FilesystemReceipt(run_id, requested)
+        return FilesystemReceipt(
+            run_id, requested, "delivered", _delivery("filesystem")
+        )
 
     def enforce_network(
         self, run_id: str, requested: NetworkConfiguration
     ) -> NetworkReceipt | ConstraintUnsupported | AdapterFailure:
         self.calls.append("network")
-        return NetworkReceipt(run_id, requested)
+        return NetworkReceipt(run_id, requested, "delivered", _delivery("network"))
 
 
 def _adapter(
@@ -355,7 +368,7 @@ def test_mismatched_receipt_yields_start_failed() -> None:
         run_id: str, requested: int
     ) -> SeedReceipt | ConstraintUnsupported | AdapterFailure:
         del run_id
-        return SeedReceipt("other-run", requested)
+        return SeedReceipt("other-run", requested, "delivered", _delivery("seed"))
 
     ports.enforce_seed = wrong_run  # type: ignore[method-assign]
     adapter, _ = _adapter(ports=ports)

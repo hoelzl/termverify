@@ -177,6 +177,29 @@ environment, while shipped defaults stay fail-closed and unchanged. Nothing
 in that scope may claim containment, quiescence, or subject compliance; a
 future owner-accepted design is required to reopen OS enforcement.
 
+Cooperation-tier implementation slice 1 landed on 2026-07-18 (issue #125),
+the enforcement-tier protocol amendment under the recorded pre-release rule
+(transcript protocol stays v1): the closed `termverify.enforcement-tier/v1`
+vocabulary (`os`, `constructive`, `delivered`; exact case-sensitive
+membership, runtime validation authoritative, post-freeze changes require a
+new vocabulary version); a mandatory `tier` on all seven enforcement
+receipts with fail-closed delivered⇔`delivery` pairing (delivery records the
+exact delivered environment variables, and for filesystem the working
+directory, which no other constraint may name); the tier authorization
+matrix validated fail-closed during receipt binding in shared negotiation —
+the ConPTY adapter's own terminal negotiation states `os` and nothing else,
+ports injected into the ConPTY adapter may state only `delivered`, ports
+negotiated by the direct adapter may state only `constructive`, and an
+unauthorized tier is a contract breach rejected as structured `StartFailed`,
+never `StartUnsupported`; transcript `capability.result` validation, safe
+evidence redaction (delivery values and cwd are redacted with
+shape-preserving markers), and the committed fixtures amended in the same
+change. Making `tier` mandatory is a deliberate source-level breaking change
+for every external `ConstraintPorts`/`DirectApplication` implementer,
+recorded in `CHANGELOG.md`. No cooperation port exists at the end of this
+slice; nothing shipped can emit `delivered`, and shipped defaults still fail
+closed unchanged.
+
 ### 4. Distribution and release governance
 
 Define installed schema access, canonical publication, release/security/provenance

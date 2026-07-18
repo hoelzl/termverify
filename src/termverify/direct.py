@@ -6,7 +6,7 @@ from collections.abc import Callable
 from threading import Lock
 from typing import Literal, NamedTuple, Protocol, cast
 
-from termverify._negotiation import negotiate
+from termverify._negotiation import AuthorizedTiers, negotiate
 from termverify.adapter import (
     AdapterFailure,
     ClockAdvance,
@@ -39,6 +39,23 @@ from termverify.adapter import (
 )
 
 __all__ = ["DirectAdapter", "DirectApplication"]
+
+#: The `termverify.enforcement-tier/v1` authorization matrix row for the
+#: direct architecture: every constraint port negotiated by ``DirectAdapter``
+#: may state only ``constructive`` — the application's by-construction
+#: assertion that the subject reaches the constrained resource only through
+#: the injected port. Stating it truthfully is part of the application's
+#: port contract; any other tier is a contract breach rejected as a
+#: structured ``StartFailed``.
+_AUTHORIZED_TIERS: AuthorizedTiers = (
+    "constructive",
+    "constructive",
+    "constructive",
+    "constructive",
+    "constructive",
+    "constructive",
+    "constructive",
+)
 
 _State = Literal[
     "created",
@@ -75,7 +92,15 @@ _STOP_RESULT_MESSAGES = _ResultFailureMessages(
 class DirectApplication(
     ConstraintPorts, Protocol
 ):  # pragma: no cover - structural declaration
-    """One bound constraint-enforcement and deterministic execution port."""
+    """One bound constraint-enforcement and deterministic execution port.
+
+    Its enforcement receipts state the ``constructive`` tier: the
+    application's by-construction assertion that the subject reaches the
+    constrained resource only through the injected port. Stating it
+    truthfully is part of this port contract — the adapter validates that
+    the stated tier is authorized for its negotiation path, not that the
+    assertion holds.
+    """
 
     def initialize(self) -> EpochCompleted | TerminalResult | AdapterFailure: ...
 
@@ -210,6 +235,7 @@ class DirectAdapter:
                     run_id, configuration.network
                 ),
             ),
+            _AUTHORIZED_TIERS,
         )
         if not isinstance(negotiated, tuple):
             self._set_state("terminal")

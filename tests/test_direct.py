@@ -82,43 +82,43 @@ class _Ports:
         self, run_id: str, requested: int
     ) -> SeedReceipt | ConstraintUnsupported | AdapterFailure:
         self.calls.append("seed")
-        return SeedReceipt(run_id, requested)
+        return SeedReceipt(run_id, requested, "constructive")
 
     def enforce_clock(
         self, run_id: str, requested: ClockConfiguration
     ) -> ClockReceipt | ConstraintUnsupported | AdapterFailure:
         self.calls.append("clock")
-        return ClockReceipt(run_id, requested)
+        return ClockReceipt(run_id, requested, "constructive")
 
     def enforce_locale(
         self, run_id: str, requested: str
     ) -> LocaleReceipt | ConstraintUnsupported | AdapterFailure:
         self.calls.append("locale")
-        return LocaleReceipt(run_id, requested)
+        return LocaleReceipt(run_id, requested, "constructive")
 
     def enforce_timezone(
         self, run_id: str, requested: str
     ) -> TimezoneReceipt | ConstraintUnsupported | AdapterFailure:
         self.calls.append("timezone")
-        return TimezoneReceipt(run_id, requested)
+        return TimezoneReceipt(run_id, requested, "constructive")
 
     def enforce_terminal(
         self, run_id: str, requested: TerminalConfiguration
     ) -> TerminalReceipt | ConstraintUnsupported | AdapterFailure:
         self.calls.append("terminal")
-        return TerminalReceipt(run_id, requested)
+        return TerminalReceipt(run_id, requested, "constructive")
 
     def enforce_filesystem(
         self, run_id: str, requested: FilesystemConfiguration
     ) -> FilesystemReceipt | ConstraintUnsupported | AdapterFailure:
         self.calls.append("filesystem")
-        return FilesystemReceipt(run_id, requested)
+        return FilesystemReceipt(run_id, requested, "constructive")
 
     def enforce_network(
         self, run_id: str, requested: NetworkConfiguration
     ) -> NetworkReceipt | ConstraintUnsupported | AdapterFailure:
         self.calls.append("network")
-        return NetworkReceipt(run_id, requested)
+        return NetworkReceipt(run_id, requested, "constructive")
 
 
 class _Application(_Ports):
@@ -230,9 +230,9 @@ def test_canonical_named_timezone_request_can_report_structured_unsupported() ->
     assert result.constraint == "timezone"
     assert result.code == "constraint-unsupported"
     assert result.enforced == (
-        SeedReceipt("run-direct", 42),
-        ClockReceipt("run-direct", ClockConfiguration(0)),
-        LocaleReceipt("run-direct", "en-US"),
+        SeedReceipt("run-direct", 42, "constructive"),
+        ClockReceipt("run-direct", ClockConfiguration(0), "constructive"),
+        LocaleReceipt("run-direct", "en-US", "constructive"),
     )
     assert application.calls == ["seed", "clock", "locale", "timezone"]
 
@@ -1241,7 +1241,7 @@ class _SeedResponseApplication(_NeverApplication):
     ("response", "expected_failure"),
     [
         (
-            SeedReceipt("run-direct", 43),
+            SeedReceipt("run-direct", 43, "constructive"),
             AdapterFailure(
                 "adapter-start-failed",
                 "constraint enforcement failed",
@@ -1249,7 +1249,7 @@ class _SeedResponseApplication(_NeverApplication):
             ),
         ),
         (
-            SeedReceipt("other-run", 42),
+            SeedReceipt("other-run", 42, "constructive"),
             AdapterFailure(
                 "adapter-start-failed",
                 "constraint enforcement failed",
@@ -1257,7 +1257,9 @@ class _SeedResponseApplication(_NeverApplication):
             ),
         ),
         (
-            ClockReceipt("run-direct", ClockConfiguration(initial_ms=0)),
+            ClockReceipt(
+                "run-direct", ClockConfiguration(initial_ms=0), "constructive"
+            ),
             AdapterFailure(
                 "adapter-start-failed",
                 "constraint enforcement failed",

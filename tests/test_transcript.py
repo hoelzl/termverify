@@ -766,7 +766,8 @@ def test_parse_transcript_rejects_unsupported_constraint_without_terminal_match(
 ):
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
     invalid = fixture.replace(
-        b'"constraint":"network","effective":{"mode":"deny"},"status":"enforced"',
+        b'"constraint":"network","effective":{"mode":"deny"},"status":"enforced",'
+        b'"tier":"constructive"',
         (
             b'"constraint":"network","reason":"network isolation unavailable",'
             b'"status":"unsupported"'
@@ -780,7 +781,8 @@ def test_parse_transcript_rejects_unsupported_constraint_without_terminal_match(
 def test_parse_transcript_accepts_early_unsupported_constraint() -> None:
     lines = (FIXTURES / "valid" / "basic.jsonl").read_bytes().splitlines()
     unsupported = lines[1].replace(
-        b'"constraint":"seed","effective":"0","status":"enforced"',
+        b'"constraint":"seed","effective":"0","status":"enforced",'
+        b'"tier":"constructive"',
         (
             b'"constraint":"seed","reason":"seed injection unavailable",'
             b'"status":"unsupported"'
@@ -805,7 +807,8 @@ def test_parse_transcript_accepts_early_unsupported_constraint() -> None:
 def test_parse_transcript_rejects_unsupported_terminal_for_wrong_constraint() -> None:
     lines = (FIXTURES / "valid" / "basic.jsonl").read_bytes().splitlines()
     unsupported = lines[1].replace(
-        b'"constraint":"seed","effective":"0","status":"enforced"',
+        b'"constraint":"seed","effective":"0","status":"enforced",'
+        b'"tier":"constructive"',
         (
             b'"constraint":"seed","reason":"seed injection unavailable",'
             b'"status":"unsupported"'

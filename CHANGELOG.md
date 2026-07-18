@@ -40,3 +40,25 @@ with the pre-1.0 policy below.
 - Release governance: this changelog and policy, security-disclosure process,
   release checklist, and tag-triggered build-provenance workflow producing
   attested draft artifacts only.
+- Closed `termverify.enforcement-tier/v1` vocabulary (`os`, `constructive`,
+  `delivered`) with a per-negotiation-path authorization matrix validated
+  fail-closed during receipt binding, and a `DeliveryRecord` value for
+  delivered-tier receipts.
+
+### Changed
+
+- **Breaking (pre-release protocol amendment; transcript protocol stays
+  v1):** every enforcement receipt (`SeedReceipt`, `ClockReceipt`,
+  `LocaleReceipt`, `TimezoneReceipt`, `TerminalReceipt`, `FilesystemReceipt`,
+  `NetworkReceipt`) now requires a mandatory `tier` from
+  `termverify.enforcement-tier/v1`, and delivered-tier receipts must carry a
+  `delivery` record (mandatory pairing in both directions). Migration: every
+  external `ConstraintPorts`/`DirectApplication` implementation must add the
+  tier to its receipt construction — direct applications state
+  `constructive`, ports injected into the ConPTY adapter state `delivered`
+  plus the delivery record, and the ConPTY adapter's own terminal negotiation
+  states `os`. An unauthorized tier for a negotiation path is rejected as a
+  structured `StartFailed`. Transcript `capability.result` records with
+  `status: "enforced"` likewise require `tier` (and `delivery` exactly when
+  the tier is `delivered`). No released artifact or recorded transcript
+  carries the prior shapes.
