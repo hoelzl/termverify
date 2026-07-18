@@ -48,12 +48,18 @@ termverify.conpty.ConptyAdapter          public, cross-platform, ratcheted
 termverify._conpty.ConptyChild           native, Windows-only, ratchet-excluded
 ```
 
-- `ConptyBindingPort` is a structural `Protocol` in the new public module,
-  mirroring the `ConptyChild` surface: a spawn factory
-  (`argv`, keyword `rows`, `columns` → child), and per-child `read()`,
-  `write(text)`, `resize(rows=, columns=)`, `is_alive()`,
-  `close(force=)`, `pid`, `exit_status`. `ConptyChild` satisfies it without
-  modification.
+- `ConptyBindingPort` is a structural `Protocol` in the new public module
+  with three parts: an explicit **support probe** (`is_supported() -> bool`),
+  a spawn factory (`argv`, keyword `rows`, `columns` → child), and the
+  per-child surface `read()`, `write(text)`, `resize(rows=, columns=)`,
+  `is_alive()`, `close(force=)`, `pid`, `exit_status`. `ConptyChild`
+  satisfies the child surface without modification; the probe is a new thin
+  function implemented alongside `spawn` in `termverify._conpty` (the same
+  precondition `spawn` already checks), so platform support is answerable at
+  negotiation time — before any spawn — through the injected port, never by
+  the ratcheted adapter reading ambient platform state. Fake bindings supply
+  their own probe, so both the supported and unsupported negotiation paths
+  are drivable on every platform.
 - The binding **exception taxonomy is part of the port contract** and stays
   canonical in `termverify._conpty` (`ConptyUnsupportedError`,
   `ConptyClosedError`, `ConptyConcurrentIOError`, `ConptyEndOfStreamError`).
@@ -99,12 +105,20 @@ Consequences, stated explicitly:
 - The adapter intercepts `enforce_terminal` itself and does not delegate it:
   it owns the pseudoconsole, records the requested dimensions for spawn, and
   emits the `TerminalReceipt`. Injected ports cannot override terminal
-  enforcement or claim capabilities.
-- Platform support is decided during terminal negotiation: on a host where the
-  binding reports `ConptyUnsupportedError` semantics (non-Windows, no ConPTY),
-  `enforce_terminal` reports `ConstraintUnsupported("constraint-unsupported")`
-  and start ends as `StartUnsupported` before input dispatch, exactly as the
-  dependency decision requires.
+  enforcement or claim capabilities. A configuration that requests non-empty
+  terminal capabilities is classified fail-closed during negotiation as
+  `ConstraintUnsupported("constraint-unsupported")` →
+  `StartUnsupported(terminal)`; the adapter never attempts to construct a
+  receipt the contract would reject.
+- Platform support is decided during terminal negotiation through the binding
+  port's support probe: when the probe reports no ConPTY (non-Windows, no
+  ConPTY host), `enforce_terminal` reports
+  `ConstraintUnsupported("constraint-unsupported")` and start ends as
+  `StartUnsupported` before input dispatch, exactly as the dependency
+  decision requires. A spawn that fails *after* a positive probe (including a
+  late `ConptyUnsupportedError` misreport) is a start failure at initialize,
+  not an unsupported result — the contract permits no unsupported outcome
+  once all receipts exist.
 
 ## Dimensions receipts (item 6)
 
@@ -120,8 +134,10 @@ Consequences, stated explicitly:
   `windows-latest` CI matrix.
 - Every observation's `state` carries the current effective dimensions
   (`{"terminal": {"columns": C, "rows": R}}`), so a resize is visible in
-  evidence at the epoch where it happened, and normalized frames must agree
-  with them (`Frame` validates `rows == len(lines)`).
+  evidence at the epoch where it happened. Normalized frames must agree with
+  those dimensions; `Frame` itself validates only internal consistency
+  (`rows == len(lines)`), so that agreement is an adapter responsibility
+  covered by tests, not a contract-enforced invariant.
 
 ## Epoch and readiness semantics (no wall-clock evidence)
 
@@ -134,9 +150,22 @@ A real child is asynchronous, so quiescence needs an observable signal.
 an explicit readiness marker when it reaches quiescence: after startup
 (initial readiness) and after processing each input. The marker is a
 configurable exact string with a private-use OSC default,
-`"\x1b]7791;ready\x1b\\"` (OSC … ST). It is scanned for in the decoded output
-stream; it is stripped from normalized frames but retained verbatim in raw
-output evidence. Subjects that cannot emit a marker cannot produce readiness
+`"\x1b]7791;ready\x1b\\"` (OSC … ST). The adapter scans for it in the decoded
+output stream independently of the normalizer; raw chunks are always fed to
+the normalizer **unmodified**, so replaying the normalizer over the raw
+evidence sees exactly what the adapter fed it. With the OSC default the
+marker is absent from frames because a compliant screen model does not render
+unknown OSC sequences — an outcome of screen-model semantics, not an adapter
+stripping operation; a host-configured printable marker appears in frames and
+in replays identically. **Disclosed assumption:** the repository currently
+has passthrough evidence only for printable markers (the spike and every
+binding-test sentinel); there is no evidence yet that ConPTY relays a private
+OSC sequence verbatim, and ConPTY is known to rewrite output. The OSC default
+is therefore provisional: the Windows integration slice must produce
+passthrough evidence before any public claim relies on it, and the
+configurability of the marker is the mitigation — if OSC passthrough fails,
+the default changes to a printable sentinel by amending this document.
+Subjects that cannot emit a marker cannot produce readiness
 evidence and therefore cannot complete a verified terminal run — by design,
 not by accident. The marker string is part of the run's explicit
 configuration, recorded in evidence, and must be replay-stable.
@@ -212,20 +241,25 @@ input as a normal epoch, which ends in `TerminalResult` via end-of-stream).
 
 | Binding outcome | Phase | Classified result |
 | --- | --- | --- |
-| Platform/ConPTY unavailable | negotiation | `StartUnsupported(terminal)`, `constraint-unsupported` |
+| Support probe reports no ConPTY | negotiation | `StartUnsupported(terminal)`, `constraint-unsupported` |
+| Non-empty requested terminal capabilities | negotiation | `StartUnsupported(terminal)`, `constraint-unsupported` |
 | Injected port reports unsupported | negotiation | `StartUnsupported` at that constraint |
 | Spawn failure (`FileNotFoundError`, `OSError`, containment failure) | initialize | `StartFailed`, `adapter-start-failed` |
 | End-of-stream before initial marker | initialize | `StartTerminated` with observed exit (subject exit only) |
 | Deadline abort, invariant violation, native error | initialize | `StartFailed`, `adapter-start-failed` |
 | End-of-stream during epoch | dispatch/advance | `TerminalResult`, `RunFinished` with observed exit |
-| Deadline abort | dispatch/advance | `TerminalResult`, `RunFailed` (`adapter-runtime-failed`, deadline disclosed) |
+| Deadline abort | dispatch/advance | `TerminalResult`, `RunFailed` (`adapter-runtime-failed`, deadline disclosed, `observation=None` — no quiescent snapshot exists at abort, and none is fabricated) |
 | `ConptyConcurrentIOError`, unexpected `ConptyClosedError`, native error, resize failure | dispatch/advance | `TerminalResult`, `RunFailed` (`adapter-runtime-failed`) |
 | Missing exit record where exit evidence is required | any | structured failure for that phase, never a fabricated `ExitStatus` |
 | Forced stop | stop | `RunFinished(code 15)` with disclosure diagnostic |
 
-Every abort path closes the binding (`force=True`) before returning, so no
-handles, job objects, or children outlive a structured failure — the leak
-freedom proven at the binding level in slice 4 carries up unchanged.
+Every terminal result — success or failure — closes the binding
+(`force=True`) before returning: abort paths, forced stop, and also the
+end-of-stream paths (`RunFinished`/`StartTerminated`), where the exit record
+is captured before close and force-closing an already-exited tree only
+releases the pty, job, and process handles. No handles, job objects, or
+children outlive any terminal result — the leak freedom proven at the
+binding level in slice 4 carries up unchanged.
 
 ## Evidence normalization (item 8)
 
