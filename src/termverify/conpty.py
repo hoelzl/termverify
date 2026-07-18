@@ -23,8 +23,15 @@ Negotiation is truthful by construction:
   The shipped default, :class:`UnenforcedConstraintPorts`, reports every one
   of them ``constraint-not-enforced`` — no OS mechanism at this boundary
   enforces them — so ``start()`` with defaults ends as
-  ``StartUnsupported(constraint="seed")`` before any child exists. Verified
-  terminal runs require ports that genuinely enforce their constraint.
+  ``StartUnsupported(constraint="seed")`` before any child exists.
+- Every receipt states its `termverify.enforcement-tier/v1` tier, validated
+  against the fail-closed authorization matrix: the adapter's own terminal
+  negotiation states ``os`` (an OS-level pseudoconsole parameter, proven on
+  the Windows matrix), and injected ports may state only ``delivered`` —
+  exact recorded values placed in the subject's spawn environment, honored
+  only by subject cooperation. The cooperation ports that emit that tier are
+  the next authorized slice of the accepted cooperation-tier design; nothing
+  shipped emits it yet.
 
 Readiness and quiescence are defined only by observable evidence:
 
@@ -64,7 +71,7 @@ from termverify._conpty import (
     ConptyConcurrentIOError,
     ConptyEndOfStreamError,
 )
-from termverify._negotiation import negotiate
+from termverify._negotiation import AuthorizedTiers, negotiate
 from termverify.adapter import (
     AdapterFailure,
     ClockAdvance,
@@ -128,6 +135,22 @@ __all__ = [
 #: backed by the CI matrix. Hosts can configure any exact non-empty string
 #: instead.
 READINESS_MARKER_DEFAULT: Final = "\x1b]7791;ready\x1b\\"
+
+#: The `termverify.enforcement-tier/v1` authorization matrix row for the
+#: ConPTY architecture, in constraint order: the adapter's own terminal
+#: negotiation emits ``os`` (dimensions are a pseudoconsole creation/resize
+#: parameter, proven by child observation on the Windows matrix) and injected
+#: constraint ports may state only ``delivered``. Any other tier is a
+#: contract breach rejected as a structured ``StartFailed``.
+_AUTHORIZED_TIERS: AuthorizedTiers = (
+    "delivered",
+    "delivered",
+    "delivered",
+    "delivered",
+    "os",
+    "delivered",
+    "delivered",
+)
 
 _State = Literal[
     "created",
@@ -289,8 +312,9 @@ class UnenforcedConstraintPorts:
         return ConstraintUnsupported(
             "filesystem",
             "constraint-not-enforced",
-            "filesystem containment enforcement is an owner-blocked"
-            " workstream; no containment is enforced at this boundary",
+            "OS filesystem containment is an explicit non-goal; sandbox-root"
+            " delivery requires the opt-in cooperation ports, and these"
+            " default ports deliver nothing",
         )
 
     def enforce_network(
@@ -413,7 +437,7 @@ class ConptyAdapter:
                 "constraint-unsupported",
                 "this host provides no ConPTY pseudoconsole support",
             )
-        return TerminalReceipt(run_id, requested)
+        return TerminalReceipt(run_id, requested, tier="os")
 
     # --- marker protocol ---------------------------------------------------
 
@@ -661,6 +685,7 @@ class ConptyAdapter:
                     run_id, configuration.network
                 ),
             ),
+            _AUTHORIZED_TIERS,
         )
         if not isinstance(negotiated, tuple):
             self._set_state("terminal")

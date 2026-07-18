@@ -44,7 +44,9 @@ _CREDENTIAL_PATTERNS = (
 _CAMEL_CASE_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
 _PAYLOAD_MEMBERS = {
     "run.started": frozenset({"config", "subject"}),
-    "capability.result": frozenset({"constraint", "status", "effective", "reason"}),
+    "capability.result": frozenset(
+        {"constraint", "status", "effective", "reason", "tier", "delivery"}
+    ),
     "input.key": frozenset({"at_ms", "keys"}),
     "input.text": frozenset({"at_ms", "text"}),
     "input.resize": frozenset({"at_ms", "columns", "rows"}),
@@ -170,6 +172,9 @@ def _redact_transcript_record(record: Record) -> None:
             payload["effective"] = _redaction_marker("unknown")
         if "reason" in payload:
             payload["reason"] = _redaction_marker("diagnostic")
+        delivery = payload.get("delivery")
+        if isinstance(delivery, dict):
+            _redact_delivery(delivery)
     elif kind == "input.key":
         keys = payload.get("keys")
         if isinstance(keys, list):
@@ -291,6 +296,26 @@ def _redact_network_config(config: dict[str, JsonValue]) -> None:
                 _redact_unknown_members(entry, frozenset({"host", "port"}))
                 if "host" in entry:
                     entry["host"] = markers[index]
+
+
+def _redact_delivery(delivery: dict[str, JsonValue]) -> None:
+    """Redact delivered spawn-environment values while keeping the shape valid.
+
+    Delivered values embed host-specific detail (absolute sandbox paths,
+    requested configuration echoes), so safe evidence replaces every variable
+    name and value with deterministic ordered markers and the working
+    directory with a path marker; post-redaction revalidation still sees a
+    structurally valid delivery record.
+    """
+    _redact_unknown_members(delivery, frozenset({"env", "cwd"}))
+    env = delivery.get("env")
+    if isinstance(env, dict):
+        delivery["env"] = {
+            str(name): _redaction_marker("delivery")
+            for name in _ordered_markers("delivery-env", len(env))
+        }
+    if "cwd" in delivery:
+        delivery["cwd"] = _redaction_marker("path")
 
 
 def _redact_constraint_config(constraint: str, value: JsonValue) -> None:

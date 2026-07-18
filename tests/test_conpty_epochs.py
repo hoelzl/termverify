@@ -28,6 +28,7 @@ from termverify.adapter import (
     ClockReceipt,
     ConstraintUnsupported,
     Cursor,
+    DeliveryRecord,
     EpochCompleted,
     ExitStatus,
     FilesystemConfiguration,
@@ -77,28 +78,38 @@ def _configuration() -> RunConfiguration:
     )
 
 
+def _delivery(constraint: str) -> DeliveryRecord:
+    """One structurally valid fake delivery record per constraint."""
+    if constraint == "filesystem":
+        return DeliveryRecord(
+            env={"TERMVERIFY_FS_ROOT": "C:\\sandbox\\fixture-root"},
+            cwd="C:\\sandbox\\fixture-root",
+        )
+    return DeliveryRecord(env={f"TERMVERIFY_{constraint.upper()}": "value"})
+
+
 class _EnforcingPorts:
-    """Fake ports that enforce every non-terminal constraint truthfully."""
+    """Fake injected ports stating the delivered tier for every constraint."""
 
     def enforce_seed(
         self, run_id: str, requested: int
     ) -> SeedReceipt | ConstraintUnsupported | AdapterFailure:
-        return SeedReceipt(run_id, requested)
+        return SeedReceipt(run_id, requested, "delivered", _delivery("seed"))
 
     def enforce_clock(
         self, run_id: str, requested: ClockConfiguration
     ) -> ClockReceipt | ConstraintUnsupported | AdapterFailure:
-        return ClockReceipt(run_id, requested)
+        return ClockReceipt(run_id, requested, "delivered", _delivery("clock"))
 
     def enforce_locale(
         self, run_id: str, requested: str
     ) -> LocaleReceipt | ConstraintUnsupported | AdapterFailure:
-        return LocaleReceipt(run_id, requested)
+        return LocaleReceipt(run_id, requested, "delivered", _delivery("locale"))
 
     def enforce_timezone(
         self, run_id: str, requested: str
     ) -> TimezoneReceipt | ConstraintUnsupported | AdapterFailure:
-        return TimezoneReceipt(run_id, requested)
+        return TimezoneReceipt(run_id, requested, "delivered", _delivery("timezone"))
 
     def enforce_terminal(
         self, run_id: str, requested: TerminalConfiguration
@@ -108,12 +119,14 @@ class _EnforcingPorts:
     def enforce_filesystem(
         self, run_id: str, requested: FilesystemConfiguration
     ) -> FilesystemReceipt | ConstraintUnsupported | AdapterFailure:
-        return FilesystemReceipt(run_id, requested)
+        return FilesystemReceipt(
+            run_id, requested, "delivered", _delivery("filesystem")
+        )
 
     def enforce_network(
         self, run_id: str, requested: NetworkConfiguration
     ) -> NetworkReceipt | ConstraintUnsupported | AdapterFailure:
-        return NetworkReceipt(run_id, requested)
+        return NetworkReceipt(run_id, requested, "delivered", _delivery("network"))
 
 
 class _FakeChild:

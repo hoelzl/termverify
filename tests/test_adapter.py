@@ -102,16 +102,29 @@ def _constraints(
     return EnforcedConstraints(
         run_id=run_id,
         requested=configuration,
-        seed=SeedReceipt(run_id=run_id, effective=configuration.seed),
-        clock=ClockReceipt(run_id=run_id, effective=configuration.clock),
-        locale=LocaleReceipt(run_id=run_id, effective=configuration.locale),
-        timezone=TimezoneReceipt(run_id=run_id, effective=configuration.timezone),
-        terminal=TerminalReceipt(run_id=run_id, effective=configuration.terminal),
+        seed=SeedReceipt(
+            run_id=run_id, effective=configuration.seed, tier="constructive"
+        ),
+        clock=ClockReceipt(
+            run_id=run_id, effective=configuration.clock, tier="constructive"
+        ),
+        locale=LocaleReceipt(
+            run_id=run_id, effective=configuration.locale, tier="constructive"
+        ),
+        timezone=TimezoneReceipt(
+            run_id=run_id, effective=configuration.timezone, tier="constructive"
+        ),
+        terminal=TerminalReceipt(
+            run_id=run_id, effective=configuration.terminal, tier="constructive"
+        ),
         filesystem=FilesystemReceipt(
             run_id=run_id,
             effective=configuration.filesystem,
+            tier="constructive",
         ),
-        network=NetworkReceipt(run_id=run_id, effective=configuration.network),
+        network=NetworkReceipt(
+            run_id=run_id, effective=configuration.network, tier="constructive"
+        ),
     )
 
 
@@ -281,7 +294,7 @@ def test_literal_and_identifier_equality_impostors_are_rejected() -> None:
             "bad",
         )
     with pytest.raises(TypeError, match="run_id"):
-        SeedReceipt(cast(str, _MutableStr("run-contract")), 42)
+        SeedReceipt(cast(str, _MutableStr("run-contract")), 42, "constructive")
 
 
 def test_observation_validates_structure_and_freezes_application_values() -> None:
@@ -377,13 +390,14 @@ def test_receipts_are_constraint_specific_run_bound_and_immutable() -> None:
             network=NetworkReceipt(
                 run_id="another-run",
                 effective=constraints.network.effective,
+                tier="constructive",
             ),
         )
     with pytest.raises(ValueError, match="requested seed"):
         EnforcedConstraints(
             run_id="run-contract",
             requested=_configuration(),
-            seed=SeedReceipt("run-contract", 41),
+            seed=SeedReceipt("run-contract", 41, "constructive"),
             clock=constraints.clock,
             locale=constraints.locale,
             timezone=constraints.timezone,
@@ -398,14 +412,18 @@ def test_receipts_cannot_claim_deferred_enforcement_boundaries() -> None:
         TerminalReceipt(
             run_id="run-contract",
             effective=TerminalConfiguration(80, 24, ("ansi",)),
+            tier="constructive",
         )
     with pytest.raises(ValueError, match="allow-list"):
         NetworkReceipt(
             run_id="run-contract",
             effective=NetworkConfiguration.allow_list((("example.test", 443),)),
+            tier="constructive",
         )
     with pytest.raises(ValueError, match="named timezone"):
-        TimezoneReceipt(run_id="run-contract", effective="Europe/Berlin")
+        TimezoneReceipt(
+            run_id="run-contract", effective="Europe/Berlin", tier="constructive"
+        )
 
 
 def test_constraint_unsupported_is_immutable_and_freezes_details() -> None:
@@ -427,37 +445,37 @@ class _ConstraintPorts:
     def enforce_seed(
         self, run_id: str, requested: int
     ) -> SeedReceipt | ConstraintUnsupported | AdapterFailure:
-        return SeedReceipt(run_id, requested)
+        return SeedReceipt(run_id, requested, "constructive")
 
     def enforce_clock(
         self, run_id: str, requested: ClockConfiguration
     ) -> ClockReceipt | ConstraintUnsupported | AdapterFailure:
-        return ClockReceipt(run_id, requested)
+        return ClockReceipt(run_id, requested, "constructive")
 
     def enforce_locale(
         self, run_id: str, requested: str
     ) -> LocaleReceipt | ConstraintUnsupported | AdapterFailure:
-        return LocaleReceipt(run_id, requested)
+        return LocaleReceipt(run_id, requested, "constructive")
 
     def enforce_timezone(
         self, run_id: str, requested: str
     ) -> TimezoneReceipt | ConstraintUnsupported | AdapterFailure:
-        return TimezoneReceipt(run_id, requested)
+        return TimezoneReceipt(run_id, requested, "constructive")
 
     def enforce_terminal(
         self, run_id: str, requested: TerminalConfiguration
     ) -> TerminalReceipt | ConstraintUnsupported | AdapterFailure:
-        return TerminalReceipt(run_id, requested)
+        return TerminalReceipt(run_id, requested, "constructive")
 
     def enforce_filesystem(
         self, run_id: str, requested: FilesystemConfiguration
     ) -> FilesystemReceipt | ConstraintUnsupported | AdapterFailure:
-        return FilesystemReceipt(run_id, requested)
+        return FilesystemReceipt(run_id, requested, "constructive")
 
     def enforce_network(
         self, run_id: str, requested: NetworkConfiguration
     ) -> NetworkReceipt | ConstraintUnsupported | AdapterFailure:
-        return NetworkReceipt(run_id, requested)
+        return NetworkReceipt(run_id, requested, "constructive")
 
 
 def test_constraint_ports_return_constraint_specific_receipts() -> None:
@@ -522,7 +540,7 @@ def test_structured_start_outcomes_are_immutable() -> None:
         StartUnsupported(
             run_id="run-contract",
             requested=_configuration(),
-            enforced=(SeedReceipt("run-contract", 41),),
+            enforced=(SeedReceipt("run-contract", 41, "constructive"),),
             constraint="clock",
             code="constraint-unsupported",
             message="wrong effective value",
@@ -531,7 +549,7 @@ def test_structured_start_outcomes_are_immutable() -> None:
         StartUnsupported(
             run_id="run-contract",
             requested=_configuration(),
-            enforced=(SeedReceipt("another-run", 42),),
+            enforced=(SeedReceipt("another-run", 42, "constructive"),),
             constraint="clock",
             code="constraint-unsupported",
             message="wrong run",
@@ -540,7 +558,7 @@ def test_structured_start_outcomes_are_immutable() -> None:
         StartFailed(
             run_id="run-contract",
             requested=_configuration(),
-            enforced=(SeedReceipt("another-run", 42),),
+            enforced=(SeedReceipt("another-run", 42, "constructive"),),
             failure=AdapterFailure(code="adapter-start-failed", message="failed"),
         )
     with pytest.raises(ValueError, match="start failure code"):
@@ -837,21 +855,29 @@ def test_test_double_can_implement_adapter_contract_without_ambient_state() -> N
         lambda: AdapterFailure("adapter-start-failed", cast(str, 1)),
         lambda: ExitStatus("code", cast(int | str, True)),
         lambda: RunFinished(cast(ExitStatus, object())),
-        lambda: SeedReceipt("INVALID RUN", 1),
-        lambda: SeedReceipt("run-contract", 2**64),
-        lambda: ClockReceipt("run-contract", cast(ClockConfiguration, object())),
-        lambda: LocaleReceipt("run-contract", "not_a_locale"),
-        lambda: TerminalReceipt("run-contract", cast(TerminalConfiguration, object())),
-        lambda: FilesystemReceipt(
-            "run-contract", cast(FilesystemConfiguration, object())
+        lambda: SeedReceipt("INVALID RUN", 1, "constructive"),
+        lambda: SeedReceipt("run-contract", 2**64, "constructive"),
+        lambda: ClockReceipt(
+            "run-contract", cast(ClockConfiguration, object()), "constructive"
         ),
-        lambda: NetworkReceipt("run-contract", cast(NetworkConfiguration, object())),
+        lambda: LocaleReceipt("run-contract", "not_a_locale", "constructive"),
+        lambda: TerminalReceipt(
+            "run-contract", cast(TerminalConfiguration, object()), "constructive"
+        ),
+        lambda: FilesystemReceipt(
+            "run-contract", cast(FilesystemConfiguration, object()), "constructive"
+        ),
+        lambda: NetworkReceipt(
+            "run-contract", cast(NetworkConfiguration, object()), "constructive"
+        ),
         lambda: Started(cast(EnforcedConstraints, object()), _observation()),
         lambda: Started(_constraints(), cast(Observation, object())),
         lambda: StartUnsupported(
             run_id="run-contract",
             requested=_configuration(),
-            enforced=cast(tuple[SeedReceipt], [SeedReceipt("run-contract", 42)]),
+            enforced=cast(
+                tuple[SeedReceipt], [SeedReceipt("run-contract", 42, "constructive")]
+            ),
             constraint="clock",
             code="constraint-unsupported",
             message="bad tuple",
