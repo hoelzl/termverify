@@ -59,7 +59,7 @@ transfer-intact.
 | Production containment | Filesystem root mapping and lifecycle, traversal, symlink/reparse-point handling, child-process inheritance/containment, cleanup, and failure semantics | Owner decision 2026-07-18 (cooperation-tier design): OS containment is retired to an explicit non-goal — traversal, symlink/reparse, and child-process containment leave this boundary with it. Replacement scope is delivery-tier sandbox-root mapping with truthful `delivered` receipts; root mapping, existence validation, and host-owned lifecycle remain in scope there. Reopening containment requires a new owner-accepted design. |
 | Production containment | Network allow-list DNS, address normalization, redirects, proxies, loopback, subprocess inheritance, and failure semantics | Owner decision 2026-07-18 (cooperation-tier design): OS-level network enforcement is retired to the same explicit non-goal. Replacement scope is deny-mode delivery with truthful `delivered` receipts; allow-list requests remain rejected fail-closed, and allow-list semantics (DNS, redirects, proxies, loopback) remain undefined and out of scope. |
 | Distribution and release governance | Installed schema access API and exact wheel/sdist resource contract | Implemented: the canonical schema is a packaged resource with public byte/object accessors, and isolated wheel and sdist installation checks verify byte identity with the committed copy. Canonical `$id` publication remains transferred and unresolved. |
-| Distribution and release governance | Resolvable canonical schema publication for the documented `$id` | The current unresolved host is not a publication contract. Runtime validation remains authoritative. |
+| Distribution and release governance | Resolvable canonical schema publication for the documented `$id` | Owner-accepted design 2026-07-19 (`docs/agent/design/canonical-schema-publication.md`): the `$id` keeps its exact value on the owner-controlled `termverify.dev`, published via GitHub Pages with machine-enforced byte identity to the committed resource, with documentation served from the same origin. Two implementation slices are authorized behind owner-manual DNS/Pages prerequisites. Until slice 1's live byte-identity evidence lands, the `$id` remains an identifier only and runtime validation remains authoritative. |
 | Distribution and release governance | Release checklist, changelog/compatibility policy, security-disclosure process, and build/release provenance | Implemented as governance: reviewed checklist, changelog with pre-1.0 policy, private-disclosure process, and a tag-triggered attested draft-artifact workflow. No release is authorized, no index publishing exists, and the package remains pre-alpha. |
 | Distribution and release governance | Reviewed behavior-based coverage-ratchet activation | Implemented: the committed `fail_under` floor is the integer floor of the reviewed observed total (94.43% at activation), raises require sustained durable coverage, and lowering requires explicit owner review. |
 | Production terminal adapter | Direct native pseudoconsole ownership/close, native EOF and final-frame draining, process-tree teardown, cancellation/recovery, and truthful OS-level enforcement evidence | The accepted dependency decision (`docs/agent/design/terminal-adapter-dependency-decision.md`) authorizes reviewed implementation slices with pinned `pywinpty`/ConPTY behind its verification plan. Binding slices 2–4 landed durable Windows-matrix evidence for native ownership/close, EOF/final-frame drain, job-object process-tree teardown, and binding-level cancellation/recovery with hostile-child fixtures (plan items 2–4 and the binding half of item 5). Adapter slices 1–4 landed the fail-closed normalizer, truthful negotiation, epoch machinery, and real-path Windows integration evidence for items 5–8: classification, dimensions receipts through a real resize epoch, verbatim OSC readiness-marker passthrough, and replayable evidence normalization. The adapter enforces only the terminal constraint; the six non-terminal constraints remain truthfully not enforced at this boundary, and their enforcement claims stay with their own workstreams (the two production-containment rows were retired to an explicit non-goal on 2026-07-18; the rest remain transferred). |
@@ -300,6 +300,23 @@ to a package index because no such pipeline or credential exists. Accepting
 these controls authorizes no release: the first supported external artifact
 still requires the checklist's preconditions and the owner-reviewed completion
 state of this handover.
+
+The owner accepted the canonical-publication design on 2026-07-19 (issue
+#131):
+[`canonical-schema-publication.md`](../design/canonical-schema-publication.md)
+keeps the documented `$id` exactly as committed on the owner-controlled
+`termverify.dev`, rejects GitHub URLs as canonical identifiers, and defines
+the publication contract: GitHub Pages deployed from `main` by workflow,
+`/schemas/<protocol>/<version>.schema.json` layout with the `/schemas/`
+prefix reserved, byte identity with the committed resource enforced by a
+post-deploy fetch check, human-facing documentation (MkDocs + Material,
+CI-only) at the same origin, and `docs/agent/` excluded from the site. The
+design authorizes two implementation slices — schema publication, then the
+documentation site — gated on owner-manual IONOS DNS records, GitHub domain
+verification, and Pages enablement. Accepting the design publishes nothing:
+until slice 1's live byte-identity evidence lands, the `$id` remains an
+identifier only, runtime validation remains authoritative, and no required
+build/test path may depend on the site being reachable.
 
 ### 5. Production terminal adapter
 
