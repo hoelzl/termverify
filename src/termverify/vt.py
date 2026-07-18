@@ -92,7 +92,7 @@ class VtScreenNormalizer:
         self._column = 0
         self._visible = True
         self._pending_wrap = False
-        self._saved_cursor: tuple[int, int] | None = None
+        self._saved_cursor: tuple[int, int, bool] | None = None
         self._margin_top = 0
         self._margin_bottom = self._rows - 1
         self._tab_stops = _default_tab_stops(self._columns)
@@ -158,7 +158,9 @@ class VtScreenNormalizer:
 
     def _consume_ground(self, character: str) -> None:
         code = ord(character)
-        if code >= 0x20 and code != 0x7F:
+        if 0x7F <= code <= 0x9F:
+            raise VtNormalizationError("unsupported control character", character)
+        if code >= 0x20:
             self._write(character)
         elif character == "\x1b":
             self._parse_state = "escape"
@@ -189,7 +191,7 @@ class VtScreenNormalizer:
             return
         self._parse_state = "ground"
         if character == "7":
-            self._saved_cursor = (self._row, self._column)
+            self._save_cursor()
         elif character == "8":
             self._restore_cursor()
         elif character == "D":
@@ -208,11 +210,16 @@ class VtScreenNormalizer:
             raise VtNormalizationError("unsupported escape sequence", character)
 
     def _consume_csi(self, character: str) -> None:
-        if character in _CSI_PARAM_CHARS or (character == "?" and not self._collected):
+        code = ord(character)
+        if (
+            character in _CSI_PARAM_CHARS
+            or (character == "?" and not self._collected)
+            or 0x20 <= code <= 0x2F
+        ):
             self._collected += character
             return
-        code = ord(character)
         if not 0x40 <= code <= 0x7E:
+            self._parse_state = "ground"
             raise VtNormalizationError(
                 "malformed control sequence", self._collected + character
             )
@@ -226,11 +233,11 @@ class VtScreenNormalizer:
             self._parse_state = "ground"
 
     def _consume_string_escape(self, character: str) -> None:
+        self._parse_state = "ground"
         if character != "\\":
             raise VtNormalizationError(
                 "unterminated string sequence", "\x1b" + character
             )
-        self._parse_state = "ground"
 
     def _write(self, character: str) -> None:
         if self._pending_wrap:
@@ -260,11 +267,26 @@ class VtScreenNormalizer:
         self._column = stops[0] if stops else self._columns - 1
         self._pending_wrap = False
 
+    def _save_cursor(self) -> None:
+        self._saved_cursor = (self._row, self._column, self._pending_wrap)
+
     def _restore_cursor(self) -> None:
-        row, column = self._saved_cursor if self._saved_cursor else (0, 0)
+        row, column, pending = (
+            self._saved_cursor if self._saved_cursor else (0, 0, False)
+        )
         self._row = min(row, self._rows - 1)
         self._column = min(column, self._columns - 1)
-        self._pending_wrap = False
+        self._pending_wrap = pending and self._column == self._columns - 1
+
+    def _move_up(self, count: int) -> None:
+        limit = self._margin_top if self._row >= self._margin_top else 0
+        self._row = max(limit, self._row - count)
+
+    def _move_down(self, count: int) -> None:
+        limit = (
+            self._margin_bottom if self._row <= self._margin_bottom else self._rows - 1
+        )
+        self._row = min(limit, self._row + count)
 
     def _scroll_up(self, count: int) -> None:
         grid = self._grid
@@ -280,10 +302,12 @@ class VtScreenNormalizer:
 
     def _dispatch_csi(self, params: str, final: str) -> None:
         sequence = params + final
-        if final == "m":
-            return
+        if any(0x20 <= ord(character) <= 0x2F for character in params):
+            raise VtNormalizationError("unsupported control sequence", sequence)
         if params.startswith("?"):
             self._dispatch_private_mode(params[1:], final, sequence)
+            return
+        if final == "m":
             return
         values = self._int_params(params, sequence)
         self._pending_wrap = False
@@ -291,9 +315,9 @@ class VtScreenNormalizer:
             self._row = min(self._param(values, 0, 1) - 1, self._rows - 1)
             self._column = min(self._param(values, 1, 1) - 1, self._columns - 1)
         elif final == "A":
-            self._row = max(0, self._row - self._param(values, 0, 1))
+            self._move_up(self._param(values, 0, 1))
         elif final == "B":
-            self._row = min(self._rows - 1, self._row + self._param(values, 0, 1))
+            self._move_down(self._param(values, 0, 1))
         elif final == "C":
             self._column = min(
                 self._columns - 1, self._column + self._param(values, 0, 1)
@@ -301,10 +325,10 @@ class VtScreenNormalizer:
         elif final == "D":
             self._column = max(0, self._column - self._param(values, 0, 1))
         elif final == "E":
-            self._row = min(self._rows - 1, self._row + self._param(values, 0, 1))
+            self._move_down(self._param(values, 0, 1))
             self._column = 0
         elif final == "F":
-            self._row = max(0, self._row - self._param(values, 0, 1))
+            self._move_up(self._param(values, 0, 1))
             self._column = 0
         elif final == "G":
             self._column = min(self._param(values, 0, 1) - 1, self._columns - 1)
@@ -348,7 +372,7 @@ class VtScreenNormalizer:
                 self._switch_alternate(enable, save_cursor=False, clear_on="leave")
             elif mode == 1048:
                 if enable:
-                    self._saved_cursor = (self._row, self._column)
+                    self._save_cursor()
                 else:
                     self._restore_cursor()
             elif mode != 12:
@@ -359,17 +383,18 @@ class VtScreenNormalizer:
     ) -> None:
         if enable and self._mode == "normal":
             if save_cursor:
-                self._saved_cursor = (self._row, self._column)
+                self._save_cursor()
             self._mode = "alternate"
+            self._pending_wrap = False
             if clear_on == "enter":
                 self._alternate = _blank_grid(self._rows, self._columns)
         elif not enable and self._mode == "alternate":
             if clear_on == "leave":
                 self._alternate = _blank_grid(self._rows, self._columns)
             self._mode = "normal"
+            self._pending_wrap = False
             if save_cursor:
                 self._restore_cursor()
-        self._pending_wrap = False
 
     def _erase_display(self, selector: int, sequence: str) -> None:
         grid = self._grid

@@ -97,11 +97,22 @@ Windows integration slice is the executable check of that coverage claim.
   of frames as an outcome of screen-model semantics, exactly as the
   adapter design requires.
 
-**Fail-closed:** any other C0 control, any unlisted ESC or CSI final byte,
-and any unlisted DEC private mode raise `VtNormalizationError` carrying the
-offending sequence — a structured error the adapter will classify as a
-runtime failure. A frame is never silently wrong; it is either within the
-claimed subset or the run fails loudly with the evidence of why.
+**Fail-closed:** any other C0 control, `DEL`, any raw C1 control byte
+(U+0080–U+009F), any unlisted ESC or CSI final byte, any control sequence
+carrying intermediate bytes (0x20–0x2F — well-formed but unsupported, e.g.
+DECSCUSR), and any unlisted DEC private mode raise `VtNormalizationError`
+carrying the offending sequence — a structured error the adapter will
+classify as a runtime failure. A frame is never silently wrong; it is
+either within the claimed subset or the run fails loudly with the evidence
+of why. After raising, the parser returns to the ground state so post-error
+behavior is defined; the error itself remains terminal for a verified run —
+the adapter classifies it and aborts rather than feeding further output.
+
+**Pinned semantic choices (xterm-consistent, tested):** the deferred-wrap
+flag survives LF and is saved and restored by DECSC/DECRC (including via
+`?1048`/`?1049`); `CUU`/`CUD`/`CNL`/`CPL` stop at the scroll margins when
+the cursor starts inside them and at the screen edge otherwise; scroll
+margins and tab stops are shared between the normal and alternate buffers.
 
 **Documented v1 limitations (not claims):** frames are plain text —
 colors, styling, and charset translation are consumed, not evidence; there
@@ -111,8 +122,10 @@ points); `mode` reports only normal/alternate.
 
 ## Resize semantics
 
-`notify_resize` crops or pads the grid preserving the top-left corner,
-clamps the cursor, and resets the scroll margins to the full new screen.
+`notify_resize` crops or pads both buffers preserving the top-left corner,
+clamps the cursor, resets the scroll margins to the full new screen, and
+resets the tab stops to the every-8 defaults for the new width (custom HTS
+stops are discarded).
 This is deliberately the simplest deterministic rule: the adapter design
 routes explicit `Resize` epochs through ConPTY, whose renderer repaints
 after a resize, so the repaint — not the crop rule — determines the

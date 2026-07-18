@@ -552,3 +552,54 @@ def test_insert_delete_lines_outside_margins_are_ignored() -> None:
     normalizer = _normalizer(rows=3, columns=2)
     normalizer.feed("aa\r\nbb\r\ncc" + f"{ESC}[1;2r{ESC}[3;1H{ESC}[1L{ESC}[1M")
     assert _lines(normalizer) == ("aa", "bb", "cc")
+
+
+def test_c1_control_characters_fail_closed() -> None:
+    normalizer = _normalizer()
+    with pytest.raises(VtNormalizationError):
+        normalizer.feed("\x9b31mred")
+
+
+def test_private_mode_with_sgr_final_fails_closed() -> None:
+    normalizer = _normalizer()
+    with pytest.raises(VtNormalizationError):
+        normalizer.feed(f"{ESC}[?1049m")
+
+
+def test_intermediate_bytes_fail_closed_as_unsupported() -> None:
+    normalizer = _normalizer()
+    with pytest.raises(VtNormalizationError) as excinfo:
+        normalizer.feed(f"{ESC}[1 q")
+    assert "unsupported control sequence" in str(excinfo.value)
+    with pytest.raises(VtNormalizationError):
+        normalizer.feed(f"{ESC}[1 m")
+
+
+def test_parser_returns_to_ground_after_error() -> None:
+    normalizer = _normalizer()
+    with pytest.raises(VtNormalizationError):
+        normalizer.feed(f"{ESC}[2\x01H")
+    normalizer.feed("A")
+    assert _lines(normalizer)[0].startswith("A")
+    with pytest.raises(VtNormalizationError):
+        normalizer.feed(f"{ESC}]0;t{ESC}Z")
+    normalizer.feed("B")
+    assert _lines(normalizer)[0].startswith("AB")
+
+
+def test_save_restore_preserves_pending_wrap() -> None:
+    normalizer = _normalizer(rows=2, columns=4)
+    normalizer.feed("abcd" + f"{ESC}7{ESC}8" + "e")
+    assert _lines(normalizer) == ("abcd", "e   ")
+
+
+def test_vertical_moves_stop_at_scroll_margins() -> None:
+    normalizer = _normalizer(rows=4, columns=2)
+    normalizer.feed(f"{ESC}[2;3r{ESC}[3;1H{ESC}[9A")
+    assert normalizer.snapshot().cursor.row == 1
+    normalizer.feed(f"{ESC}[9B")
+    assert normalizer.snapshot().cursor.row == 2
+    normalizer.feed(f"{ESC}[1;1H{ESC}[9B")
+    assert normalizer.snapshot().cursor.row == 2
+    normalizer.feed(f"{ESC}[4;1H{ESC}[9A")
+    assert normalizer.snapshot().cursor.row == 1
