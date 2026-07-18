@@ -56,6 +56,12 @@ and constructs `RunFailed`; it does not emit post-readiness `run.unsupported`,
 which remains configuration-negotiation-only. Applications must never fall back
 to `TextInput` or an escape sequence for an unsupported semantic chord.
 
-Constraint receipts must exactly match the requested run and effective value.
-An unsupported constraint or enforcement failure stops negotiation immediately;
-the subject is not initialized.
+Constraint receipts must exactly match the requested run and effective value,
+and every receipt must state the mandatory `constructive` enforcement tier
+(`termverify.enforcement-tier/v1`) — the application's by-construction
+assertion that the subject reaches the constrained resource only through the
+injected port. Stating it truthfully is part of the `DirectApplication` port
+contract; any other tier, or a `delivery` record (which belongs exclusively
+to the `delivered` tier), is a contract breach the adapter rejects as a
+structured `StartFailed`. An unsupported constraint or enforcement failure
+stops negotiation immediately; the subject is not initialized.
