@@ -338,6 +338,20 @@ structured failure, and raw-VT retention with replayable normalization. No
 adapter code exists yet; every claim in that document stays fail-closed
 until its slice lands with evidence.
 
+Adapter slice 1 landed on 2026-07-18 (issue #115): the normalizer
+reuse/dependency assessment (`docs/agent/design/vt-normalizer-decision.md`,
+rejecting `pyte` on license, dormancy, and fail-open grounds) and
+`termverify.vt` — the `TerminalOutputNormalizer` port exactly as the
+adapter design fixed it, plus a deterministic in-house screen model for a
+closed, documented VT subset with replay identity `termverify.vt`/`1`.
+Unknown grid-affecting input fails closed with a structured error and a
+defined post-error parser state; string sequences (including the readiness
+marker's private OSC) are consumed and never rendered; the module is
+cross-platform, pure, and 100% line- and branch-covered under the ratchet.
+The v1 subset's coverage of real ConPTY output remains an unproven claim
+until the Windows integration slice; adapter negotiation, epoch machinery,
+and all receipts remain unbuilt and fail-closed.
+
 ## Risks and non-negotiables
 
 - Do not expose unresolved capability, timezone-enforcement, filesystem,
