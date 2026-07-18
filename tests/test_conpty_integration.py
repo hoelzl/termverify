@@ -30,6 +30,14 @@ native ``ConptyChild``, and the real ``VtScreenNormalizer``.
 OS-level observations reuse the process-handle helpers from the binding
 evidence module; asserted evidence is adapter results, raw chunks, frames,
 and OS exit codes — never helper-thread or wall-clock state.
+
+The cooperation-tier section at the end of this module is slice 3 of the
+accepted cooperation-tier design
+(`docs/agent/design/cooperation-tier-constraint-ports.md`): the first fully
+successful verified terminal run — cooperation ports with a host-owned
+sandbox, delivered-tier receipts, a subject echoing every delivered
+variable and its working directory into frames, replay identity, and the
+forced-stop/deadline paths re-exercised under those ports.
 """
 
 from __future__ import annotations
@@ -39,6 +47,7 @@ import re
 import sys
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Final, cast
 
 import pytest
@@ -61,20 +70,27 @@ from termverify._conpty import (
     ConptyEndOfStreamError,
 )
 from termverify.adapter import (
+    ClockConfiguration,
     EpochCompleted,
     ExitStatus,
+    FilesystemConfiguration,
     ManualTime,
+    NetworkConfiguration,
     Observation,
     Resize,
+    RunConfiguration,
     RunFailed,
     RunFinished,
     Started,
     StartTerminated,
+    StartUnsupported,
     Stop,
+    TerminalConfiguration,
     TerminalResult,
     TextInput,
 )
 from termverify.conpty import READINESS_MARKER_DEFAULT, ConptyAdapter, ConptyBinding
+from termverify.cooperation import CooperationConstraintPorts, RealDirectoryProbe
 from termverify.vt import VtScreenNormalizer
 
 _INITIAL_ROWS: Final = 24
@@ -473,3 +489,254 @@ def test_deadline_abort_on_hanging_subject_recovers_os_observed() -> None:
     assert os_exit_code == FORCED_TERMINATION_EXIT_CODE
     with pytest.raises(RuntimeError):
         adapter.dispatch(TextInput(ManualTime(0), "late\r\n"))
+
+
+# --- Cooperation-tier slice 3: the first fully verified terminal run ---
+
+#: Wide enough that a delivered absolute sandbox path echoes into the frame
+#: without wrapping; the width is a requested terminal dimension like any
+#: other, enforced by the adapter at the os tier.
+_WIDE_COLUMNS: Final = 200
+_WIDE_ROWS: Final = 30
+
+_DELIVERED_VARIABLES: Final = (
+    "TERMVERIFY_SEED",
+    "TERMVERIFY_CLOCK_INITIAL_MS",
+    "TERMVERIFY_LOCALE",
+    "TZ",
+    "TERMVERIFY_TIMEZONE",
+    "TERMVERIFY_FS_ROOT",
+    "TERMVERIFY_NETWORK",
+)
+
+# Cooperating subject for the cooperation-tier evidence: it reads every
+# delivered variable and its own working directory and echoes them into the
+# terminal — the observable end of the delivery contract. Commands mirror
+# the cooperative fixture: "exit" ends without a marker so the run ends in
+# native end-of-stream; "hang" never answers so only the abort deadline can
+# end the epoch.
+_DELIVERY_ECHO_CHILD_TEMPLATE: Final = """\
+import os
+import sys
+import time
+
+MARKER = {marker!r}
+
+def emit(text):
+    sys.stdout.write(text + MARKER)
+    sys.stdout.flush()
+
+names = {names!r}
+lines = ["TV_PID:" + str(os.getpid())]
+for name in names:
+    lines.append("TV_" + name + "=" + os.environ.get(name, "<missing>"))
+lines.append("TV_CWD=" + os.getcwd())
+emit("\\r\\n".join(lines) + "\\r\\n")
+for line in sys.stdin:
+    command = line.strip()
+    if command == "exit":
+        sys.stdout.write("TV_EXIT\\r\\n")
+        sys.stdout.flush()
+        sys.exit(0)
+    if command == "hang":
+        time.sleep(600)
+    emit("TV_ECHO:" + command + "\\r\\n")
+"""
+
+
+def _delivery_echo_argv() -> list[str]:
+    return _argv(
+        _DELIVERY_ECHO_CHILD_TEMPLATE.format(
+            marker=READINESS_MARKER_DEFAULT, names=_DELIVERED_VARIABLES
+        )
+    )
+
+
+def _cooperation_configuration() -> RunConfiguration:
+    return RunConfiguration(
+        seed=42,
+        clock=ClockConfiguration(initial_ms=0),
+        locale="en-US",
+        timezone="UTC",
+        terminal=TerminalConfiguration(
+            columns=_WIDE_COLUMNS, rows=_WIDE_ROWS, capabilities=()
+        ),
+        filesystem=FilesystemConfiguration(root_id="fixture-root"),
+        network=NetworkConfiguration.deny(),
+    )
+
+
+def _cooperation_adapter(
+    sandbox: Path, *, abort_deadline_ms: int = _SAFE_DEADLINE_MS
+) -> ConptyAdapter:
+    return ConptyAdapter(
+        _delivery_echo_argv(),
+        binding=ConptyBinding(),
+        abort_deadline_ms=abort_deadline_ms,
+        constraint_ports=CooperationConstraintPorts({"fixture-root": str(sandbox)}),
+    )
+
+
+def _host_sandbox(tmp_path: Path) -> Path:
+    """Host-owned sandbox lifecycle: the test creates it, the port never does."""
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    return sandbox
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY integration evidence")
+def test_first_fully_successful_verified_run_with_cooperation_ports(
+    tmp_path: Path,
+) -> None:
+    """The design's slice-3 claim: a fully successful real start.
+
+    Cooperation ports, real binding, real normalizer. The receipts carry
+    the delivered tier with the exact delivery records; the subject reads
+    every delivered variable and its working directory and echoes them into
+    frames — the delivery is observable end to end, without any claim that
+    the subject honored the values beyond what the frames show. The run
+    continues through a text epoch, ends in native end-of-stream with the
+    observed exit record, and the retained raw chunks replay to the
+    recorded frames.
+    """
+    sandbox = _host_sandbox(tmp_path)
+    adapter = _cooperation_adapter(sandbox)
+    observations: list[Observation] = []
+
+    with _reaped(adapter):
+        started = adapter.start("run-verified", _cooperation_configuration())
+        assert type(started) is Started, started
+        constraints = started.constraints
+
+        assert constraints.terminal.tier == "os"
+        assert constraints.terminal.delivery is None
+        expected_root = RealDirectoryProbe().resolve_directory(str(sandbox))
+        assert expected_root is not None
+        expected_env = {
+            "TERMVERIFY_SEED": "42",
+            "TERMVERIFY_CLOCK_INITIAL_MS": "0",
+            "TERMVERIFY_LOCALE": "en-US",
+            "TZ": "UTC0",
+            "TERMVERIFY_TIMEZONE": "UTC",
+            "TERMVERIFY_FS_ROOT": expected_root,
+            "TERMVERIFY_NETWORK": "deny",
+        }
+        delivered: dict[str, str] = {}
+        for receipt in (
+            constraints.seed,
+            constraints.clock,
+            constraints.locale,
+            constraints.timezone,
+            constraints.filesystem,
+            constraints.network,
+        ):
+            assert receipt.tier == "delivered"
+            assert receipt.delivery is not None
+            delivered.update(receipt.delivery.env)
+        assert delivered == expected_env
+        assert constraints.filesystem.delivery is not None
+        assert constraints.filesystem.delivery.cwd == expected_root
+
+        observation = started.observation
+        observations.append(observation)
+        frame = _frame_text(observation)
+        for name, value in expected_env.items():
+            # Line-anchored: the value must end at the frame padding, so a
+            # frame showing a longer value cannot satisfy a prefix of it.
+            assert re.search(
+                rf"^TV_{re.escape(name)}={re.escape(value)} *$", frame, re.MULTILINE
+            ), f"frame does not show TV_{name}={value}"
+        observed_cwd = re.search(r"TV_CWD=(\S+)", frame)
+        assert observed_cwd is not None
+        assert os.path.normcase(observed_cwd.group(1)) == os.path.normcase(
+            expected_root
+        )
+
+        result = adapter.dispatch(TextInput(ManualTime(0), "hello\r\n"))
+        assert type(result) is EpochCompleted, result
+        observations.append(result.observation)
+        assert "TV_ECHO:hello" in _frame_text(result.observation)
+
+        final = adapter.dispatch(TextInput(ManualTime(0), "exit\r\n"))
+        assert type(final) is TerminalResult, final
+        assert final.outcome == RunFinished(ExitStatus("code", 0))
+        assert final.observation is not None
+        observations.append(final.observation)
+        process = final.observation.process
+        assert process is not None
+        assert process.state == "exited"
+        assert "TV_EXIT" in _frame_text(final.observation)
+
+    _assert_replay_reproduces(observations, rows=_WIDE_ROWS, columns=_WIDE_COLUMNS)
+    with pytest.raises(RuntimeError):
+        adapter.dispatch(TextInput(ManualTime(0), "late\r\n"))
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY integration evidence")
+def test_forced_stop_under_cooperation_ports_os_observed(tmp_path: Path) -> None:
+    """Forced stop keeps its truthful semantics under the cooperation ports."""
+    adapter = _cooperation_adapter(_host_sandbox(tmp_path))
+    started = adapter.start("run-verified-stop", _cooperation_configuration())
+    assert type(started) is Started, started
+    handle = _open_process_handle(_observed_pid(started.observation))
+    try:
+        stopped = adapter.stop(Stop(ManualTime(0)))
+        os_exit_code = _wait_for_os_exit_code(handle, _OS_WAIT_TIMEOUT_MS)
+    finally:
+        _terminate_process(handle)
+        _close_process_handle(handle)
+
+    assert type(stopped) is TerminalResult
+    assert stopped.outcome == RunFinished(
+        ExitStatus("code", FORCED_TERMINATION_EXIT_CODE)
+    )
+    assert os_exit_code == FORCED_TERMINATION_EXIT_CODE
+    assert [diagnostic.code for diagnostic in stopped.diagnostics] == [
+        "forced-termination"
+    ]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY integration evidence")
+def test_deadline_abort_under_cooperation_ports_os_observed(tmp_path: Path) -> None:
+    """The abort deadline keeps its structured-failure semantics as well."""
+    adapter = _cooperation_adapter(
+        _host_sandbox(tmp_path), abort_deadline_ms=_ABORT_DEADLINE_MS
+    )
+    started = adapter.start("run-verified-deadline", _cooperation_configuration())
+    assert type(started) is Started, started
+    handle = _open_process_handle(_observed_pid(started.observation))
+    try:
+        result = adapter.dispatch(TextInput(ManualTime(0), "hang\r\n"))
+        os_exit_code = _wait_for_os_exit_code(handle, _OS_WAIT_TIMEOUT_MS)
+    finally:
+        _terminate_process(handle)
+        _close_process_handle(handle)
+
+    assert type(result) is TerminalResult, result
+    assert result.observation is None
+    outcome = result.outcome
+    assert type(outcome) is RunFailed
+    assert outcome.failure.code == "adapter-runtime-failed"
+    details = cast("Mapping[str, int]", outcome.failure.details)
+    assert details["abort-deadline-ms"] == _ABORT_DEADLINE_MS
+    assert os_exit_code == FORCED_TERMINATION_EXIT_CODE
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY integration evidence")
+def test_unresolvable_sandbox_fails_unsupported_before_any_child(
+    tmp_path: Path,
+) -> None:
+    """A missing host sandbox ends the start honestly, before any spawn."""
+    adapter = ConptyAdapter(
+        _delivery_echo_argv(),
+        binding=ConptyBinding(),
+        abort_deadline_ms=_SAFE_DEADLINE_MS,
+        constraint_ports=CooperationConstraintPorts(
+            {"fixture-root": str(tmp_path / "missing")}
+        ),
+    )
+    result = adapter.start("run-verified-missing", _cooperation_configuration())
+
+    assert type(result) is StartUnsupported, result
+    assert result.constraint == "filesystem"
+    assert result.code == "constraint-unsupported"

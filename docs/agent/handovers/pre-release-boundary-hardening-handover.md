@@ -226,6 +226,33 @@ is cross-platform, fake-driven, and ratcheted. The sandbox disclosures are
 recorded in `docs/developer-guide/conpty-adapter.md`. No end-to-end
 successful real start is claimed; that evidence is slice 3.
 
+Cooperation-tier implementation slice 3 landed on 2026-07-19 (issue #129),
+completing the slices authorized by the cooperation-tier design: the
+project's first fully successful verified terminal run, as durable
+Windows-matrix integration evidence on the real path — cooperation ports
+with a host-owned sandbox directory, default `ConptyBinding`, native child,
+real `VtScreenNormalizer`. The successful start's receipts carry the
+`delivered` tier with the exact delivery records (the terminal receipt
+states `os` with no delivery), and a cooperating fixture subject reads
+every delivered variable and its own working directory and echoes them into
+frames — the delivery observable end to end, with no claim that the subject
+honored anything beyond what the frames show. The run continues through a
+text epoch, ends in native end-of-stream with the observed exit record, and
+the retained raw `terminal.output` chunks replay to the recorded frames and
+cursors. Forced stop and the deadline abort were re-exercised under the
+cooperation ports with OS-observed teardown, and an unresolvable sandbox
+root ends the start honestly as `StartUnsupported(filesystem)` before any
+child exists.
+
+Reassessment at slice-3 completion (the design names this the natural
+point): the production-containment workstream's replacement scope is now
+fully implemented and evidenced; its two retired rows stay retired
+non-goals. Still transferred and unresolved, all blocked on owner
+decisions: canonical schema `$id` publication, named-timezone enforcement,
+the terminal-capability registry, concurrent event correlation, and
+key-to-terminal byte mapping. No further implementation slices are
+authorized by the cooperation-tier design.
+
 ### 4. Distribution and release governance
 
 Define installed schema access, canonical publication, release/security/provenance

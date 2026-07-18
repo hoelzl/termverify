@@ -52,6 +52,12 @@ with the pre-1.0 policy below.
   assembles the child's environment overlay and working directory from the
   validated delivery records, with fail-closed disjointness invariants.
   Defaults are unchanged — `UnenforcedConstraintPorts` still fails closed.
+- First fully successful verified terminal run as durable Windows-matrix
+  integration evidence: cooperation ports with a host-owned sandbox, real
+  ConPTY binding and normalizer, delivered-tier receipts, a cooperating
+  subject echoing every delivered variable and its working directory into
+  frames, subject exit via native end-of-stream, replay identity over the
+  retained raw output, and forced-stop/deadline paths re-exercised.
 
 ### Changed
 
