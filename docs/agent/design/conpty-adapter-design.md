@@ -157,14 +157,20 @@ evidence sees exactly what the adapter fed it. With the OSC default the
 marker is absent from frames because a compliant screen model does not render
 unknown OSC sequences — an outcome of screen-model semantics, not an adapter
 stripping operation; a host-configured printable marker appears in frames and
-in replays identically. **Disclosed assumption:** the repository currently
-has passthrough evidence only for printable markers (the spike and every
-binding-test sentinel); there is no evidence yet that ConPTY relays a private
-OSC sequence verbatim, and ConPTY is known to rewrite output. The OSC default
-is therefore provisional: the Windows integration slice must produce
-passthrough evidence before any public claim relies on it, and the
-configurability of the marker is the mitigation — if OSC passthrough fails,
-the default changes to a printable sentinel by amending this document.
+in replays identically. **Disclosed assumption, resolved 2026-07-18 (issue
+#121):** at design time the repository had passthrough evidence only for
+printable markers, so the OSC default was provisional with a printable
+fallback. The Windows integration slice produced the required evidence: a
+durable Windows-matrix test observes the exact `OSC 7791;ready ST` byte
+sequence a child emits arriving verbatim in the raw output stream between
+printable sentinels, and the end-to-end run drives every epoch's readiness
+through that default. The OSC default is therefore no longer provisional;
+the marker remains configurable, and the printable path retains its own
+frame-visibility and replay evidence. One consequence of the same evidence:
+a resize delivers no bytes to a Windows console client's stdin, so
+marker-after-resize cooperation requires the subject to detect the new
+dimensions itself (the fixture subject watches the reported terminal size);
+that is part of the subject cooperation contract, not an adapter concern.
 Subjects that cannot emit a marker cannot produce readiness
 evidence and therefore cannot complete a verified terminal run — by design,
 not by accident. The marker string is part of the run's explicit
@@ -212,6 +218,16 @@ level). The deadline is host abort *policy*, disclosed in the resulting
 structured failure's details; it is never evidence of quiescence and can
 never produce a successful epoch. The watchdog trigger is injectable so the
 classification path is fully testable against a fake binding.
+**Write coverage, decided 2026-07-18 (issue #121):** the watchdog wraps
+blocking reads only. Binding evidence showed no conin write backpressure on
+the verified matrix (a 7.1 GiB flood against a never-reading child never
+blocked, issue #110), the bounded write-flood test would fail loudly rather
+than hang if some SKU regressed that behavior, and `cancel_io` cannot cancel
+conin writes anyway — a write watchdog could only close the binding and then
+wait out the same native call it cannot interrupt. Deadline protection for
+writes is therefore not implemented; if future evidence shows a blocking
+conin write, that evidence reopens this decision rather than being absorbed
+silently.
 
 **Time discipline.** All observation and diagnostic timestamps are the
 epoch's manual time, satisfying the contract's `at_ms` invariants. Wall-clock

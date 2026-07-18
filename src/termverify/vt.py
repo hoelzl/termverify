@@ -309,6 +309,14 @@ class VtScreenNormalizer:
             return
         if final == "m":
             return
+        if final in "tc":
+            # XTWINOPS window manipulation and primary device-attributes
+            # queries: ConPTY emits both in its session preamble (observed
+            # evidence, issue #121). Neither touches the grid; window
+            # operations are never honored — the model's dimensions change
+            # only through notify_resize.
+            self._int_params(params, sequence)
+            return
         values = self._int_params(params, sequence)
         self._pending_wrap = False
         if final in "Hf":
@@ -375,7 +383,10 @@ class VtScreenNormalizer:
                     self._save_cursor()
                 else:
                     self._restore_cursor()
-            elif mode != 12:
+            elif mode not in (12, 1004, 9001):
+                # 1004 (focus reporting) and 9001 (win32 input mode) are
+                # enabled by ConPTY's session preamble (observed evidence,
+                # issue #121); like cursor blink they carry no grid effect.
                 raise VtNormalizationError("unsupported private mode", sequence)
 
     def _switch_alternate(

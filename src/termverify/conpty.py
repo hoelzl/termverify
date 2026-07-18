@@ -7,8 +7,10 @@ machinery — readiness-marker protocol, epoch loop, failure classification,
 watchdog-driven abort deadline, and forced stop teardown. All logic is
 cross-platform and testable against fake bindings, normalizers, and watchdog
 triggers; ``termverify._conpty`` remains the only native, ratchet-excluded
-boundary. Windows integration evidence for the real path is slice 4 and is
-not claimed here.
+boundary. Windows integration evidence for the real path (slice 4) lives in
+``tests/test_conpty_integration.py``: end-to-end start/text/resize/exit,
+forced stop, and deadline abort against a cooperative fixture subject on the
+Windows CI matrix.
 
 Negotiation is truthful by construction:
 
@@ -32,11 +34,11 @@ Readiness and quiescence are defined only by observable evidence:
   chunks are always fed to the normalizer unmodified and retained as ordered
   ``terminal.output`` events, so replaying the normalizer over the raw
   evidence reproduces the frames.
-- :data:`READINESS_MARKER_DEFAULT` is a private-use OSC sequence and is
-  **provisional**: there is no repository evidence yet that ConPTY relays a
-  private OSC sequence verbatim, and this module makes no passthrough claim.
-  That evidence belongs to the Windows integration slice; the marker's
-  configurability is the mitigation if OSC passthrough fails.
+- :data:`READINESS_MARKER_DEFAULT` is a private-use OSC sequence. The
+  Windows integration evidence shows ConPTY relaying it verbatim through
+  the raw output stream, so the default is no longer provisional; the
+  marker remains configurable, and a printable marker has its own
+  frame-visibility and replay evidence.
 - Native end-of-stream plus the observed native exit record ends the run
   truthfully; a missing exit record is a structured failure, never a
   fabricated exit.
@@ -115,12 +117,12 @@ __all__ = [
     "UnenforcedConstraintPorts",
 ]
 
-#: Provisional default readiness marker: a private-use OSC sequence (OSC … ST)
-#: that a compliant screen model consumes without rendering. There is no
-#: repository evidence yet that ConPTY passes a private OSC sequence through
-#: verbatim; no passthrough claim is made here, and the Windows integration
-#: slice must produce that evidence before any public claim relies on this
-#: default. Hosts can configure any exact non-empty string instead.
+#: Default readiness marker: a private-use OSC sequence (OSC … ST) that a
+#: compliant screen model consumes without rendering. Windows integration
+#: evidence (``tests/test_conpty_integration.py``) shows ConPTY relaying
+#: this exact sequence verbatim, so the default carries a passthrough claim
+#: backed by the CI matrix. Hosts can configure any exact non-empty string
+#: instead.
 READINESS_MARKER_DEFAULT: Final = "\x1b]7791;ready\x1b\\"
 
 _State = Literal[
