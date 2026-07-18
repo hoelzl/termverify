@@ -55,7 +55,7 @@ Every row has disposition **transfer intact to this named successor**.
 | Distribution and release governance | Resolvable canonical schema publication for the documented `$id` | The current unresolved host is not a publication contract. Runtime validation remains authoritative. |
 | Distribution and release governance | Release checklist, changelog/compatibility policy, security-disclosure process, and build/release provenance | Implemented as governance: reviewed checklist, changelog with pre-1.0 policy, private-disclosure process, and a tag-triggered attested draft-artifact workflow. No release is authorized, no index publishing exists, and the package remains pre-alpha. |
 | Distribution and release governance | Reviewed behavior-based coverage-ratchet activation | Implemented: the committed `fail_under` floor is the integer floor of the reviewed observed total (94.43% at activation), raises require sustained durable coverage, and lowering requires explicit owner review. |
-| Production terminal adapter | Direct native pseudoconsole ownership/close, native EOF and final-frame draining, process-tree teardown, cancellation/recovery, and truthful OS-level enforcement evidence | The accepted dependency decision (`docs/agent/design/terminal-adapter-dependency-decision.md`) authorizes reviewed implementation slices with pinned `pywinpty`/ConPTY behind its verification plan. Slices 2–3 landed durable Windows-matrix evidence for native ownership/close, EOF/final-frame drain, and job-object process-tree teardown (plan items 2–4); cancellation/recovery, dimensions receipts, and every enforcement claim remain unproven until their planned evidence lands. |
+| Production terminal adapter | Direct native pseudoconsole ownership/close, native EOF and final-frame draining, process-tree teardown, cancellation/recovery, and truthful OS-level enforcement evidence | The accepted dependency decision (`docs/agent/design/terminal-adapter-dependency-decision.md`) authorizes reviewed implementation slices with pinned `pywinpty`/ConPTY behind its verification plan. Slices 2–4 landed durable Windows-matrix evidence for native ownership/close, EOF/final-frame drain, job-object process-tree teardown, and binding-level cancellation/recovery with hostile-child fixtures (plan items 2–4 and the binding half of item 5); taxonomy classification, dimensions receipts, and every enforcement claim remain unproven until their planned evidence lands. |
 
 ## Completion-definition amendments retained from the predecessor
 
@@ -293,6 +293,36 @@ outside the job; the binding documents this rather than claiming pre-start
 assignment. Cancellation/recovery taxonomy, dimensions receipts,
 enforcement receipts, and evidence normalization remain unproven and
 fail-closed.
+
+Implementation slice 4 landed on 2026-07-18 (issue #110), covering the
+binding-level half of verification-plan item 5 with hostile-child fixtures.
+Adversarial review of the first candidate found that overlapped native I/O
+on one pseudoconsole — a concurrent `pty.write` against a blocked
+`pty.read` — intermittently crashes the interpreter with a native access
+violation (reproduced ~2% per run under a write storm, faulthandler-
+attributed, upstream `pywinpty` shares the pattern). The binding therefore
+now enforces the transcript protocol's single-flight model at its own
+boundary: at most one read or write may be in flight, overlap fails fast
+with `ConptyConcurrentIOError`, and `close` remains the one
+concurrent-safe operation. Startup failure fails closed for both modes: a
+missing command raises before any native session exists, and a command the
+OS refuses to start surfaces a classified error whose held exception chain
+provably cannot pin the native pseudoconsole. Forced close recovers,
+OS-observed, from an unbounded output flood, from a busy unresponsive
+child (job termination needs no cooperation), and from an in-flight native
+write: a deliberately large write keeps the native call in flight while
+close lands, and ordering evidence shows close returns only after the
+write frame returned — the wait-out discipline that prevents the
+release-during-native-call crash (observed experimentally). Handle release
+stays observable under hostile load: a release-only close under flood
+still ends the child with `STATUS_CONTROL_C_EXIT`. Conin writes showed no
+backpressure on the verified matrix (7.1 GiB in 20 s against a child that
+never reads, experiment recorded in issue #110), and a write that did
+block on some SKU would fail the bounded-flood test loudly rather than
+hang it. Classification of these outcomes into the structured
+failure/abort taxonomy is adapter behavior and stays unclaimed until the
+public `Adapter` slice; dimensions receipts, enforcement receipts, and
+evidence normalization remain unproven and fail-closed.
 
 ## Risks and non-negotiables
 
