@@ -585,7 +585,9 @@ def _host_sandbox(tmp_path: Path) -> Path:
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY integration evidence")
-def test_first_fully_verified_run_with_cooperation_ports(tmp_path: Path) -> None:
+def test_first_fully_successful_verified_run_with_cooperation_ports(
+    tmp_path: Path,
+) -> None:
     """The design's slice-3 claim: a fully successful real start.
 
     Cooperation ports, real binding, real normalizer. The receipts carry
@@ -639,7 +641,11 @@ def test_first_fully_verified_run_with_cooperation_ports(tmp_path: Path) -> None
         observations.append(observation)
         frame = _frame_text(observation)
         for name, value in expected_env.items():
-            assert f"TV_{name}={value}" in frame
+            # Line-anchored: the value must end at the frame padding, so a
+            # frame showing a longer value cannot satisfy a prefix of it.
+            assert re.search(
+                rf"^TV_{re.escape(name)}={re.escape(value)} *$", frame, re.MULTILINE
+            ), f"frame does not show TV_{name}={value}"
         observed_cwd = re.search(r"TV_CWD=(\S+)", frame)
         assert observed_cwd is not None
         assert os.path.normcase(observed_cwd.group(1)) == os.path.normcase(
@@ -711,6 +717,8 @@ def test_deadline_abort_under_cooperation_ports_os_observed(tmp_path: Path) -> N
     outcome = result.outcome
     assert type(outcome) is RunFailed
     assert outcome.failure.code == "adapter-runtime-failed"
+    details = cast("Mapping[str, int]", outcome.failure.details)
+    assert details["abort-deadline-ms"] == _ABORT_DEADLINE_MS
     assert os_exit_code == FORCED_TERMINATION_EXIT_CODE
 
 
