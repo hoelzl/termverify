@@ -1,9 +1,10 @@
-"""Negotiation-skeleton evidence for the public ConPTY adapter (slice 2).
+"""Negotiation evidence for the public ConPTY adapter.
 
 Everything here runs cross-platform against fake bindings and fake constraint
 ports: the adapter owns terminal negotiation, delegates the six non-terminal
-constraints, and fails closed before any child is spawned. No successful start
-exists in this slice; epoch machinery is slice 3.
+constraints, and every negotiation failure ends the start before any child is
+spawned. Epoch behavior after a complete negotiation is covered in
+``test_conpty_epochs``.
 """
 
 from __future__ import annotations
@@ -72,7 +73,7 @@ def _configuration(capabilities: tuple[str, ...] = ()) -> RunConfiguration:
 
 
 class _Binding:
-    """Fake binding: configurable probe, spawning is forbidden in this slice."""
+    """Fake binding: configurable probe, refuses to spawn a child."""
 
     def __init__(self, *, supported: bool = True) -> None:
         self._supported = supported
@@ -85,7 +86,7 @@ class _Binding:
 
     def spawn(self, argv: Sequence[str], *, rows: int, columns: int) -> ConptyChildPort:
         self.spawn_calls += 1
-        raise AssertionError("the negotiation skeleton must never spawn a child")
+        raise OSError("this negotiation fake refuses to spawn a child")
 
 
 class _EnforcingPorts:
@@ -142,9 +143,14 @@ def _adapter(
 ) -> tuple[ConptyAdapter, _Binding]:
     bound = binding if binding is not None else _Binding()
     if ports is None:
-        adapter = ConptyAdapter(("subject",), binding=bound)
+        adapter = ConptyAdapter(("subject",), binding=bound, abort_deadline_ms=60_000)
     else:
-        adapter = ConptyAdapter(("subject",), binding=bound, constraint_ports=ports)
+        adapter = ConptyAdapter(
+            ("subject",),
+            binding=bound,
+            constraint_ports=ports,
+            abort_deadline_ms=60_000,
+        )
     return adapter, bound
 
 
@@ -361,7 +367,7 @@ def test_mismatched_receipt_yields_start_failed() -> None:
     assert result.failure.details == {"constraint": "seed"}
 
 
-def test_complete_negotiation_fails_closed_without_spawning() -> None:
+def test_complete_negotiation_proceeds_to_exactly_one_spawn() -> None:
     ports = _EnforcingPorts()
     adapter, binding = _adapter(ports=ports)
 
@@ -374,7 +380,7 @@ def test_complete_negotiation_fails_closed_without_spawning() -> None:
     assert terminal.run_id == "run-conpty"
     assert terminal.effective == _configuration().terminal
     assert result.failure.code == "adapter-start-failed"
-    assert "epoch machinery" in result.failure.message
+    assert result.failure.details == {"during": "spawn"}
     assert ports.calls == [
         "seed",
         "clock",
@@ -384,7 +390,7 @@ def test_complete_negotiation_fails_closed_without_spawning() -> None:
         "network",
     ]
     assert binding.probe_calls == 1
-    assert binding.spawn_calls == 0
+    assert binding.spawn_calls == 1
 
 
 def test_start_validates_inputs() -> None:
@@ -408,13 +414,21 @@ def test_constructor_validates_argv() -> None:
     binding = _Binding()
 
     with pytest.raises(ValueError):
-        ConptyAdapter((), binding=binding)
+        ConptyAdapter((), binding=binding, abort_deadline_ms=60_000)
     with pytest.raises(TypeError):
-        ConptyAdapter(cast("tuple[str, ...]", ("subject", 3)), binding=binding)
+        ConptyAdapter(
+            cast("tuple[str, ...]", ("subject", 3)),
+            binding=binding,
+            abort_deadline_ms=60_000,
+        )
     with pytest.raises(ValueError):
-        ConptyAdapter(("",), binding=binding)
+        ConptyAdapter(("",), binding=binding, abort_deadline_ms=60_000)
     with pytest.raises(TypeError):
-        ConptyAdapter(cast("tuple[str, ...]", "subject"), binding=binding)
+        ConptyAdapter(
+            cast("tuple[str, ...]", "subject"),
+            binding=binding,
+            abort_deadline_ms=60_000,
+        )
 
 
 @pytest.mark.parametrize("started", [False, True])
