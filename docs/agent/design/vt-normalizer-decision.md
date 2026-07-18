@@ -73,6 +73,27 @@ Chosen for what ConPTY's renderer emits to the host, per Microsoft's VT
 sequence documentation and the repository's spike/binding evidence; the
 Windows integration slice is the executable check of that coverage claim.
 
+**Pre-release amendment (2026-07-18, issue #121):** the Windows
+integration slice's real-output evidence showed ConPTY opening every
+session with `CSI 1 t` (XTWINOPS window-operation report), `CSI c`
+(primary device-attributes query), and the private-mode enables
+`CSI ? 1004 h` (focus reporting) and `CSI ? 9001 h` (win32 input mode) —
+none of which were in the subset as first landed, so the fail-closed
+normalizer rejected every real session's first chunk, exactly as designed.
+The four observed sequences are non-grid-affecting host control/query
+traffic and are added to v1 as consumed no-ops. Consuming `CSI c` is
+grid-safe, but the unanswered query has a measured wall-clock consequence
+at the adapter boundary — conhost defers client output while the query
+waits — disclosed as the DA-stall note in the
+[ConPTY adapter design](conpty-adapter-design.md); that is adapter
+latency, not normalizer semantics. No released artifact or
+recorded transcript carries the prior v1 semantics, so this is a
+pre-release correction of the same registry, not a post-freeze semantic
+change; the version stays `1`, and the post-release rule below is
+unchanged. Everything else stays fail-closed: a matrix SKU emitting a
+sequence outside the amended subset fails the integration evidence loudly
+rather than widening the registry silently.
+
 **Handled with grid semantics:**
 
 - Printable characters with xterm-style deferred auto-wrap (the
@@ -87,9 +108,13 @@ Windows integration slice is the executable check of that coverage claim.
   `CPL F`, `CHA G`, `VPA d`, `ED J` (0/1/2), `EL K` (0/1/2), `ICH @`,
   `DCH P`, `ECH X`, `IL L`, `DL M`, `SU S`, `SD T`, `DECSTBM r`,
   `TBC g` (0/3), `SGR m` (parsed and consumed — attributes are not
-  evidence in v1), and DEC private modes `?25` (DECTCEM → cursor
-  visibility), `?12` (cursor blink, consumed), `?1049`/`?1047`/`?1048`
-  (alternate screen buffer with save/restore semantics; drives `mode`).
+  evidence in v1), `XTWINOPS t` and primary device-attributes queries `c`
+  (consumed with integer-parameter validation; window operations are never
+  honored — the model's dimensions change only through `notify_resize`),
+  and DEC private modes `?25` (DECTCEM → cursor visibility), `?12` (cursor
+  blink, consumed), `?1004` (focus reporting, consumed), `?9001` (win32
+  input mode, consumed), `?1049`/`?1047`/`?1048` (alternate screen buffer
+  with save/restore semantics; drives `mode`).
 - String sequences: `OSC`, `DCS`, `SOS`, `PM`, `APC` are consumed in full
   (BEL- or ST-terminated) and never rendered — by ECMA-48 definition they
   carry no grid mutation, so wholesale consumption is deterministic and

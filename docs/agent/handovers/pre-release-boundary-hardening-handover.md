@@ -55,7 +55,7 @@ Every row has disposition **transfer intact to this named successor**.
 | Distribution and release governance | Resolvable canonical schema publication for the documented `$id` | The current unresolved host is not a publication contract. Runtime validation remains authoritative. |
 | Distribution and release governance | Release checklist, changelog/compatibility policy, security-disclosure process, and build/release provenance | Implemented as governance: reviewed checklist, changelog with pre-1.0 policy, private-disclosure process, and a tag-triggered attested draft-artifact workflow. No release is authorized, no index publishing exists, and the package remains pre-alpha. |
 | Distribution and release governance | Reviewed behavior-based coverage-ratchet activation | Implemented: the committed `fail_under` floor is the integer floor of the reviewed observed total (94.43% at activation), raises require sustained durable coverage, and lowering requires explicit owner review. |
-| Production terminal adapter | Direct native pseudoconsole ownership/close, native EOF and final-frame draining, process-tree teardown, cancellation/recovery, and truthful OS-level enforcement evidence | The accepted dependency decision (`docs/agent/design/terminal-adapter-dependency-decision.md`) authorizes reviewed implementation slices with pinned `pywinpty`/ConPTY behind its verification plan. Slices 2–4 landed durable Windows-matrix evidence for native ownership/close, EOF/final-frame drain, job-object process-tree teardown, and binding-level cancellation/recovery with hostile-child fixtures (plan items 2–4 and the binding half of item 5); taxonomy classification, dimensions receipts, and every enforcement claim remain unproven until their planned evidence lands. |
+| Production terminal adapter | Direct native pseudoconsole ownership/close, native EOF and final-frame draining, process-tree teardown, cancellation/recovery, and truthful OS-level enforcement evidence | The accepted dependency decision (`docs/agent/design/terminal-adapter-dependency-decision.md`) authorizes reviewed implementation slices with pinned `pywinpty`/ConPTY behind its verification plan. Binding slices 2–4 landed durable Windows-matrix evidence for native ownership/close, EOF/final-frame drain, job-object process-tree teardown, and binding-level cancellation/recovery with hostile-child fixtures (plan items 2–4 and the binding half of item 5). Adapter slices 1–4 landed the fail-closed normalizer, truthful negotiation, epoch machinery, and real-path Windows integration evidence for items 5–8: classification, dimensions receipts through a real resize epoch, verbatim OSC readiness-marker passthrough, and replayable evidence normalization. The adapter enforces only the terminal constraint; the six non-terminal constraints remain truthfully not enforced at this boundary, and their enforcement claims stay with their own transferred workstreams. |
 
 ## Completion-definition amendments retained from the predecessor
 
@@ -400,6 +400,49 @@ and whether writes also need deadline protection is a slice-4
 consideration. Windows integration evidence — real ConPTY path, marker
 passthrough, cooperative fixture child, end-to-end dimensions observation —
 remains slice 4 and fail-closed.
+
+The owner accepted adapter slice 4 on 2026-07-18 (issue #121,
+adversarially reviewed): Windows integration evidence on the real path —
+default `ConptyBinding`, native `ConptyChild`, real `VtScreenNormalizer` —
+on the full Windows CI matrix. The disclosed OSC assumption is resolved
+with evidence: ConPTY relays the private `OSC 7791;ready ST` default
+verbatim through the raw output stream, so the marker default is no longer
+provisional and no printable-default amendment was needed; a
+host-configured printable marker retains its own frame-visibility and
+replay evidence. Real output exposed the v1 VT subset gap exactly as the
+fail-closed design intended: ConPTY opens every session with `CSI 1 t`,
+`CSI c`, `CSI ?1004h`, and `CSI ?9001h`, and the subset was amended
+pre-release (no released artifact or recorded transcript carries the prior
+semantics; version stays 1) to consume these four non-grid-affecting
+sequences, everything else remaining fail-closed. A cooperative fixture
+subject implements the design's cooperation contract, including detecting
+a resize itself — a resize delivers no stdin bytes to a Windows console
+client, so marker-after-resize cooperation is the subject's obligation, now
+recorded in the design. End-to-end evidence: start-to-readiness with
+cursor/frame evidence, a text epoch, a resize epoch whose child-observed
+dimensions appear in the frame while the observation carries the new
+effective dimensions, subject exit via native end-of-stream with the
+observed exit record, forced stop with the forced-termination disclosure
+and OS-observed teardown, and a deadline abort against a hanging subject
+producing the structured failure disclosing the policy with the child tree
+OS-observed dead. Replaying the normalizer over the retained raw
+`terminal.output` chunks reproduces every frame and cursor — the design's
+replay rule, executed against real ConPTY output. The disclosed write
+follow-up is decided and recorded in the design: the watchdog wraps reads
+only, because conin writes showed no backpressure, the bounded write-flood
+test fails loudly on regression, and `cancel_io` cannot cancel conin
+writes; new blocking-write evidence would reopen the decision. Adversarial
+review surfaced a previously undisclosed platform behavior, now measured
+and recorded as the design's DA-stall disclosure: conhost defers client
+output while its unanswered `CSI c` device-attributes query waits
+(~3.1 s constant on the verified machine, ~0.05 s with a DA1 response),
+so every real start pays that wall-clock floor and a configured abort
+deadline at or below it fails every real start by policy; the adapter
+deliberately does not answer the query because a synthetic, unrecorded
+conin response would undermine replayability — removing the stall is
+possible future work behind a design amendment. Non-terminal
+constraint enforcement, the capability registry, containment claims, and a
+POSIX adapter remain outside this slice and fail-closed.
 
 ## Risks and non-negotiables
 

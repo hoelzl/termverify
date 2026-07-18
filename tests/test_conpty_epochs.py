@@ -3,9 +3,9 @@
 Everything here runs cross-platform against fake bindings, fake normalizers,
 and a fake watchdog trigger: the readiness-marker protocol, the epoch loop,
 the failure-classification matrix, watchdog-driven deadline aborts, and forced
-stop teardown. The private-OSC marker default is provisional configuration —
-nothing here claims ConPTY passes it through; that evidence belongs to the
-Windows integration slice.
+stop teardown. Nothing here claims ConPTY passes the private-OSC marker
+default through; that evidence lives in the Windows integration module
+(`test_conpty_integration.py`).
 """
 
 from __future__ import annotations

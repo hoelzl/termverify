@@ -603,3 +603,45 @@ def test_vertical_moves_stop_at_scroll_margins() -> None:
     assert normalizer.snapshot().cursor.row == 2
     normalizer.feed(f"{ESC}[4;1H{ESC}[9A")
     assert normalizer.snapshot().cursor.row == 1
+
+
+def test_conpty_startup_preamble_is_consumed_without_grid_effect() -> None:
+    """The observed ConPTY session preamble stays out of the screen model.
+
+    Real ConPTY output opens every session with a window-operation report,
+    a primary device-attributes query, and the focus-reporting and
+    win32-input-mode enables (observed evidence, issue #121). None of them
+    affect the grid, the cursor, or visibility.
+    """
+    normalizer = _normalizer()
+    normalizer.feed(f"{ESC}[1t{ESC}[c{ESC}[?1004h{ESC}[?9001h")
+    snapshot = normalizer.snapshot()
+    assert snapshot.frame.lines == ("        ",) * 4
+    assert snapshot.cursor == Cursor(column=0, row=0, visible=True)
+    assert snapshot.mode == "normal"
+
+
+def test_window_manipulation_is_consumed_and_never_resizes_the_model() -> None:
+    normalizer = _normalizer()
+    normalizer.feed(f"{ESC}[8;30;100t")
+    snapshot = normalizer.snapshot()
+    assert snapshot.frame.rows == 4
+    assert snapshot.frame.columns == 8
+
+
+def test_device_attributes_query_is_consumed() -> None:
+    normalizer = _normalizer()
+    normalizer.feed(f"{ESC}[cA{ESC}[0cB")
+    assert _lines(normalizer)[0] == "AB      "
+
+
+def test_focus_and_win32_input_modes_are_consumed_both_ways() -> None:
+    normalizer = _normalizer()
+    normalizer.feed(f"{ESC}[?1004h{ESC}[?1004l{ESC}[?9001h{ESC}[?9001l")
+    assert normalizer.snapshot().cursor == Cursor(column=0, row=0, visible=True)
+
+
+def test_window_manipulation_with_colon_parameter_fails_closed() -> None:
+    normalizer = _normalizer()
+    with pytest.raises(VtNormalizationError):
+        normalizer.feed(f"{ESC}[1:2t")
