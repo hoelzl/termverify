@@ -17,11 +17,17 @@ terminal-adapter decision into repeatable Windows-matrix CI evidence:
   grandchild are both terminated on forced close (atomic job-object
   termination, uniform exit code) and on release-only close (kill-on-close
   job sweep), each proven by OS process-handle waits on both processes.
+- **Cancellation and recovery, binding level (item 5):** startup failure
+  fails closed before any session exists; forced close recovers from an
+  unbounded output flood, a busy unresponsive child, and an active write
+  storm without leaking handles or threads; conin writes are consumed
+  without backpressure, so a blocked write is not a reachable state.
 
 The slice-1 lifecycle behaviors (creation, dimensions, echo, burst, resize,
 forced close, integer exit status) remain covered against the native read
-semantics. Cancellation/recovery taxonomy, dimensions receipts, and
-enforcement receipts remain later unproven slices.
+semantics. Classification into the structured failure/abort taxonomy is
+adapter behavior and remains for the public ``Adapter`` slice; dimensions
+receipts and enforcement receipts remain later unproven slices.
 """
 
 from __future__ import annotations
@@ -255,6 +261,16 @@ class _Drain:
             assert ended, "timed out waiting for the native end-of-stream signal"
             assert self._terminal is not None
             return self._terminal
+
+    def wait_for_at_least(self, chars: int) -> None:
+        """Wait until at least ``chars`` characters of output were collected."""
+        with self._condition:
+            arrived = self._condition.wait_for(
+                lambda: sum(map(len, self._chunks)) >= chars or self._done,
+                timeout=_TIMEOUT_SECONDS,
+            )
+            assert arrived, f"timed out waiting for {chars} output characters"
+            assert not self._done, f"stream ended early: {self._terminal!r}"
 
     def join(self) -> None:
         self._thread.join(_TIMEOUT_SECONDS)
@@ -613,3 +629,189 @@ def test_conpty_child_lifecycle_matches_spike_evidence() -> None:
     burst_end = combined.find("TV_BURST_DONE")
     assert 0 <= burst_start < burst_end
     assert combined[burst_start:burst_end].count("Z") == _BURST_BYTES
+
+
+# --- Slice 4: binding-level cancellation/recovery with hostile fixtures ---
+
+_FLOODING_CHILD: Final = """\
+import sys
+
+print("TV_READY", flush=True)
+while True:
+    sys.stdout.write("F" * 65536)
+    sys.stdout.flush()
+"""
+
+_BUSY_CHILD: Final = """\
+import sys
+
+print("TV_READY", flush=True)
+while True:
+    pass
+"""
+
+_DEAF_CHILD: Final = """\
+import sys
+import time
+
+print("TV_READY", flush=True)
+time.sleep(600)
+"""
+
+_WRITE_CHUNK: Final = "W" * 65536
+_WRITE_FLOOD_CHUNKS: Final = 256
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_spawn_missing_command_fails_closed_on_windows() -> None:
+    """Item 5 (startup failure): a missing command raises before any session."""
+    with pytest.raises(FileNotFoundError):
+        ConptyChild.spawn(
+            ["termverify-missing-command-fixture"],
+            rows=_INITIAL_ROWS,
+            columns=_INITIAL_COLUMNS,
+        )
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_forced_close_recovers_from_output_flood() -> None:
+    """Item 5 (output flood): stop mid-flood tears down without cooperation.
+
+    The child floods stdout forever; the close lands while the reader is
+    actively servicing the burst. Recovery is proven by the OS-observed
+    tree kill, the closed classification of the interrupted read, and the
+    drain thread joining.
+    """
+    child = _spawn(_FLOODING_CHILD)
+    drain = _Drain(child)
+    handle = _open_process_handle(child.pid)
+    try:
+        drain.wait_for_marker("TV_READY")
+        drain.wait_for_at_least(2_000_000)
+
+        child.close(force=True)
+
+        os_exit_code = _wait_for_os_exit_code(handle, _OS_WAIT_TIMEOUT_MS)
+    finally:
+        child.close(force=True)
+        _close_process_handle(handle)
+        drain.join()
+
+    assert os_exit_code == FORCED_TERMINATION_EXIT_CODE
+    assert child.exit_status == FORCED_TERMINATION_EXIT_CODE
+    assert isinstance(drain.wait_for_end(), ConptyClosedError)
+    assert not child.is_alive()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_forced_close_kills_busy_unresponsive_child() -> None:
+    """Item 5 (child hang): teardown needs no cooperation from a spinning child.
+
+    The child burns CPU in a pure loop, never reading input or producing
+    further output. ``TerminateJobObject`` ends it regardless, OS-observed.
+    """
+    child = _spawn(_BUSY_CHILD)
+    drain = _Drain(child)
+    handle = _open_process_handle(child.pid)
+    try:
+        drain.wait_for_marker("TV_READY")
+        assert child.is_alive()
+
+        child.close(force=True)
+
+        os_exit_code = _wait_for_os_exit_code(handle, _OS_WAIT_TIMEOUT_MS)
+    finally:
+        child.close(force=True)
+        _close_process_handle(handle)
+        drain.join()
+
+    assert os_exit_code == FORCED_TERMINATION_EXIT_CODE
+    assert child.exit_status == FORCED_TERMINATION_EXIT_CODE
+    assert isinstance(drain.wait_for_end(), ConptyClosedError)
+    assert not child.is_alive()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_write_flood_against_non_reading_child_never_blocks() -> None:
+    """Item 5 (write path): conin writes are consumed without backpressure.
+
+    The child never reads stdin. Every bounded write must still return —
+    ConPTY's conhost consumes input regardless of the client — so a
+    conin-blocked write is not a reachable state and write-side recovery
+    reduces to close's pending-I/O discipline. The writes run on a helper
+    thread only so a regression cannot hang the test run; the evidence is
+    the completion event, not thread state.
+    """
+    child = _spawn(_DEAF_CHILD)
+    drain = _Drain(child)
+    completed = threading.Event()
+    write_errors: list[BaseException] = []
+
+    def flood() -> None:
+        try:
+            for _ in range(_WRITE_FLOOD_CHUNKS):
+                child.write(_WRITE_CHUNK)
+            completed.set()
+        except BaseException as error:
+            write_errors.append(error)
+
+    writer = threading.Thread(target=flood, name="tv-write-flood", daemon=True)
+    try:
+        drain.wait_for_marker("TV_READY")
+        writer.start()
+        finished = completed.wait(_TIMEOUT_SECONDS)
+    finally:
+        child.close(force=True)
+        writer.join(_TIMEOUT_SECONDS)
+        drain.join()
+
+    assert finished, f"bounded write flood did not complete: {write_errors!r}"
+    assert not write_errors
+    assert not writer.is_alive()
+    assert child.exit_status == FORCED_TERMINATION_EXIT_CODE
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_forced_close_during_active_write_flood_recovers() -> None:
+    """Item 5 (stop during in-flight I/O): close lands inside a write storm.
+
+    A writer thread streams input continuously while close runs. The
+    pending-I/O discipline must wait out the in-flight native write before
+    releasing the native object — releasing during a native call crashes
+    the interpreter — and the writer must observe the closed classification,
+    never a raw native error or a hang.
+    """
+    child = _spawn(_DEAF_CHILD)
+    drain = _Drain(child)
+    handle = _open_process_handle(child.pid)
+    write_outcome: list[BaseException] = []
+
+    def flood() -> None:
+        try:
+            while True:
+                child.write(_WRITE_CHUNK)
+        except BaseException as error:
+            write_outcome.append(error)
+
+    writer = threading.Thread(target=flood, name="tv-write-storm", daemon=True)
+    try:
+        drain.wait_for_marker("TV_READY")
+        writer.start()
+        # Arrangement, not evidence: let the writer reach a steady stream of
+        # in-flight native writes before the close lands.
+        time.sleep(0.3)
+
+        child.close(force=True)
+
+        os_exit_code = _wait_for_os_exit_code(handle, _OS_WAIT_TIMEOUT_MS)
+        writer.join(_TIMEOUT_SECONDS)
+    finally:
+        child.close(force=True)
+        _close_process_handle(handle)
+        drain.join()
+
+    assert not writer.is_alive()
+    assert write_outcome and isinstance(write_outcome[0], ConptyClosedError)
+    assert os_exit_code == FORCED_TERMINATION_EXIT_CODE
+    assert child.exit_status == FORCED_TERMINATION_EXIT_CODE
+    assert not child.is_alive()

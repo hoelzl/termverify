@@ -22,8 +22,12 @@ would fall outside the job; the binding does not claim pre-start assignment.
 The binding stays deliberately thin: every future adapter behavior above it
 must be testable cross-platform against an injected fake binding, so this
 native boundary is excluded from the coverage ratchet with recorded rationale
-in the developer guide. Nothing here claims cancellation recovery; that claim
-requires the later verified slices of the accepted terminal-adapter decision.
+in the developer guide. Cancellation and recovery are evidenced at this
+binding level only — startup failure fails closed, forced close recovers
+from hostile children (flood, busy spin, write storm) without leaking
+handles or threads, and conin writes are consumed without backpressure so a
+blocked write is not a reachable state. Classification into the structured
+failure/abort taxonomy is adapter behavior and remains unclaimed here.
 
 ``write`` intentionally returns ``None``: the ConPTY write return value is not
 a reliable byte-count receipt, and exposing it would fabricate evidence.

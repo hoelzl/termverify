@@ -55,7 +55,7 @@ Every row has disposition **transfer intact to this named successor**.
 | Distribution and release governance | Resolvable canonical schema publication for the documented `$id` | The current unresolved host is not a publication contract. Runtime validation remains authoritative. |
 | Distribution and release governance | Release checklist, changelog/compatibility policy, security-disclosure process, and build/release provenance | Implemented as governance: reviewed checklist, changelog with pre-1.0 policy, private-disclosure process, and a tag-triggered attested draft-artifact workflow. No release is authorized, no index publishing exists, and the package remains pre-alpha. |
 | Distribution and release governance | Reviewed behavior-based coverage-ratchet activation | Implemented: the committed `fail_under` floor is the integer floor of the reviewed observed total (94.43% at activation), raises require sustained durable coverage, and lowering requires explicit owner review. |
-| Production terminal adapter | Direct native pseudoconsole ownership/close, native EOF and final-frame draining, process-tree teardown, cancellation/recovery, and truthful OS-level enforcement evidence | The accepted dependency decision (`docs/agent/design/terminal-adapter-dependency-decision.md`) authorizes reviewed implementation slices with pinned `pywinpty`/ConPTY behind its verification plan. Slices 2–3 landed durable Windows-matrix evidence for native ownership/close, EOF/final-frame drain, and job-object process-tree teardown (plan items 2–4); cancellation/recovery, dimensions receipts, and every enforcement claim remain unproven until their planned evidence lands. |
+| Production terminal adapter | Direct native pseudoconsole ownership/close, native EOF and final-frame draining, process-tree teardown, cancellation/recovery, and truthful OS-level enforcement evidence | The accepted dependency decision (`docs/agent/design/terminal-adapter-dependency-decision.md`) authorizes reviewed implementation slices with pinned `pywinpty`/ConPTY behind its verification plan. Slices 2–4 landed durable Windows-matrix evidence for native ownership/close, EOF/final-frame drain, job-object process-tree teardown, and binding-level cancellation/recovery with hostile-child fixtures (plan items 2–4 and the binding half of item 5); taxonomy classification, dimensions receipts, and every enforcement claim remain unproven until their planned evidence lands. |
 
 ## Completion-definition amendments retained from the predecessor
 
@@ -291,6 +291,26 @@ job assignment happens immediately after `CreateProcess` returns, so a
 process the child starts within that microseconds-wide window would fall
 outside the job; the binding documents this rather than claiming pre-start
 assignment. Cancellation/recovery taxonomy, dimensions receipts,
+enforcement receipts, and evidence normalization remain unproven and
+fail-closed.
+
+Implementation slice 4 landed on 2026-07-18 (issue #110), covering the
+binding-level half of verification-plan item 5 with hostile-child fixtures.
+Startup failure fails closed: spawning a missing command raises before any
+native session exists. Forced close recovers, OS-observed, from an
+unbounded output flood (close lands while the reader services the burst),
+from a busy unresponsive child spinning without any I/O (job termination
+needs no cooperation), and from an active write storm (the pending-I/O
+discipline waits out in-flight native writes before release — releasing
+during a native call crashes the interpreter, observed experimentally —
+and the writer sees the closed classification, never a raw native error).
+Conin writes are consumed by conhost without backpressure (7.1 GiB in 20 s
+against a child that never reads), so a conin-blocked write is not a
+reachable state and write-side recovery reduces to the existing close
+discipline; this also resolves the prior review's open question about
+`cancel_io` coverage of blocked writes. Classification of these outcomes
+into the structured failure/abort taxonomy is adapter behavior and stays
+unclaimed until the public `Adapter` slice; dimensions receipts,
 enforcement receipts, and evidence normalization remain unproven and
 fail-closed.
 
