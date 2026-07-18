@@ -92,7 +92,7 @@ receipt-binding validation. The split is:
 | clock | injected port | Default: `constraint-not-enforced`. The child runs on ambient wall clock; manual-time injection is cooperation. |
 | locale | injected port | Default: `constraint-not-enforced`. Environment variables are advisory to the child. |
 | timezone | injected port | Default: `constraint-not-enforced`. Same; named-timezone enforcement additionally remains blocked on the owner. |
-| filesystem | injected port | Default: `constraint-not-enforced`. Containment enforcement remains a transferred, owner-blocked workstream. |
+| filesystem | injected port | Default: `constraint-not-enforced`. *(Amended 2026-07-18: containment enforcement was retired to an explicit non-goal; delivery-tier cooperation is the accepted replacement scope — see the [cooperation-tier design](cooperation-tier-constraint-ports.md).)* |
 | network | injected port | Default: `constraint-not-enforced`. The job object does not block network; deny is not provable at this boundary. |
 
 Consequences, stated explicitly:

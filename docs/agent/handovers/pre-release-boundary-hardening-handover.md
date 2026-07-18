@@ -21,7 +21,10 @@
   reviewed documentation transition resolving issue #87 merges and archives the
   predecessor.
 - **Completion:** every transferred criterion below is implemented and verified,
-  or is moved intact through another explicit owner-reviewed successor boundary;
+  is moved intact through another explicit owner-reviewed successor boundary,
+  or is retired to an explicit non-goal by a recorded, reviewed owner decision
+  (amendment 2026-07-18: retirement admitted as a disposition by the
+  cooperation-tier decision);
   no unsupported semantic, containment, terminal, schema-publication, or release
   claim is exposed in the meantime.
 
@@ -41,7 +44,11 @@ that completed boundary.
 
 ## Accepted transferred scope
 
-Every row has disposition **transfer intact to this named successor**.
+Every row originally had disposition **transfer intact to this named
+successor**. Amendment 2026-07-18: the two production-containment rows now
+carry the disposition **retired to an explicit non-goal by recorded owner
+decision** with a narrower replacement scope; every other row remains
+transfer-intact.
 
 | Workstream | Transferred criterion | Current boundary |
 | --- | --- | --- |
@@ -55,7 +62,7 @@ Every row has disposition **transfer intact to this named successor**.
 | Distribution and release governance | Resolvable canonical schema publication for the documented `$id` | The current unresolved host is not a publication contract. Runtime validation remains authoritative. |
 | Distribution and release governance | Release checklist, changelog/compatibility policy, security-disclosure process, and build/release provenance | Implemented as governance: reviewed checklist, changelog with pre-1.0 policy, private-disclosure process, and a tag-triggered attested draft-artifact workflow. No release is authorized, no index publishing exists, and the package remains pre-alpha. |
 | Distribution and release governance | Reviewed behavior-based coverage-ratchet activation | Implemented: the committed `fail_under` floor is the integer floor of the reviewed observed total (94.43% at activation), raises require sustained durable coverage, and lowering requires explicit owner review. |
-| Production terminal adapter | Direct native pseudoconsole ownership/close, native EOF and final-frame draining, process-tree teardown, cancellation/recovery, and truthful OS-level enforcement evidence | The accepted dependency decision (`docs/agent/design/terminal-adapter-dependency-decision.md`) authorizes reviewed implementation slices with pinned `pywinpty`/ConPTY behind its verification plan. Binding slices 2–4 landed durable Windows-matrix evidence for native ownership/close, EOF/final-frame drain, job-object process-tree teardown, and binding-level cancellation/recovery with hostile-child fixtures (plan items 2–4 and the binding half of item 5). Adapter slices 1–4 landed the fail-closed normalizer, truthful negotiation, epoch machinery, and real-path Windows integration evidence for items 5–8: classification, dimensions receipts through a real resize epoch, verbatim OSC readiness-marker passthrough, and replayable evidence normalization. The adapter enforces only the terminal constraint; the six non-terminal constraints remain truthfully not enforced at this boundary, and their enforcement claims stay with their own transferred workstreams. |
+| Production terminal adapter | Direct native pseudoconsole ownership/close, native EOF and final-frame draining, process-tree teardown, cancellation/recovery, and truthful OS-level enforcement evidence | The accepted dependency decision (`docs/agent/design/terminal-adapter-dependency-decision.md`) authorizes reviewed implementation slices with pinned `pywinpty`/ConPTY behind its verification plan. Binding slices 2–4 landed durable Windows-matrix evidence for native ownership/close, EOF/final-frame drain, job-object process-tree teardown, and binding-level cancellation/recovery with hostile-child fixtures (plan items 2–4 and the binding half of item 5). Adapter slices 1–4 landed the fail-closed normalizer, truthful negotiation, epoch machinery, and real-path Windows integration evidence for items 5–8: classification, dimensions receipts through a real resize epoch, verbatim OSC readiness-marker passthrough, and replayable evidence normalization. The adapter enforces only the terminal constraint; the six non-terminal constraints remain truthfully not enforced at this boundary, and their enforcement claims stay with their own workstreams (the two production-containment rows were retired to an explicit non-goal on 2026-07-18; the rest remain transferred). |
 
 ## Completion-definition amendments retained from the predecessor
 
@@ -157,9 +164,9 @@ boundary. Requested policy remains distinct from receipts and observations of
 what was actually enforced. Fail unsupported rather than falling back to ambient
 filesystem, DNS, proxy, loopback, or subprocess behavior.
 
-The owner decided on 2026-07-18 (recorded in
+The owner decided on 2026-07-18 (recorded in the accepted
 [`cooperation-tier-constraint-ports.md`](../design/cooperation-tier-constraint-ports.md),
-pending its review PR) that OS containment is retired to an explicit
+PR #124) that OS containment is retired to an explicit
 non-goal: termverify verifies autonomous terminal applications whose authors
 control the subject and is not an execution sandbox for untrusted code.
 The same decision authorizes replacement scope at an honestly weaker tier:
@@ -481,6 +488,10 @@ POSIX adapter remain outside this slice and fail-closed.
 - Mark **blocked** only when all safe work depends on an unresolved owner decision,
   unavailable independent review, or external enforcement evidence.
 - Mark **complete** only when every transferred criterion is implemented and the
-  integrated boundary passes its required review, or when another named successor
-  accepts every unresolved criterion intact.
+  integrated boundary passes its required review, when another named successor
+  accepts every unresolved criterion intact, or — for criteria retired to an
+  explicit non-goal by a recorded, reviewed owner decision (amendment
+  2026-07-18) — when the retirement is recorded in the criterion's row and its
+  design document; a retired criterion imposes no implementation obligation but
+  its non-goal must not be silently reversed.
 - Activation or completion of this handover does not activate Phase 2.

@@ -1,10 +1,10 @@
 # Cooperation-Tier Constraint Ports: Delivered Constraints, Truthful Tier Receipts, and the Containment Non-Goal
 
-- **Status:** proposed — drafted 2026-07-18 at explicit owner direction. This
-  line changes to *accepted* when the reviewing PR merges after independent
-  adversarial review. The document records owner decisions taken in session on
-  2026-07-18; it authorizes the implementation slices listed at the end and
-  does not itself add code or claim any port exists.
+- **Status:** accepted — decided 2026-07-18 by explicit owner direction;
+  passed independent adversarial agent review before merge (PR #124). The
+  document records owner decisions taken in session on 2026-07-18; it
+  authorizes the implementation slices listed at the end and does not itself
+  add code or claim any port exists.
 - **Issue:** [#123](https://github.com/hoelzl/termverify/issues/123)
 - **Date:** 2026-07-18
 - **Inputs:** the `Adapter`/`ConstraintPorts` contract in `termverify.adapter`;
@@ -62,11 +62,14 @@ until then no termverify claim, receipt, or document may imply containment.
 4. **Opt-in ports, unchanged defaults.** Cooperation ports ship as a separate
    implementation; `UnenforcedConstraintPorts` stays the default so nothing
    is implicitly claimed.
-5. **Cross-platform ports.** The ports are pure, ambient-free at the ratcheted
-   layer, and fully fake-driven on every platform. Real-path evidence exists
-   only through the ConPTY adapter on the Windows matrix until a POSIX
-   adapter workstream exists — a disclosed evidence boundary, not a code
-   boundary.
+5. **Cross-platform ports.** The ports are ambient-free at the ratcheted
+   layer with one disclosed exception: the filesystem port's single
+   existence-and-resolution check, which runs through an injectable
+   directory probe (default: the real filesystem) so every port remains
+   fully fake-driven and ratcheted on every platform. Real-path evidence
+   exists only through the ConPTY adapter on the Windows matrix until a
+   POSIX adapter workstream exists — a disclosed evidence boundary, not a
+   code boundary.
 6. **Pre-release amendment discipline.** All protocol-visible changes land
    under the recorded pre-release rule (precedent: the VT v1 subset
    amendment); versions stay 1.
@@ -81,14 +84,24 @@ A new closed, versioned protocol vocabulary, `termverify.enforcement-tier/v1`,
 owned by the protocol exactly like the timezone and key registries: exact
 case-sensitive membership, no aliases or normalization, runtime validation
 authoritative, post-freeze membership or meaning changes require a new
-vocabulary version. Members — only values with landed, evidenced behavior are
-admitted:
+vocabulary version. A value is admitted only together with the accepted
+design that authorizes its emitting path; membership is not evidence that an
+emitter exists, and each row below states its emitter's status explicitly:
 
-| Tier | Meaning | Who emits it today |
+| Tier | Meaning | Authorized emitter |
 | --- | --- | --- |
-| `os` | The constraint is applied by an operating-system mechanism at the subject boundary; evidence exists at the OS level. | `ConptyAdapter`'s own `TerminalReceipt`: dimensions are a pseudoconsole creation/resize parameter, proven by child observation on the Windows matrix. |
-| `constructive` | The constraint is applied by construction of the controlled in-process runtime; the subject reaches the constrained resource only through the injected port. | `DirectAdapter` receipts: seed, clock, locale, timezone, terminal, filesystem, and (deny-only) network are routed through the deterministic core's explicit ports. |
-| `delivered` | The requested value was placed, exactly as recorded, into the subject's spawn environment; honoring it is subject cooperation. Nothing is enforced. | The new cooperation ports, all six constraints. |
+| `os` | The constraint is applied by an operating-system mechanism at the subject boundary; evidence exists at the OS level. | `ConptyAdapter`'s own terminal negotiation (exists today): dimensions are a pseudoconsole creation/resize parameter, proven by child observation on the Windows matrix. |
+| `constructive` | The constraint is applied by construction of the controlled in-process runtime: the emitting port asserts that the subject reaches the constrained resource only through it. | The injected `DirectApplication` constraint ports (exist today) — the enforcement owner in the direct architecture. `constructive` is the **application's** by-construction assertion, truthful as part of its port contract; it is not an adapter-proven fact, and `DirectAdapter` (which constructs no receipts itself) validates only that the stated tier is authorized for its negotiation path. |
+| `delivered` | The requested value was placed, exactly as recorded, into the subject's spawn environment; honoring it is subject cooperation. Nothing is enforced. | The cooperation ports this design authorizes. No emitter exists until slice 2 lands; until then the value is admitted but unemittable, and every path that could state it fails validation. |
+
+**Tier authorization matrix.** Which tier a negotiation path accepts is
+fixed and validated fail-closed during receipt binding: `ConptyAdapter`'s
+own terminal negotiation emits `os` and nothing else; injected constraint
+ports negotiated by `ConptyAdapter` may state only `delivered`; constraint
+ports negotiated by `DirectAdapter` may state only `constructive`. A receipt
+stating any other tier for its path is rejected as a structured negotiation
+failure — an injected port cannot stamp `os`, and a direct application
+cannot claim `delivered`.
 
 Receipt amendment (pre-release, version stays 1):
 
@@ -104,15 +117,15 @@ Receipt amendment (pre-release, version stays 1):
 - The transcript schema is amended only where it already encodes receipt
   shapes, preserving its deliberately non-exhaustive role; runtime validation
   remains authoritative.
-- `DirectAdapter` and the existing ConPTY terminal negotiation are updated
-  mechanically to state their tiers (`constructive` and `os` respectively).
-  This is a truthfulness disclosure of behavior that already exists, not a
-  behavior change.
+- The ConPTY terminal negotiation states `os` (behavior that already exists,
+  proven on the Windows matrix). For the direct architecture, stating
+  `constructive` truthfully becomes part of the injected application's port
+  contract, documented with the amendment; in-repo applications and test
+  fixtures are updated in the same slice. Neither is a behavior change.
 
 A transcript consumer can now see, per constraint, exactly how strong every
-claim is. The tier a receipt states is part of receipt-binding validation:
-an adapter or port cannot emit a tier the negotiation path does not
-authorize for it.
+claim is. The tier a receipt states is enforced by the authorization matrix
+above as part of receipt-binding validation.
 
 ## Delivery mechanics
 
@@ -140,15 +153,23 @@ claim anyway. An overlay variable always wins over an ambient variable of
 the same name.
 
 **Collision discipline.** Each constraint delivers a fixed, closed set of
-variable names (below). The adapter validates that the six delivery records
-are mutually disjoint and that at most one names a working directory;
-a violation is an invariant breach reported as structured `StartFailed`,
-never silently merged.
+variable names (below), disjoint by construction, and only filesystem ever
+names a working directory — so the adapter's validation that the six
+delivery records are mutually disjoint and name at most one working
+directory is defense-in-depth against a buggy or hostile injected port, not
+a reachable path for the shipped ports. A violation is an invariant breach
+reported as structured `StartFailed` (it occurs after negotiation
+completes, with the full receipt set available for diagnostics), never
+silently merged.
 
 **Failure semantics.** A request the cooperation ports cannot deliver
 truthfully returns `ConstraintUnsupported` and start ends
 `StartUnsupported` at that constraint, before any child exists — identical
-to the existing negotiation discipline.
+to the existing negotiation discipline. The cooperation ports'
+`enforce_terminal` (present because `ConstraintPorts` includes it) returns
+`ConstraintUnsupported` with `constraint-not-enforced`: terminal enforcement
+belongs to the adapter, which never delegates it, so that path is
+unreachable under `ConptyAdapter` and truthfully unsupported anywhere else.
 
 ## Per-constraint delivery contracts
 
@@ -160,9 +181,9 @@ subject's cooperation obligation.
 | Constraint | Delivered | Notes |
 | --- | --- | --- |
 | seed | `TERMVERIFY_SEED=<decimal>` | Unsigned 64-bit decimal, exactly the validated requested seed. |
-| clock | `TERMVERIFY_CLOCK_INITIAL_MS=<decimal>` | Initial manual time only. **Disclosed:** manual-time advances (`advance_clock`) move the adapter's evidence timeline and are never delivered to a running child — there is no channel. A subject that needs to observe advances must obtain them through its own explicit input contract; the clock receipt claims initial delivery, nothing more. |
+| clock | `TERMVERIFY_CLOCK_INITIAL_MS=<decimal>` | Initial manual time only. **Disclosed:** manual-time advances (`advance_clock`) move the adapter's evidence timeline and are never delivered to a running child — no recorded protocol channel for them exists, and the adapter deliberately writes nothing. A subject that needs to observe advances must obtain them through its own explicit input contract; the clock receipt claims initial delivery, nothing more. |
 | locale | `TERMVERIFY_LOCALE=<tag>` | The validated BCP-47 tag. No `LANG`/`LC_ALL` delivery: mapping a language tag to a platform locale string (`en-US` → `en_US.UTF-8`?) is not exact, and delivering an inexact conversion would record something other than what was requested. |
-| timezone | `TZ=UTC` and `TERMVERIFY_TIMEZONE=UTC` | `TZ=UTC` qualifies as an exact conventional mapping. Requests remain validated against `termverify.timezone/v1`; **delivery remains UTC-only** — a non-`UTC` request returns `ConstraintUnsupported`, because named-timezone semantics are a separate owner-blocked workstream this design must not absorb. |
+| timezone | `TZ=UTC0` and `TERMVERIFY_TIMEZONE=UTC` | `UTC0` is the exact portable POSIX `TZ` spelling (a bare zone name is implementation-defined lookup) and parses identically under the Windows CRT's `tzn[±]hh` rules, so it meets the exact-and-portable bar a bare `UTC` would not. Requests remain validated against `termverify.timezone/v1`; **delivery remains UTC-only** — a non-`UTC` request returns `ConstraintUnsupported`, because named-timezone semantics are a separate owner-blocked workstream this design must not absorb. |
 | filesystem | `TERMVERIFY_FS_ROOT=<absolute path>`, working directory = the same path | See the sandbox contract below. |
 | network | `TERMVERIFY_NETWORK=deny` | Deny mode only. An allow-list request returns `ConstraintUnsupported`, unchanged. Nothing blocks sockets; the receipt's `delivered` tier says so. |
 
@@ -177,6 +198,11 @@ The cooperation ports are constructed with an explicit mapping
   truthfully);
 - resolves the mapped path to its absolute form and delivers it as both
   `TERMVERIFY_FS_ROOT` and the child's working directory.
+
+The existence check and absolute resolution run through an injectable
+directory probe whose default is the real filesystem — the one disclosed
+ambient touchpoint in the cooperation ports (owner decision 5), kept
+injectable precisely so the port stays fully fake-driven and ratcheted.
 
 Lifecycle is deliberately the host's: the port creates nothing, populates
 nothing, and deletes nothing. Sandbox setup and cleanup are host harness
@@ -261,10 +287,16 @@ Landed in the same review PR as this document:
 
 1. **Enforcement-tier protocol amendment** — `termverify.enforcement-tier/v1`,
    mandatory `tier` on all seven receipts, `delivery` on delivered-tier
-   receipts, pairing and binding validation, mechanical `constructive`/`os`
-   assignment in `DirectAdapter` and `ConptyAdapter` terminal negotiation,
-   schema touch-up where receipt shapes are encoded. No cooperation port
-   exists yet; nothing can emit `delivered` at the end of this slice.
+   receipts, pairing validation, the tier authorization matrix in receipt
+   binding, `os` in `ConptyAdapter`'s terminal negotiation, `constructive`
+   documented as the direct application port contract with in-repo
+   applications and test fixtures updated, schema touch-up where receipt
+   shapes are encoded. Making `tier` mandatory is a deliberate source-level
+   breaking change for every external `ConstraintPorts`/`DirectApplication`
+   implementer's receipt construction — pre-release by the recorded rule,
+   and the slice review must check it deliberately. No cooperation port
+   exists yet; nothing can emit `delivered` at the end of this slice, and
+   the authorization matrix makes any attempt fail validation.
 2. **Cooperation ports and spawn delivery** — the new public cooperation
    ports module, all six delivered-tier ports with the per-constraint
    contracts above, `ConptyBindingPort`/`termverify._conpty` spawn
