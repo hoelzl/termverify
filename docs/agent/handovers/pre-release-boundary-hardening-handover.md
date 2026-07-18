@@ -324,6 +324,20 @@ failure/abort taxonomy is adapter behavior and stays unclaimed until the
 public `Adapter` slice; dimensions receipts, enforcement receipts, and
 evidence normalization remain unproven and fail-closed.
 
+The owner accepted the ConPTY adapter design on 2026-07-18 (issue #112,
+`docs/agent/design/conpty-adapter-design.md`, adversarially reviewed). It
+scopes verification-plan items 5 (classification half), 6, 7, and 8 into
+four authorized implementation slices: a public `ConptyAdapter` layered
+above an injected binding port (with an explicit support probe) and an
+injected output-normalizer port, truthful negotiation in which the adapter
+enforces only the terminal constraint and shipped default ports report the
+other six constraints as not enforced, readiness defined solely by an
+explicit subject-emitted marker or observed end-of-stream plus exit record,
+a mandatory explicitly configured abort deadline that can only produce
+structured failure, and raw-VT retention with replayable normalization. No
+adapter code exists yet; every claim in that document stays fail-closed
+until its slice lands with evidence.
+
 ## Risks and non-negotiables
 
 - Do not expose unresolved capability, timezone-enforcement, filesystem,
