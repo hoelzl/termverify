@@ -1,7 +1,8 @@
 """Durable native ownership, close, EOF-drain, and teardown evidence (ConPTY).
 
-These tests promote verification-plan items 2, 3, and 4 of the accepted
-terminal-adapter decision into repeatable Windows-matrix CI evidence:
+These tests promote verification-plan items 2, 3, 4, and the binding-level
+half of item 5 of the accepted terminal-adapter decision into repeatable
+Windows-matrix CI evidence:
 
 - **Native ownership and close (item 2):** closing the binding releases the
   native pseudoconsole deterministically, verified by OS-level process-handle
@@ -18,10 +19,13 @@ terminal-adapter decision into repeatable Windows-matrix CI evidence:
   termination, uniform exit code) and on release-only close (kill-on-close
   job sweep), each proven by OS process-handle waits on both processes.
 - **Cancellation and recovery, binding level (item 5):** startup failure
-  fails closed before any session exists; forced close recovers from an
-  unbounded output flood, a busy unresponsive child, and an active write
-  storm without leaking handles or threads; conin writes are consumed
-  without backpressure, so a blocked write is not a reachable state.
+  fails closed for a missing command and for a command the OS refuses to
+  start, without a held failure pinning the native pseudoconsole; forced
+  close recovers from an unbounded output flood, a busy unresponsive child,
+  and an in-flight native write without leaking threads, with handle
+  release observed under flood via the release-only close; overlapped I/O
+  fails fast because the native layer is not thread-safe for it; conin
+  writes showed no backpressure on this matrix.
 
 The slice-1 lifecycle behaviors (creation, dimensions, echo, burst, resize,
 forced close, integer exit status) remain covered against the native read
@@ -33,11 +37,11 @@ receipts and enforcement receipts remain later unproven slices.
 from __future__ import annotations
 
 import os
-import queue
 import re
 import sys
 import threading
 import time
+from pathlib import Path
 from typing import Final
 
 import pytest
@@ -46,6 +50,7 @@ from termverify._conpty import (
     FORCED_TERMINATION_EXIT_CODE,
     ConptyChild,
     ConptyClosedError,
+    ConptyConcurrentIOError,
     ConptyEndOfStreamError,
     ConptyUnsupportedError,
 )
@@ -575,50 +580,60 @@ def test_spawn_containment_failure_terminates_child_and_fails_closed(
     assert exit_code == FORCED_TERMINATION_EXIT_CODE
 
 
+class _ForcedCloseWatchdog:
+    """Force-close the binding if a sequential test exceeds its deadline.
+
+    Single-flight I/O means markers are awaited with main-thread blocking
+    reads; if a marker never arrives, this watchdog's close cancels the read
+    (surfacing ``ConptyClosedError``) so the test fails loudly instead of
+    hanging the run. The watchdog is arrangement, not evidence.
+    """
+
+    def __init__(self, child: ConptyChild) -> None:
+        self._timer = threading.Timer(_TIMEOUT_SECONDS, lambda: child.close(force=True))
+        self._timer.daemon = True
+        self._timer.start()
+
+    def cancel(self) -> None:
+        self._timer.cancel()
+
+
+def _read_until(child: ConptyChild, marker: str, collected: list[str]) -> None:
+    """Service output on the calling thread until ``marker`` was collected."""
+    while marker not in "".join(collected):
+        collected.append(child.read())
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
 def test_conpty_child_lifecycle_matches_spike_evidence() -> None:
-    """Slice-1 lifecycle evidence retained against the native read semantics."""
+    """Slice-1 lifecycle evidence retained under the single-flight contract.
+
+    Reads and writes alternate on one thread — the binding forbids
+    overlapped I/O because the native layer is not thread-safe for it — and
+    a watchdog close bounds every blocking read.
+    """
     child = _spawn(_LIFECYCLE_CHILD)
-    drain = _Drain(child)
-    input_queue: queue.Queue[str | None] = queue.Queue()
-    write_errors: list[str] = []
-
-    def drain_input() -> None:
-        try:
-            while True:
-                item = input_queue.get()
-                if item is None:
-                    return
-                child.write(item)
-        except (ConptyClosedError, OSError) as error:
-            write_errors.append(f"input service: {type(error).__name__}")
-
-    writer = threading.Thread(target=drain_input, name="tv-input", daemon=True)
-    writer.start()
+    watchdog = _ForcedCloseWatchdog(child)
+    collected: list[str] = []
     try:
-        drain.wait_for_marker("TV_INITIAL:")
-        input_queue.put("synthetic-input\r\n")
-        drain.wait_for_marker("TV_INPUT:synthetic-input")
-        drain.wait_for_marker(f"TV_BURST_DONE:{_BURST_BYTES}")
+        _read_until(child, "TV_INITIAL:", collected)
+        child.write("synthetic-input\r\n")
+        _read_until(child, "TV_INPUT:synthetic-input", collected)
+        _read_until(child, f"TV_BURST_DONE:{_BURST_BYTES}", collected)
 
         child.resize(rows=_RESIZED_ROWS, columns=_RESIZED_COLUMNS)
-        input_queue.put("measure-after-resize\r\n")
-        drain.wait_for_marker("TV_WAITING")
+        child.write("measure-after-resize\r\n")
+        _read_until(child, "TV_WAITING", collected)
 
         assert child.is_alive()
-        assert not write_errors, write_errors
     finally:
+        watchdog.cancel()
         child.close(force=True)
-        input_queue.put(None)
-        writer.join(_TIMEOUT_SECONDS)
-        drain.join()
 
-    assert not writer.is_alive()
-    assert isinstance(drain.wait_for_end(), ConptyClosedError)
     assert not child.is_alive()
     assert type(child.exit_status) is int
 
-    combined = drain.text()
+    combined = "".join(collected)
     initial = re.search(r"TV_INITIAL:(\d+x\d+)", combined)
     resized = re.search(r"TV_RESIZED:(\d+x\d+)", combined)
     assert initial is not None
@@ -732,18 +747,49 @@ def test_forced_close_kills_busy_unresponsive_child() -> None:
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
-def test_write_flood_against_non_reading_child_never_blocks() -> None:
-    """Item 5 (write path): conin writes are consumed without backpressure.
+def test_release_only_close_under_output_flood_releases_handles() -> None:
+    """Item 5 + item 2: handle release stays observable under hostile load.
 
-    The child never reads stdin. Every bounded write must still return —
-    ConPTY's conhost consumes input regardless of the client — so a
-    conin-blocked write is not a reachable state and write-side recovery
-    reduces to close's pending-I/O discipline. The writes run on a helper
-    thread only so a regression cannot hang the test run; the evidence is
-    the completion event, not thread state.
+    The close lands while the reader services an unbounded flood, cancels
+    the in-flight read, and still releases the native handles — proven by
+    the flooding child dying of the pseudoconsole teardown
+    (``STATUS_CONTROL_C_EXIT``), the same OS observable as the quiet-child
+    release evidence.
+    """
+    child = _spawn(_FLOODING_CHILD)
+    drain = _Drain(child)
+    handle = _open_process_handle(child.pid)
+    try:
+        drain.wait_for_marker("TV_READY")
+        drain.wait_for_at_least(2_000_000)
+
+        child.close(force=False)
+
+        os_exit_code = _wait_for_os_exit_code(handle, _OS_WAIT_TIMEOUT_MS)
+    finally:
+        child.close(force=True)
+        _close_process_handle(handle)
+        drain.join()
+
+    assert os_exit_code == _STATUS_CONTROL_C_EXIT
+    assert isinstance(drain.wait_for_end(), ConptyClosedError)
+    assert child.exit_status is None
+    assert not child.is_alive()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_write_flood_against_non_reading_child_never_blocked() -> None:
+    """Item 5 (write path): no conin backpressure observed on this matrix.
+
+    The child never reads stdin, yet every bounded write returns — conhost
+    consumes input regardless of the client. The writes run on a helper
+    thread only so a regression on some SKU cannot hang the test run; the
+    evidence is the completion event, not thread state, and a blocked write
+    would fail this test loudly rather than hanging it.
     """
     child = _spawn(_DEAF_CHILD)
-    drain = _Drain(child)
+    watchdog = _ForcedCloseWatchdog(child)
+    collected: list[str] = []
     completed = threading.Event()
     write_errors: list[BaseException] = []
 
@@ -757,13 +803,13 @@ def test_write_flood_against_non_reading_child_never_blocks() -> None:
 
     writer = threading.Thread(target=flood, name="tv-write-flood", daemon=True)
     try:
-        drain.wait_for_marker("TV_READY")
+        _read_until(child, "TV_READY", collected)
         writer.start()
         finished = completed.wait(_TIMEOUT_SECONDS)
     finally:
+        watchdog.cancel()
         child.close(force=True)
         writer.join(_TIMEOUT_SECONDS)
-        drain.join()
 
     assert finished, f"bounded write flood did not complete: {write_errors!r}"
     assert not write_errors
@@ -772,46 +818,119 @@ def test_write_flood_against_non_reading_child_never_blocks() -> None:
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
-def test_forced_close_during_active_write_flood_recovers() -> None:
-    """Item 5 (stop during in-flight I/O): close lands inside a write storm.
+def test_overlapping_io_fails_fast() -> None:
+    """Single-flight contract: a write during a blocked read is refused.
 
-    A writer thread streams input continuously while close runs. The
-    pending-I/O discipline must wait out the in-flight native write before
-    releasing the native object — releasing during a native call crashes
-    the interpreter — and the writer must observe the closed classification,
-    never a raw native error or a hang.
+    The native layer is not thread-safe for overlapped calls on one
+    pseudoconsole — the refusal is what makes the crash unreachable through
+    this binding — and blocking the write behind an indefinitely blocked
+    read would deadlock instead.
     """
     child = _spawn(_DEAF_CHILD)
     drain = _Drain(child)
-    handle = _open_process_handle(child.pid)
-    write_outcome: list[BaseException] = []
-
-    def flood() -> None:
-        try:
-            while True:
-                child.write(_WRITE_CHUNK)
-        except BaseException as error:
-            write_outcome.append(error)
-
-    writer = threading.Thread(target=flood, name="tv-write-storm", daemon=True)
     try:
         drain.wait_for_marker("TV_READY")
-        writer.start()
-        # Arrangement, not evidence: let the writer reach a steady stream of
-        # in-flight native writes before the close lands.
+        # Arrangement, not evidence: after the ready marker the child is
+        # silent, so the drain thread re-enters and stays in a blocked
+        # native read.
         time.sleep(0.3)
 
-        child.close(force=True)
-
-        os_exit_code = _wait_for_os_exit_code(handle, _OS_WAIT_TIMEOUT_MS)
-        writer.join(_TIMEOUT_SECONDS)
+        with pytest.raises(ConptyConcurrentIOError):
+            child.write("overlap\r\n")
     finally:
         child.close(force=True)
-        _close_process_handle(handle)
         drain.join()
 
+    assert isinstance(drain.wait_for_end(), ConptyClosedError)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_forced_close_waits_out_in_flight_large_write() -> None:
+    """Item 5 (stop during in-flight I/O): close waits out a native write.
+
+    A single large write keeps the native call in flight for a substantial
+    window. Close must land inside that window and return only after the
+    write frame returned — releasing the native object during a native call
+    crashes the interpreter — and the write itself completes normally
+    (``cancel_io`` does not cancel conin writes; the wait-out is the
+    discipline under test).
+    """
+    child = _spawn(_DEAF_CHILD)
+    watchdog = _ForcedCloseWatchdog(child)
+    collected: list[str] = []
+    events: dict[str, float] = {}
+    write_errors: list[BaseException] = []
+
+    def big_write() -> None:
+        try:
+            events["write_start"] = time.monotonic()
+            child.write("W" * (256 * 1024 * 1024))
+            events["write_end"] = time.monotonic()
+        except BaseException as error:
+            write_errors.append(error)
+
+    writer = threading.Thread(target=big_write, name="tv-big-write", daemon=True)
+    try:
+        _read_until(child, "TV_READY", collected)
+        writer.start()
+        # Arrangement, not evidence: wait until the write is counted as
+        # in flight, so the close provably overlaps the native call.
+        deadline = time.monotonic() + _TIMEOUT_SECONDS
+        while child._pending_io == 0:
+            assert time.monotonic() < deadline, "write never became in-flight"
+            time.sleep(0.001)
+
+        child.close(force=True)
+        close_returned = time.monotonic()
+
+        writer.join(_TIMEOUT_SECONDS)
+    finally:
+        watchdog.cancel()
+        child.close(force=True)
+
     assert not writer.is_alive()
-    assert write_outcome and isinstance(write_outcome[0], ConptyClosedError)
-    assert os_exit_code == FORCED_TERMINATION_EXIT_CODE
+    assert not write_errors, write_errors
+    assert "write_end" in events, "the in-flight native write did not complete"
+    # Close overlapped the write and returned only after the write frame
+    # returned: the ordering evidence for the wait-out discipline.
+    assert events["write_start"] < close_returned
+    assert events["write_end"] <= close_returned
     assert child.exit_status == FORCED_TERMINATION_EXIT_CODE
-    assert not child.is_alive()
+    with pytest.raises(ConptyClosedError):
+        child.write("late\r\n")
+
+
+def _assert_no_native_pin(error: BaseException) -> None:
+    """Assert no traceback frame in the exception chain pins a native PTY."""
+    seen: set[int] = set()
+    stack: list[BaseException] = [error]
+    while stack:
+        current = stack.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        traceback = current.__traceback__
+        while traceback is not None:
+            for name, value in traceback.tb_frame.f_locals.items():
+                assert type(value).__name__ != "PTY", (
+                    f"native PTY pinned via frame local {name!r}"
+                )
+            traceback = traceback.tb_next
+        for linked in (current.__cause__, current.__context__):
+            if linked is not None:
+                stack.append(linked)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_spawn_unrunnable_command_fails_closed(tmp_path: Path) -> None:
+    """Item 5 (startup failure): an unrunnable command fails closed.
+
+    The command resolves and a pseudoconsole is created, but the OS refuses
+    to start the image. The spawn must surface a classified error whose
+    held exception chain cannot pin the native pseudoconsole.
+    """
+    bogus = tmp_path / "termverify-not-a-binary.exe"
+    bogus.write_text("this is not a runnable image", encoding="ascii")
+    with pytest.raises(OSError, match="ConPTY spawn failed") as failure:
+        ConptyChild.spawn([str(bogus)], rows=_INITIAL_ROWS, columns=_INITIAL_COLUMNS)
+    _assert_no_native_pin(failure.value)

@@ -296,23 +296,33 @@ fail-closed.
 
 Implementation slice 4 landed on 2026-07-18 (issue #110), covering the
 binding-level half of verification-plan item 5 with hostile-child fixtures.
-Startup failure fails closed: spawning a missing command raises before any
-native session exists. Forced close recovers, OS-observed, from an
-unbounded output flood (close lands while the reader services the burst),
-from a busy unresponsive child spinning without any I/O (job termination
-needs no cooperation), and from an active write storm (the pending-I/O
-discipline waits out in-flight native writes before release — releasing
-during a native call crashes the interpreter, observed experimentally —
-and the writer sees the closed classification, never a raw native error).
-Conin writes are consumed by conhost without backpressure (7.1 GiB in 20 s
-against a child that never reads), so a conin-blocked write is not a
-reachable state and write-side recovery reduces to the existing close
-discipline; this also resolves the prior review's open question about
-`cancel_io` coverage of blocked writes. Classification of these outcomes
-into the structured failure/abort taxonomy is adapter behavior and stays
-unclaimed until the public `Adapter` slice; dimensions receipts,
-enforcement receipts, and evidence normalization remain unproven and
-fail-closed.
+Adversarial review of the first candidate found that overlapped native I/O
+on one pseudoconsole — a concurrent `pty.write` against a blocked
+`pty.read` — intermittently crashes the interpreter with a native access
+violation (reproduced ~2% per run under a write storm, faulthandler-
+attributed, upstream `pywinpty` shares the pattern). The binding therefore
+now enforces the transcript protocol's single-flight model at its own
+boundary: at most one read or write may be in flight, overlap fails fast
+with `ConptyConcurrentIOError`, and `close` remains the one
+concurrent-safe operation. Startup failure fails closed for both modes: a
+missing command raises before any native session exists, and a command the
+OS refuses to start surfaces a classified error whose held exception chain
+provably cannot pin the native pseudoconsole. Forced close recovers,
+OS-observed, from an unbounded output flood, from a busy unresponsive
+child (job termination needs no cooperation), and from an in-flight native
+write: a deliberately large write keeps the native call in flight while
+close lands, and ordering evidence shows close returns only after the
+write frame returned — the wait-out discipline that prevents the
+release-during-native-call crash (observed experimentally). Handle release
+stays observable under hostile load: a release-only close under flood
+still ends the child with `STATUS_CONTROL_C_EXIT`. Conin writes showed no
+backpressure on the verified matrix (7.1 GiB in 20 s against a child that
+never reads, experiment recorded in issue #110), and a write that did
+block on some SKU would fail the bounded-flood test loudly rather than
+hang it. Classification of these outcomes into the structured
+failure/abort taxonomy is adapter behavior and stays unclaimed until the
+public `Adapter` slice; dimensions receipts, enforcement receipts, and
+evidence normalization remain unproven and fail-closed.
 
 ## Risks and non-negotiables
 

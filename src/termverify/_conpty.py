@@ -19,15 +19,27 @@ is assigned to the job immediately after ``CreateProcess`` returns, so a
 process the child manages to start within that microseconds-wide window
 would fall outside the job; the binding does not claim pre-start assignment.
 
+I/O is single-flight by contract: at most one native read or write may be in
+flight, and overlap fails fast with ``ConptyConcurrentIOError``. The native
+layer is not thread-safe for overlapped calls on one pseudoconsole —
+concurrent ``pty.write`` against a blocked ``pty.read`` intermittently
+crashes the interpreter with a native access violation — and the transcript
+protocol is single-flight anyway, so the binding refuses the overlap rather
+than risking the crash. ``close`` is the one concurrent-safe operation; it
+cancels in-flight I/O and waits it out before releasing the native object,
+because releasing during a native call is the same crash.
+
 The binding stays deliberately thin: every future adapter behavior above it
 must be testable cross-platform against an injected fake binding, so this
 native boundary is excluded from the coverage ratchet with recorded rationale
 in the developer guide. Cancellation and recovery are evidenced at this
-binding level only — startup failure fails closed, forced close recovers
-from hostile children (flood, busy spin, write storm) without leaking
-handles or threads, and conin writes are consumed without backpressure so a
-blocked write is not a reachable state. Classification into the structured
-failure/abort taxonomy is adapter behavior and remains unclaimed here.
+binding level only — startup failure fails closed for both a missing command
+and a command the OS refuses to start, forced close recovers from hostile
+children (output flood, busy spin, in-flight write) without leaking threads,
+with handle release proven by the release-only close evidence, and conin
+writes showed no backpressure on the verified matrix. Classification into
+the structured failure/abort taxonomy is adapter behavior and remains
+unclaimed here.
 
 ``write`` intentionally returns ``None``: the ConPTY write return value is not
 a reliable byte-count receipt, and exposing it would fabricate evidence.
@@ -60,6 +72,19 @@ class ConptyUnsupportedError(RuntimeError):
 
 class ConptyClosedError(RuntimeError):
     """Raised when an operation is attempted after the binding was closed."""
+
+
+class ConptyConcurrentIOError(RuntimeError):
+    """Raised when a read or write is attempted while another is in flight.
+
+    The native layer is not thread-safe for overlapped calls on one
+    pseudoconsole: concurrent ``pty.write`` against a blocked ``pty.read``
+    intermittently dies with a native access violation. The transcript
+    protocol is single-flight, so the binding forbids overlap outright and
+    fails fast instead of risking the crash or deadlocking behind an
+    indefinitely blocked read. ``close`` is the one concurrent-safe
+    operation; it cancels in-flight I/O.
+    """
 
 
 class ConptyEndOfStreamError(Exception):
@@ -274,7 +299,17 @@ class ConptyChild:
         cmdline = (
             " " + subprocess.list2cmdline(arguments[1:]) if len(arguments) > 1 else None
         )
-        if not pty.spawn(command, cmdline=cmdline, cwd=os.getcwd(), env=environment):
+        try:
+            spawned = pty.spawn(
+                command, cmdline=cmdline, cwd=os.getcwd(), env=environment
+            )
+        except Exception as error:
+            # Drop the native reference before raising so the held exception's
+            # traceback cannot pin the freshly created pseudoconsole.
+            del pty
+            raise OSError(f"ConPTY spawn failed for {command}") from error
+        if not spawned:
+            del pty
             raise OSError(f"ConPTY spawn reported failure for {command}")
         pid = int(pty.pid)
         job: int | None = None
@@ -309,8 +344,9 @@ class ConptyChild:
         and the native output pipe reports end-of-stream after the child has
         exited; the native exit status has been captured by then. Raises
         :class:`ConptyClosedError` when the binding is closed before or while
-        the read is in flight. Any other native read failure — the binding
-        open, the child alive — is re-raised unchanged.
+        the read is in flight, and :class:`ConptyConcurrentIOError` when
+        another read or write is already in flight. Any other native read
+        failure — the binding open, the child alive — is re-raised unchanged.
         """
         pty = self._begin_io()
         try:
@@ -331,8 +367,10 @@ class ConptyChild:
         """Write ``text`` to the child without claiming a byte-count receipt.
 
         Raises :class:`ConptyClosedError` when the binding is closed before
-        or while the write is in flight; other native write failures are
-        re-raised unchanged.
+        or while the write is in flight, and
+        :class:`ConptyConcurrentIOError` when another read or write is
+        already in flight; other native write failures are re-raised
+        unchanged.
         """
         pty = self._begin_io()
         try:
@@ -466,11 +504,22 @@ class ConptyChild:
         return pty
 
     def _begin_io(self) -> Any:
-        """Atomically take the native object and count the in-flight call."""
+        """Atomically take the native object and count the in-flight call.
+
+        At most one read or write may be in flight: overlapped native calls
+        on one pseudoconsole can crash the interpreter, and blocking a write
+        behind an indefinitely blocked read would deadlock, so overlap fails
+        fast as :class:`ConptyConcurrentIOError`.
+        """
         with self._lock:
             pty = self._pty
             if pty is None:
                 raise ConptyClosedError("the ConPTY binding is closed")
+            if self._pending_io > 0:
+                raise ConptyConcurrentIOError(
+                    "another native read or write is already in flight; the"
+                    " binding is single-flight by contract"
+                )
             self._pending_io += 1
             return pty
 
