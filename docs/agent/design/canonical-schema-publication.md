@@ -28,7 +28,7 @@ site for the `hoelzl/termverify` repository with `termverify.dev` as its
 custom domain, deployed by a GitHub Actions workflow from `main`. The
 published schema bytes are copied in-workflow from the single committed
 source, `src/termverify/schemas/termverify.transcript/v1.schema.json`, and a
-deploy-time check fetches the live URL and fails the deployment on any byte
+post-deploy check fetches the live URL and fails the workflow on any byte
 difference, so hand-edited or drifted publications cannot exist silently.
 
 By owner direction the same origin also serves the project's human-facing
@@ -110,9 +110,11 @@ only a mirror of committed content.
   period the committed v1 schema may still be amended with the protocol
   version staying 1, under the protocol's existing amendment rule. The
   publication mirrors `main`, so published bytes may change during
-  inception. From the first supported external artifact onward, a published
-  schema version becomes immutable under the release-governance rules; any
-  later change requires a new version at a new URL.
+  inception. From the protocol's freeze trigger onward — the first declared
+  real client or supported external artifact, per the protocol's amendment
+  rule — a published schema version becomes immutable under the
+  release-governance rules; any later change requires a new version at a
+  new URL.
 - **Identifier-first.** The `$id` remains primarily an identifier.
   Consumers must treat resolution as a convenience; documentation must not
   instruct anyone to fetch schemas at validation time.
@@ -160,9 +162,12 @@ dependency rule in `AGENTS.md`:
   client-side runtime dependency.
 - MkDocs and Material are mature, widely reviewed, pure-Python packages
   installable from the existing index with hashes locked in `uv.lock`.
-- The docs build runs only in the deploy workflow and on demand locally; it
-  is an optional integration and never joins the required build/test path,
-  keeping the harness-compatibility rule intact.
+- The docs *build* runs only in the deploy workflow and on demand locally;
+  it is an optional integration and never joins the required build/test
+  path, keeping the harness-compatibility rule intact. (The locked `docs`
+  group is still installed by the standard `uv --no-config sync
+  --all-groups --locked` gate like every other group; what stays out of the
+  required path is running MkDocs, not installing it.)
 
 The OKF YAML frontmatter on `docs/knowledge/` pages must not leak into
 rendered pages (MkDocs treats leading YAML as page metadata by default,

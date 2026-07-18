@@ -7,7 +7,7 @@
   completion gates passed independent integrated review. Phase 2 is not active.
 - **Owner:** project maintainer
 - **Created:** 2026-07-17
-- **Updated:** 2026-07-18
+- **Updated:** 2026-07-19
 - **Review required:** yes — activation and every workstream that changes public
   compatibility, enforcement, distribution, security, or release claims require
   executable evidence and independent human-readable review.
@@ -248,10 +248,11 @@ Reassessment at slice-3 completion (the design names this the natural
 point): the production-containment workstream's replacement scope is now
 fully implemented and evidenced; its two retired rows stay retired
 non-goals. Still transferred and unresolved, all blocked on owner
-decisions: canonical schema `$id` publication, named-timezone enforcement,
-the terminal-capability registry, concurrent event correlation, and
-key-to-terminal byte mapping. No further implementation slices are
-authorized by the cooperation-tier design.
+decisions: canonical schema `$id` publication (owner decision since taken
+on 2026-07-19; see the gate 4 acceptance paragraph), named-timezone
+enforcement, the terminal-capability registry, concurrent event
+correlation, and key-to-terminal byte mapping. No further implementation
+slices are authorized by the cooperation-tier design.
 
 ### 4. Distribution and release governance
 
