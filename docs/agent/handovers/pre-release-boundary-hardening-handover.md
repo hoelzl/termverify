@@ -7,7 +7,7 @@
   completion gates passed independent integrated review. Phase 2 is not active.
 - **Owner:** project maintainer
 - **Created:** 2026-07-17
-- **Updated:** 2026-07-17
+- **Updated:** 2026-07-18
 - **Review required:** yes — activation and every workstream that changes public
   compatibility, enforcement, distribution, security, or release claims require
   executable evidence and independent human-readable review.
@@ -49,8 +49,8 @@ Every row has disposition **transfer intact to this named successor**.
 | Deterministic vocabulary and configuration semantics | Closed, versioned semantic key-name registry, including modifier/chord spelling and adapter mapping | Implemented as protocol-owned `termverify.key/v1`, immutable `KeyInput`, and direct dispatch that forwards it unchanged. Terminal-byte/toolkit mapping and key-support negotiation remain separate unsupported work. |
 | Deterministic vocabulary and configuration semantics | Closed, versioned terminal-capability registry with observable semantics and enforcement evidence | Non-empty terminal-capability receipts remain rejected; requested/effective equality is not enforcement proof. |
 | Concurrent event correlation | Explicit correlation and ordering for concurrent inputs or unsolicited/asynchronous events | V1 remains single-flight; idle unsolicited body records remain invalid; no wall-clock quiet period is evidence of causality or quiescence. |
-| Production containment | Filesystem root mapping and lifecycle, traversal, symlink/reparse-point handling, child-process inheritance/containment, cleanup, and failure semantics | Direct execution may route an explicit application port but does not prove OS containment; terminal/subprocess enforcement remains unsupported. |
-| Production containment | Network allow-list DNS, address normalization, redirects, proxies, loopback, subprocess inheritance, and failure semantics | Direct receipts remain deny-only; allow-list enforcement remains rejected; terminal/subprocess enforcement remains unsupported. |
+| Production containment | Filesystem root mapping and lifecycle, traversal, symlink/reparse-point handling, child-process inheritance/containment, cleanup, and failure semantics | Owner decision 2026-07-18 (cooperation-tier design): OS containment is retired to an explicit non-goal — traversal, symlink/reparse, and child-process containment leave this boundary with it. Replacement scope is delivery-tier sandbox-root mapping with truthful `delivered` receipts; root mapping, existence validation, and host-owned lifecycle remain in scope there. Reopening containment requires a new owner-accepted design. |
+| Production containment | Network allow-list DNS, address normalization, redirects, proxies, loopback, subprocess inheritance, and failure semantics | Owner decision 2026-07-18 (cooperation-tier design): OS-level network enforcement is retired to the same explicit non-goal. Replacement scope is deny-mode delivery with truthful `delivered` receipts; allow-list requests remain rejected fail-closed, and allow-list semantics (DNS, redirects, proxies, loopback) remain undefined and out of scope. |
 | Distribution and release governance | Installed schema access API and exact wheel/sdist resource contract | Implemented: the canonical schema is a packaged resource with public byte/object accessors, and isolated wheel and sdist installation checks verify byte identity with the committed copy. Canonical `$id` publication remains transferred and unresolved. |
 | Distribution and release governance | Resolvable canonical schema publication for the documented `$id` | The current unresolved host is not a publication contract. Runtime validation remains authoritative. |
 | Distribution and release governance | Release checklist, changelog/compatibility policy, security-disclosure process, and build/release provenance | Implemented as governance: reviewed checklist, changelog with pre-1.0 policy, private-disclosure process, and a tag-triggered attested draft-artifact workflow. No release is authorized, no index publishing exists, and the package remains pre-alpha. |
@@ -156,6 +156,19 @@ Specify and prove filesystem and network policy at the relevant direct or OS
 boundary. Requested policy remains distinct from receipts and observations of
 what was actually enforced. Fail unsupported rather than falling back to ambient
 filesystem, DNS, proxy, loopback, or subprocess behavior.
+
+The owner decided on 2026-07-18 (recorded in
+[`cooperation-tier-constraint-ports.md`](../design/cooperation-tier-constraint-ports.md),
+pending its review PR) that OS containment is retired to an explicit
+non-goal: termverify verifies autonomous terminal applications whose authors
+control the subject and is not an execution sandbox for untrusted code.
+The same decision authorizes replacement scope at an honestly weaker tier:
+all six non-terminal constraints become satisfiable through opt-in
+cooperation ports whose receipts carry a mandatory enforcement-tier
+disclosure (`termverify.enforcement-tier/v1`) and record the exact delivered
+environment, while shipped defaults stay fail-closed and unchanged. Nothing
+in that scope may claim containment, quiescence, or subject compliance; a
+future owner-accepted design is required to reopen OS enforcement.
 
 ### 4. Distribution and release governance
 

@@ -52,7 +52,11 @@ termverify._conpty.ConptyChild           native, Windows-only, ratchet-excluded
   with three parts: an explicit **support probe** (`is_supported() -> bool`),
   a spawn factory (`argv`, keyword `rows`, `columns` → child), and the
   per-child surface `read()`, `write(text)`, `resize(rows=, columns=)`,
-  `is_alive()`, `close(force=)`, `pid`, `exit_status`. `ConptyChild`
+  `is_alive()`, `close(force=)`, `pid`, `exit_status`. **Amended 2026-07-18**
+  ([cooperation-tier constraint ports](cooperation-tier-constraint-ports.md)):
+  the spawn factory additionally accepts keyword `env_overlay` and `cwd`,
+  composed onto the ambient environment inside the binding so the ratcheted
+  adapter never reads ambient state. `ConptyChild`
   satisfies the child surface without modification; the probe is a new thin
   function implemented alongside `spawn` in `termverify._conpty` (the same
   precondition `spawn` already checks), so platform support is answerable at
@@ -97,9 +101,12 @@ Consequences, stated explicitly:
   `StartUnsupported(constraint="seed")` — the first constraint in negotiation
   order — **before any child is spawned**. That is the intended fail-closed
   outcome: the adapter never fabricates a receipt, and full verified terminal
-  runs become possible only through ports that genuinely enforce their
-  constraint (a harness's documented cooperation contract, or future
-  owner-approved enforcement work). This matches the direct adapter, where
+  runs become possible only through explicitly injected ports. **Amended
+  2026-07-18:** the owner-accepted path for such ports is the
+  [cooperation-tier constraint ports design](cooperation-tier-constraint-ports.md) —
+  opt-in ports whose receipts truthfully claim delivery-tier semantics;
+  OS-level enforcement work is retired to a non-goal by the same decision.
+  This matches the direct adapter, where
   enforcement already belongs to the injected application ports and
   requested/effective equality is insufficient as proof.
 - The adapter intercepts `enforce_terminal` itself and does not delegate it:
@@ -349,8 +356,10 @@ uses the existing structured runtime-failure path, exactly as accepted in the
 key-registry slice — no fallback, no silent degradation); no
 terminal-capability registry activation; no containment enforcement claims;
 no concurrent-event correlation; no POSIX adapter. Named-timezone
-enforcement, capability registry, and containment enforcement remain blocked
-on the owner.
+enforcement and the capability registry remain blocked on the owner.
+**Amended 2026-07-18:** containment enforcement is no longer merely blocked —
+the owner retired it to an explicit non-goal; see the
+[cooperation-tier constraint ports design](cooperation-tier-constraint-ports.md).
 
 ## Implementation slices authorized by this design
 
