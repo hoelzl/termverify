@@ -46,7 +46,11 @@ Readiness and quiescence are defined only by observable evidence:
   mandatory, explicitly configured abort deadline: a watchdog armed before
   each blocking read force-closes the binding when it expires, which always
   produces a structured failure disclosing the deadline policy and never a
-  successful epoch.
+  successful epoch. Hosts must budget the deadline above the disclosed
+  DA-stall floor: conhost defers client output while its unanswered
+  ``CSI c`` device-attributes query waits (measured ~3.1 s; see the
+  DA-stall disclosure in the adapter design document), so a deadline at or
+  below that floor plus spawn overhead fails every real start by policy.
 """
 
 from __future__ import annotations

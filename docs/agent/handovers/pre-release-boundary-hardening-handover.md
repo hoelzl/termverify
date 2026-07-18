@@ -431,7 +431,16 @@ replay rule, executed against real ConPTY output. The disclosed write
 follow-up is decided and recorded in the design: the watchdog wraps reads
 only, because conin writes showed no backpressure, the bounded write-flood
 test fails loudly on regression, and `cancel_io` cannot cancel conin
-writes; new blocking-write evidence would reopen the decision. Non-terminal
+writes; new blocking-write evidence would reopen the decision. Adversarial
+review surfaced a previously undisclosed platform behavior, now measured
+and recorded as the design's DA-stall disclosure: conhost defers client
+output while its unanswered `CSI c` device-attributes query waits
+(~3.1 s constant on the verified machine, ~0.05 s with a DA1 response),
+so every real start pays that wall-clock floor and a configured abort
+deadline at or below it fails every real start by policy; the adapter
+deliberately does not answer the query because a synthetic, unrecorded
+conin response would undermine replayability — removing the stall is
+possible future work behind a design amendment. Non-terminal
 constraint enforcement, the capability registry, containment claims, and a
 POSIX adapter remain outside this slice and fail-closed.
 

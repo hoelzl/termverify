@@ -37,7 +37,8 @@ from __future__ import annotations
 import os
 import re
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from typing import Final, cast
 
 import pytest
@@ -84,11 +85,14 @@ _OS_WAIT_TIMEOUT_MS: Final = 30_000
 #: Generous deadline for epochs that must succeed: it bounds a regression
 #: instead of hanging CI and is never treated as evidence.
 _SAFE_DEADLINE_MS: Final = 120_000
-#: Deadline for the abort test: long enough that spawn and readiness cannot
-#: plausibly consume it on a loaded CI runner, short enough to keep the test
-#: bounded. The hanging epoch produces no output at all, so expiry timing is
-#: not load-sensitive.
-_ABORT_DEADLINE_MS: Final = 10_000
+#: Deadline for the abort test. The start epoch under the same deadline pays
+#: a measured, constant ~3.1 s ambient floor: conhost defers client output
+#: while its unanswered ``CSI c`` device-attributes query times out (the
+#: DA-stall disclosure in the adapter design). 20 s leaves the start epoch
+#: a wide margin above that floor plus loaded-CI spawn overhead; the hanging
+#: epoch itself begins after readiness and has no ambient floor, so its
+#: expiry timing is not load-sensitive.
+_ABORT_DEADLINE_MS: Final = 20_000
 
 _PRINTABLE_MARKER: Final = "<<TV-READY>>"
 
@@ -184,6 +188,23 @@ def _adapter(
     )
 
 
+@contextmanager
+def _reaped(adapter: ConptyAdapter) -> Iterator[ConptyAdapter]:
+    """Cleanup arrangement, not evidence: never leak a child past a failure.
+
+    A failed assertion mid-run would otherwise leave the fixture child
+    blocked on stdin until interpreter exit. Force-closing the binding on
+    the way out is a no-op for runs that already reached a terminal result,
+    because every terminal result closes the binding.
+    """
+    try:
+        yield adapter
+    finally:
+        child = adapter._child  # noqa: SLF001 - cleanup-only access
+        if child is not None:
+            child.close(force=True)
+
+
 def _chunks(observation: Observation) -> list[str]:
     assert all(event.type == "terminal.output" for event in observation.events)
     return [
@@ -227,6 +248,7 @@ def _assert_replay_reproduces(
         snapshot = normalizer.snapshot()
         assert snapshot.frame == observation.frame
         assert snapshot.cursor == observation.ui.cursor
+        assert snapshot.mode == observation.ui.mode
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY integration evidence")
@@ -276,55 +298,57 @@ def test_full_verified_run_start_text_resize_and_subject_exit() -> None:
     adapter = _adapter(_cooperative_argv())
     observations: list[Observation] = []
 
-    started = adapter.start("run-conpty-integration", _configuration())
-    assert type(started) is Started, started
-    observation = started.observation
-    observations.append(observation)
-    assert observation.state == {
-        "terminal": {"columns": _INITIAL_COLUMNS, "rows": _INITIAL_ROWS}
-    }
-    raw = "".join(_chunks(observation))
-    assert READINESS_MARKER_DEFAULT in raw
-    initial_text = _frame_text(observation)
-    assert re.search(r"TV_PID:\d+", initial_text)
-    assert f"TV_SIZE:{_INITIAL_COLUMNS}x{_INITIAL_ROWS}" in initial_text
-    # The OSC marker is consumed by string-sequence semantics, not stripped:
-    # it is present in the raw evidence above and absent from the frame.
-    assert "7791" not in initial_text
-    assert observation.ui.cursor.visible is True
+    with _reaped(adapter):
+        started = adapter.start("run-conpty-integration", _configuration())
+        assert type(started) is Started, started
+        observation = started.observation
+        observations.append(observation)
+        assert observation.state == {
+            "terminal": {"columns": _INITIAL_COLUMNS, "rows": _INITIAL_ROWS}
+        }
+        raw = "".join(_chunks(observation))
+        assert READINESS_MARKER_DEFAULT in raw
+        initial_text = _frame_text(observation)
+        assert re.search(r"TV_PID:\d+", initial_text)
+        assert f"TV_SIZE:{_INITIAL_COLUMNS}x{_INITIAL_ROWS}" in initial_text
+        # The OSC marker is consumed by string-sequence semantics, not
+        # stripped: it is present in the raw evidence above and absent from
+        # the frame.
+        assert "7791" not in initial_text
+        assert observation.ui.cursor.visible is True
 
-    result = adapter.dispatch(TextInput(ManualTime(0), "hello\r\n"))
-    assert type(result) is EpochCompleted, result
-    observations.append(result.observation)
-    assert "TV_ECHO:hello" in _frame_text(result.observation)
+        result = adapter.dispatch(TextInput(ManualTime(0), "hello\r\n"))
+        assert type(result) is EpochCompleted, result
+        observations.append(result.observation)
+        assert "TV_ECHO:hello" in _frame_text(result.observation)
 
-    resized = adapter.dispatch(
-        Resize(ManualTime(0), columns=_RESIZED_COLUMNS, rows=_RESIZED_ROWS)
-    )
-    assert type(resized) is EpochCompleted, resized
-    observations.append(resized.observation)
-    assert resized.observation.state == {
-        "terminal": {"columns": _RESIZED_COLUMNS, "rows": _RESIZED_ROWS}
-    }
-    resized_frame = resized.observation.frame
-    assert resized_frame is not None
-    assert resized_frame.columns == _RESIZED_COLUMNS
-    assert resized_frame.rows == _RESIZED_ROWS
-    # The child itself observed the new dimensions: end-to-end resize
-    # evidence through a full dispatch(Resize) epoch, not an API echo.
-    assert f"TV_RESIZED:{_RESIZED_COLUMNS}x{_RESIZED_ROWS}" in _frame_text(
-        resized.observation
-    )
+        resized = adapter.dispatch(
+            Resize(ManualTime(0), columns=_RESIZED_COLUMNS, rows=_RESIZED_ROWS)
+        )
+        assert type(resized) is EpochCompleted, resized
+        observations.append(resized.observation)
+        assert resized.observation.state == {
+            "terminal": {"columns": _RESIZED_COLUMNS, "rows": _RESIZED_ROWS}
+        }
+        resized_frame = resized.observation.frame
+        assert resized_frame is not None
+        assert resized_frame.columns == _RESIZED_COLUMNS
+        assert resized_frame.rows == _RESIZED_ROWS
+        # The child itself observed the new dimensions: end-to-end resize
+        # evidence through a full dispatch(Resize) epoch, not an API echo.
+        assert f"TV_RESIZED:{_RESIZED_COLUMNS}x{_RESIZED_ROWS}" in _frame_text(
+            resized.observation
+        )
 
-    final = adapter.dispatch(TextInput(ManualTime(0), "exit\r\n"))
-    assert type(final) is TerminalResult, final
-    assert final.outcome == RunFinished(ExitStatus("code", 3))
-    assert final.observation is not None
-    observations.append(final.observation)
-    process = final.observation.process
-    assert process is not None
-    assert process.state == "exited"
-    assert "TV_EXIT" in _frame_text(final.observation)
+        final = adapter.dispatch(TextInput(ManualTime(0), "exit\r\n"))
+        assert type(final) is TerminalResult, final
+        assert final.outcome == RunFinished(ExitStatus("code", 3))
+        assert final.observation is not None
+        observations.append(final.observation)
+        process = final.observation.process
+        assert process is not None
+        assert process.state == "exited"
+        assert "TV_EXIT" in _frame_text(final.observation)
 
     _assert_replay_reproduces(
         observations, rows=_INITIAL_ROWS, columns=_INITIAL_COLUMNS
@@ -345,16 +369,17 @@ def test_printable_marker_appears_in_frames_and_replays_identically() -> None:
     adapter = _adapter(
         _cooperative_argv(_PRINTABLE_MARKER), readiness_marker=_PRINTABLE_MARKER
     )
-    started = adapter.start("run-conpty-printable", _configuration())
-    assert type(started) is Started, started
-    observation = started.observation
-    assert _PRINTABLE_MARKER in "".join(_chunks(observation))
-    assert _PRINTABLE_MARKER in _frame_text(observation)
-    _assert_replay_reproduces(
-        [observation], rows=_INITIAL_ROWS, columns=_INITIAL_COLUMNS
-    )
+    with _reaped(adapter):
+        started = adapter.start("run-conpty-printable", _configuration())
+        assert type(started) is Started, started
+        observation = started.observation
+        assert _PRINTABLE_MARKER in "".join(_chunks(observation))
+        assert _PRINTABLE_MARKER in _frame_text(observation)
+        _assert_replay_reproduces(
+            [observation], rows=_INITIAL_ROWS, columns=_INITIAL_COLUMNS
+        )
 
-    stopped = adapter.stop(Stop(ManualTime(0)))
+        stopped = adapter.stop(Stop(ManualTime(0)))
     assert type(stopped) is TerminalResult
     assert stopped.outcome == RunFinished(
         ExitStatus("code", FORCED_TERMINATION_EXIT_CODE)
@@ -369,8 +394,9 @@ def test_subject_exit_before_readiness_is_start_terminated() -> None:
     record; no readiness is claimed and no exit status is fabricated.
     """
     adapter = _adapter(_argv(_EXIT_BEFORE_READINESS_CHILD))
-    result = adapter.start("run-conpty-short", _configuration())
-    assert type(result) is StartTerminated, result
+    with _reaped(adapter):
+        result = adapter.start("run-conpty-short", _configuration())
+        assert type(result) is StartTerminated, result
     assert result.result.outcome == RunFinished(ExitStatus("code", 7))
     observation = result.result.observation
     assert observation is not None

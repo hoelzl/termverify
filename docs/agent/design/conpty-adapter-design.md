@@ -228,6 +228,22 @@ wait out the same native call it cannot interrupt. Deadline protection for
 writes is therefore not implemented; if future evidence shows a blocking
 conin write, that evidence reopens this decision rather than being absorbed
 silently.
+**Disclosed ambient floor (DA stall), measured 2026-07-18 (issue #121):**
+conhost's session preamble includes a `CSI c` primary device-attributes
+query, and while that query waits for an answer the host defers the
+client's output — measured on the verified machine as a constant ~3.1 s
+before the first byte of subject output when the query goes unanswered,
+versus ~0.05 s when a DA1 response is written to conin. The adapter does
+not answer the query: injecting a synthetic terminal-identity response is
+host-role conversation the evidence model does not yet record, and doing
+it silently would put unrecorded bytes on the conin path of a replayable
+run. The consequence is disclosed instead: every real start pays the
+constant stall as wall-clock latency (never as evidence — timestamps stay
+manual), and a configured `abort_deadline_ms` at or below the stall plus
+spawn overhead fails every real start by policy. Hosts must budget the
+deadline above this floor. A future slice may add a truthful, recorded
+DA-response mechanism to remove the stall; changing that behavior amends
+this document.
 
 **Time discipline.** All observation and diagnostic timestamps are the
 epoch's manual time, satisfying the contract's `at_ms` invariants. Wall-clock

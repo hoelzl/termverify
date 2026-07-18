@@ -81,7 +81,12 @@ session with `CSI 1 t` (XTWINOPS window-operation report), `CSI c`
 none of which were in the subset as first landed, so the fail-closed
 normalizer rejected every real session's first chunk, exactly as designed.
 The four observed sequences are non-grid-affecting host control/query
-traffic and are added to v1 as consumed no-ops. No released artifact or
+traffic and are added to v1 as consumed no-ops. Consuming `CSI c` is
+grid-safe, but the unanswered query has a measured wall-clock consequence
+at the adapter boundary — conhost defers client output while the query
+waits — disclosed as the DA-stall note in the
+[ConPTY adapter design](conpty-adapter-design.md); that is adapter
+latency, not normalizer semantics. No released artifact or
 recorded transcript carries the prior v1 semantics, so this is a
 pre-release correction of the same registry, not a post-freeze semantic
 change; the version stays `1`, and the post-release rule below is
