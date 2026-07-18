@@ -352,6 +352,25 @@ The v1 subset's coverage of real ConPTY output remains an unproven claim
 until the Windows integration slice; adapter negotiation, epoch machinery,
 and all receipts remain unbuilt and fail-closed.
 
+The owner accepted adapter slice 2 on 2026-07-18 (issue #117, adversarially
+reviewed): `termverify.conpty` with the `ConptyBindingPort`/`ConptyChildPort`
+protocols (shaped exactly like `ConptyChild` plus an explicit
+`is_supported()` probe implemented alongside `spawn` in
+`termverify._conpty`), the default native-delegating binding, and
+`ConptyAdapter` with truthful negotiation: the adapter owns only the
+terminal constraint — non-empty capability requests and unsupported hosts
+fail closed as `StartUnsupported(terminal)` before any spawn — and the
+shipped `UnenforcedConstraintPorts` report the six non-terminal constraints
+not enforced, so `start()` with defaults ends as `StartUnsupported(seed)`
+before any child exists. The receipt-validating negotiation loop was
+extracted unchanged from the direct adapter into shared
+`termverify._negotiation`. A fully negotiated start fails closed with a
+structured `StartFailed` disclosing the unimplemented epoch machinery; no
+child is ever spawned, no successful start exists, and everything is
+cross-platform, fake-driven, and fully ratcheted. Epoch machinery, marker
+protocol, stop semantics, and Windows integration evidence remain slices 3
+and 4, fail-closed until they land.
+
 ## Risks and non-negotiables
 
 - Do not expose unresolved capability, timezone-enforcement, filesystem,

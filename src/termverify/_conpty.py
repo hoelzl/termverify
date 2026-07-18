@@ -70,6 +70,17 @@ class ConptyUnsupportedError(RuntimeError):
     """Raised when the ConPTY binding is used on a host without ConPTY."""
 
 
+def is_supported() -> bool:
+    """Report whether this host can create ConPTY pseudoconsoles.
+
+    This is the explicit support probe the adapter consults during
+    negotiation, answering the same precondition :meth:`ConptyChild.spawn`
+    checks so platform support is decidable before any spawn is attempted.
+    It inspects no session state and creates nothing.
+    """
+    return os.name == "nt"
+
+
 class ConptyClosedError(RuntimeError):
     """Raised when an operation is attempted after the binding was closed."""
 

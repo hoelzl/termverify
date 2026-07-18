@@ -6,17 +6,14 @@ from collections.abc import Callable
 from threading import Lock
 from typing import Literal, NamedTuple, Protocol, cast
 
-from termverify._protocol_v1 import CONSTRAINT_NAMES
+from termverify._negotiation import negotiate
 from termverify.adapter import (
     AdapterFailure,
     ClockAdvance,
     ClockReceipt,
-    ConstraintName,
     ConstraintPorts,
-    ConstraintUnsupported,
     DispatchInput,
     EnforcedConstraints,
-    EnforcementReceipt,
     EpochCompleted,
     EpochResult,
     FilesystemReceipt,
@@ -33,7 +30,6 @@ from termverify.adapter import (
     StartFailed,
     StartResult,
     StartTerminated,
-    StartUnsupported,
     Stop,
     TerminalReceipt,
     TerminalResult,
@@ -94,65 +90,6 @@ class DirectApplication(
     def stop(self, input_event: Stop) -> TerminalResult | AdapterFailure: ...
 
     def abort(self, input_event: Stop) -> None: ...
-
-
-def _start_failure(
-    run_id: str,
-    configuration: RunConfiguration,
-    enforced: tuple[EnforcementReceipt, ...],
-    constraint: ConstraintName,
-) -> StartFailed:
-    return StartFailed(
-        run_id=run_id,
-        requested=configuration,
-        enforced=enforced,
-        failure=AdapterFailure(
-            "adapter-start-failed",
-            "constraint enforcement failed",
-            {"constraint": constraint},
-        ),
-    )
-
-
-def _negotiate_constraint(
-    operation: Callable[[], object],
-    expected_type: type[EnforcementReceipt],
-    expected_value: object,
-    constraint: ConstraintName,
-    run_id: str,
-    configuration: RunConfiguration,
-    enforced: tuple[EnforcementReceipt, ...],
-) -> EnforcementReceipt | StartUnsupported | StartFailed:
-    try:
-        value = operation()
-    except Exception:
-        return _start_failure(run_id, configuration, enforced, constraint)
-
-    if type(value) is expected_type:
-        receipt = value
-        if receipt.run_id == run_id and receipt.effective == expected_value:
-            return receipt
-        return _start_failure(run_id, configuration, enforced, constraint)
-    if type(value) is ConstraintUnsupported:
-        if value.constraint != constraint:
-            return _start_failure(run_id, configuration, enforced, constraint)
-        return StartUnsupported(
-            run_id=run_id,
-            requested=configuration,
-            enforced=enforced,
-            constraint=value.constraint,
-            code=value.code,
-            message=value.message,
-            details=value.details,
-        )
-    if type(value) is AdapterFailure and value.code == "adapter-start-failed":
-        return StartFailed(
-            run_id=run_id,
-            requested=configuration,
-            enforced=enforced,
-            failure=value,
-        )
-    return _start_failure(run_id, configuration, enforced, constraint)
 
 
 def _terminal_time_is_valid(result: TerminalResult, at_ms: ManualTime) -> bool:
@@ -253,67 +190,31 @@ class DirectAdapter:
             if self._state != "created":
                 raise RuntimeError("direct adapter has already started")
             self._state = "negotiating"
-        operations = (
-            lambda: self._constraints.enforce_seed(run_id, configuration.seed),
-            lambda: self._constraints.enforce_clock(run_id, configuration.clock),
-            lambda: self._constraints.enforce_locale(run_id, configuration.locale),
-            lambda: self._constraints.enforce_timezone(run_id, configuration.timezone),
-            lambda: self._constraints.enforce_terminal(run_id, configuration.terminal),
-            lambda: self._constraints.enforce_filesystem(
-                run_id, configuration.filesystem
+        negotiated = negotiate(
+            run_id,
+            configuration,
+            (
+                lambda: self._constraints.enforce_seed(run_id, configuration.seed),
+                lambda: self._constraints.enforce_clock(run_id, configuration.clock),
+                lambda: self._constraints.enforce_locale(run_id, configuration.locale),
+                lambda: self._constraints.enforce_timezone(
+                    run_id, configuration.timezone
+                ),
+                lambda: self._constraints.enforce_terminal(
+                    run_id, configuration.terminal
+                ),
+                lambda: self._constraints.enforce_filesystem(
+                    run_id, configuration.filesystem
+                ),
+                lambda: self._constraints.enforce_network(
+                    run_id, configuration.network
+                ),
             ),
-            lambda: self._constraints.enforce_network(run_id, configuration.network),
         )
-        receipt_types: tuple[type[EnforcementReceipt], ...] = (
-            SeedReceipt,
-            ClockReceipt,
-            LocaleReceipt,
-            TimezoneReceipt,
-            TerminalReceipt,
-            FilesystemReceipt,
-            NetworkReceipt,
-        )
-        expected_values = (
-            configuration.seed,
-            configuration.clock,
-            configuration.locale,
-            configuration.timezone,
-            configuration.terminal,
-            configuration.filesystem,
-            configuration.network,
-        )
-        steps: tuple[
-            tuple[
-                ConstraintName,
-                Callable[[], object],
-                type[EnforcementReceipt],
-                object,
-            ],
-            ...,
-        ] = tuple(
-            zip(
-                CONSTRAINT_NAMES,
-                operations,
-                receipt_types,
-                expected_values,
-                strict=True,
-            )
-        )
-        receipts: list[EnforcementReceipt] = []
-        for constraint, operation, receipt_type, expected_value in steps:
-            result = _negotiate_constraint(
-                operation,
-                receipt_type,
-                expected_value,
-                constraint,
-                run_id,
-                configuration,
-                tuple(receipts),
-            )
-            if isinstance(result, (StartUnsupported, StartFailed)):
-                self._set_state("terminal")
-                return result
-            receipts.append(result)
+        if not isinstance(negotiated, tuple):
+            self._set_state("terminal")
+            return negotiated
+        receipts = list(negotiated)
 
         self._set_state("initializing")
         constraints = EnforcedConstraints(
