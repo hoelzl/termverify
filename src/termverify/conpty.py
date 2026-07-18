@@ -376,6 +376,14 @@ def _validate_deadline(deadline_ms: object) -> int:
     return deadline_ms
 
 
+class _DeliveryInvariantError(ValueError):
+    """One spawn-delivery invariant breach, labeled for diagnostics."""
+
+    def __init__(self, invariant: str, message: str) -> None:
+        super().__init__(message)
+        self.invariant = invariant
+
+
 def _assemble_spawn_overlay(
     deliveries: Sequence[DeliveryRecord],
 ) -> tuple[dict[str, str] | None, str | None]:
@@ -383,24 +391,33 @@ def _assemble_spawn_overlay(
 
     Evidence-driven spawn: what the receipts record is exactly what the
     child is given, with no side channel between ports and spawn. The
-    delivery records must be mutually disjoint and name at most one working
-    directory; a violation raises ``ValueError`` for the caller to report as
-    an invariant breach.
+    delivery records must be mutually disjoint — compared case-folded,
+    because Windows environment lookup is case-insensitive and two
+    case-variant entries would let one recorded delivery silently shadow
+    another — and may name at most one working directory; a violation
+    raises :class:`_DeliveryInvariantError` for the caller to report as an
+    invariant breach.
     """
     overlay: dict[str, str] = {}
+    seen: set[str] = set()
     cwd: str | None = None
     for delivery in deliveries:
         for name, value in delivery.env.items():
-            if name in overlay:
-                raise ValueError(
-                    "delivery records must be mutually disjoint; variable"
-                    f" {name!r} was delivered twice"
+            folded = name.casefold()
+            if folded in seen:
+                raise _DeliveryInvariantError(
+                    "delivery-disjoint",
+                    "delivery records must be mutually disjoint under"
+                    " case-insensitive Windows environment semantics;"
+                    f" variable {name!r} was delivered twice",
                 )
+            seen.add(folded)
             overlay[name] = value
         if delivery.cwd is not None:
             if cwd is not None:
-                raise ValueError(
-                    "delivery records may name at most one working directory"
+                raise _DeliveryInvariantError(
+                    "single-working-directory",
+                    "delivery records may name at most one working directory",
                 )
             cwd = delivery.cwd
     return (overlay if overlay else None), cwd
@@ -770,7 +787,7 @@ class ConptyAdapter:
                     if receipt.delivery is not None
                 )
             )
-        except ValueError:
+        except _DeliveryInvariantError as breach:
             # Defense-in-depth against a buggy or hostile injected port:
             # the shipped ports deliver disjoint, closed variable sets, so
             # this invariant breach is not reachable through them. It occurs
@@ -778,7 +795,7 @@ class ConptyAdapter:
             # available for diagnostics, and is never silently merged.
             return start_failed(
                 "the delivered spawn environment violates the delivery invariants",
-                {"during": "spawn-overlay", "invariant": "delivery-disjoint"},
+                {"during": "spawn-overlay", "invariant": breach.invariant},
             )
         try:
             self._child = self._binding.spawn(

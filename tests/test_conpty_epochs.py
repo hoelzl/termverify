@@ -206,7 +206,6 @@ class _FakeBinding:
         self.child = child if child is not None else _FakeChild()
         self._spawn_error = spawn_error
         self.spawns: list[tuple[tuple[str, ...], int, int]] = []
-        self.overlays: list[tuple[dict[str, str] | None, str | None]] = []
 
     def is_supported(self) -> bool:
         return True
@@ -221,9 +220,6 @@ class _FakeBinding:
         cwd: str | None = None,
     ) -> ConptyChildPort:
         self.spawns.append((tuple(argv), rows, columns))
-        self.overlays.append(
-            (dict(env_overlay) if env_overlay is not None else None, cwd)
-        )
         if self._spawn_error is not None:
             raise self._spawn_error
         return self.child

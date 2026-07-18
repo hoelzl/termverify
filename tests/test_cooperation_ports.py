@@ -453,6 +453,21 @@ def test_assembly_rejects_colliding_variable_names() -> None:
         )
 
 
+def test_assembly_rejects_case_variant_collisions() -> None:
+    # Windows environment lookup is case-insensitive: two case-variant
+    # entries would let one recorded delivery silently shadow the other,
+    # so disjointness is validated case-folded.
+    from termverify.conpty import _assemble_spawn_overlay
+
+    with pytest.raises(ValueError, match="disjoint"):
+        _assemble_spawn_overlay(
+            (
+                DeliveryRecord(env={"TZ": "UTC0"}),
+                DeliveryRecord(env={"tz": "shadowed"}),
+            )
+        )
+
+
 # --- negotiation compatibility ----------------------------------------------
 
 
@@ -470,7 +485,7 @@ def test_cooperation_ports_satisfy_the_conpty_authorization_matrix() -> None:
             assert receipt.tier == "delivered"
 
 
-def test_cooperation_ports_reject_a_raising_probe_as_unsupported_only() -> None:
+def test_a_raising_probe_is_a_raising_port_classified_start_failed() -> None:
     class _RaisingProbe:
         def resolve_directory(self, path: str) -> str | None:
             raise OSError("probe exploded")
@@ -488,5 +503,13 @@ def test_cooperation_ports_reject_a_raising_probe_as_unsupported_only() -> None:
     assert binding.spawns == []
 
 
-def test_unused_failure_is_adapter_failure_type() -> None:
-    assert AdapterFailure("adapter-start-failed", "x").code == "adapter-start-failed"
+def test_default_construction_maps_no_roots_and_fails_unsupported() -> None:
+    ports = CooperationConstraintPorts()
+
+    result = ports.enforce_filesystem(
+        RUN_ID, FilesystemConfiguration(root_id="sandbox")
+    )
+
+    assert type(result) is ConstraintUnsupported
+    assert result.constraint == "filesystem"
+    assert result.code == "constraint-unsupported"

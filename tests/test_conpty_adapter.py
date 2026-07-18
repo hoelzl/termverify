@@ -80,7 +80,6 @@ class _Binding:
         self._supported = supported
         self.probe_calls = 0
         self.spawn_calls = 0
-        self.overlays: list[tuple[dict[str, str] | None, str | None]] = []
 
     def is_supported(self) -> bool:
         self.probe_calls += 1
@@ -96,9 +95,6 @@ class _Binding:
         cwd: str | None = None,
     ) -> ConptyChildPort:
         self.spawn_calls += 1
-        self.overlays.append(
-            (dict(env_overlay) if env_overlay is not None else None, cwd)
-        )
         raise OSError("this negotiation fake refuses to spawn a child")
 
 
