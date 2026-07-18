@@ -54,7 +54,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, Final
 
 _CHILD_EXIT_WAIT_MS = 30_000
@@ -282,13 +282,29 @@ class ConptyChild:
         self._pending_io = 0
 
     @classmethod
-    def spawn(cls, argv: Sequence[str], *, rows: int, columns: int) -> ConptyChild:
+    def spawn(
+        cls,
+        argv: Sequence[str],
+        *,
+        rows: int,
+        columns: int,
+        env_overlay: Mapping[str, str] | None = None,
+        cwd: str | None = None,
+    ) -> ConptyChild:
         """Spawn a contained child on a ConPTY pseudoconsole.
 
         The child is assigned to a fresh kill-on-close job object before the
         binding is returned. If containment cannot be established, the child
         is terminated and the spawn fails closed: no uncontained session is
         ever handed out.
+
+        ``env_overlay`` variables are overlaid onto this process's ambient
+        environment at spawn time; an overlay variable always wins over an
+        ambient variable of the same name. Disclosed: the child inherits the
+        ambient environment underneath the overlay — ambient contents are
+        not evidence and are not recorded, only the overlay is. ``cwd``
+        selects the child's working directory; without it, the child starts
+        in this process's current directory.
         """
         if os.name != "nt":
             raise ConptyUnsupportedError(
@@ -303,16 +319,20 @@ class ConptyChild:
             raise FileNotFoundError(
                 f"the command was not found or was not executable: {arguments[0]}"
             )
+        merged = dict(os.environ)
+        if env_overlay is not None:
+            merged.update(env_overlay)
         pty = PTY(columns, rows, backend=Backend.ConPTY)
         environment = (
-            "\0".join(f"{name}={value}" for name, value in os.environ.items()) + "\0"
+            "\0".join(f"{name}={value}" for name, value in merged.items()) + "\0"
         )
         cmdline = (
             " " + subprocess.list2cmdline(arguments[1:]) if len(arguments) > 1 else None
         )
+        working_directory = cwd if cwd is not None else os.getcwd()
         try:
             spawned = pty.spawn(
-                command, cmdline=cmdline, cwd=os.getcwd(), env=environment
+                command, cmdline=cmdline, cwd=working_directory, env=environment
             )
         except Exception as error:
             # Drop the native reference before raising so the held exception's

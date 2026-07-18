@@ -618,13 +618,19 @@ class DeliveryRecord:
         for name, value in env.items():
             if type(name) is not str or not name:
                 raise ValueError("delivery env names must be non-empty strings")
+            if "=" in name or "\0" in name:
+                raise ValueError(
+                    "delivery env names must be deliverable: no '=' or NUL"
+                )
             if type(value) is not str or not value:
                 raise ValueError("delivery env values must be non-empty strings")
+            if "\0" in value:
+                raise ValueError("delivery env values must be deliverable: no NUL")
             frozen[name] = value
         if not frozen:
             raise ValueError("delivery must record at least one environment variable")
-        if cwd is not None and (type(cwd) is not str or not cwd):
-            raise ValueError("delivery cwd must be a non-empty string or None")
+        if cwd is not None and (type(cwd) is not str or not cwd or "\0" in cwd):
+            raise ValueError("delivery cwd must be a non-empty NUL-free string or None")
         object.__setattr__(self, "env", MappingProxyType(frozen))
         object.__setattr__(self, "cwd", cwd)
 

@@ -44,6 +44,14 @@ with the pre-1.0 policy below.
   `delivered`) with a per-negotiation-path authorization matrix validated
   fail-closed during receipt binding, and a `DeliveryRecord` value for
   delivered-tier receipts.
+- Opt-in `termverify.cooperation` module: `CooperationConstraintPorts`
+  delivering all six non-terminal constraints at the `delivered` tier with
+  the accepted per-constraint contracts (`TERMVERIFY_*` variables, `TZ=UTC0`
+  UTC-only, sandbox-root working directory through an injectable directory
+  probe, deny-only network), plus evidence-driven spawn: the ConPTY adapter
+  assembles the child's environment overlay and working directory from the
+  validated delivery records, with fail-closed disjointness invariants.
+  Defaults are unchanged — `UnenforcedConstraintPorts` still fails closed.
 
 ### Changed
 
@@ -62,3 +70,10 @@ with the pre-1.0 policy below.
   `status: "enforced"` likewise require `tier` (and `delivery` exactly when
   the tier is `delivered`). No released artifact or recorded transcript
   carries the prior shapes.
+- **Breaking:** `ConptyBindingPort.spawn` (and the native
+  `termverify._conpty.ConptyChild.spawn`) gained keyword parameters
+  `env_overlay` and `cwd`; external binding implementations must accept
+  them. Omitting both preserves the prior spawn behavior exactly.
+- **Breaking:** `DeliveryRecord` and transcript delivery validation now
+  reject syntactically undeliverable environment entries — `=` or NUL in a
+  variable name, NUL in a value or working directory — fail-closed.

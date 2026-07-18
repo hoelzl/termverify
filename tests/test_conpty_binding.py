@@ -934,3 +934,92 @@ def test_spawn_unrunnable_command_fails_closed(tmp_path: Path) -> None:
     with pytest.raises(OSError, match="ConPTY spawn failed") as failure:
         ConptyChild.spawn([str(bogus)], rows=_INITIAL_ROWS, columns=_INITIAL_COLUMNS)
     _assert_no_native_pin(failure.value)
+
+
+# --- Slice 2 (cooperation tier): spawn delivery of env overlay and cwd ---
+
+_DELIVERY_CHILD: Final = """\
+import os
+
+print("TV_ENV_SEED:" + os.environ.get("TERMVERIFY_SEED", "<missing>"), flush=True)
+print(
+    "TV_ENV_AMBIENT:" + os.environ.get("TV_AMBIENT_CANARY", "<missing>"),
+    flush=True,
+)
+print(
+    "TV_ENV_OVERRIDE:" + os.environ.get("TV_OVERRIDE_CANARY", "<missing>"),
+    flush=True,
+)
+print("TV_CWD:" + os.getcwd(), flush=True)
+print("TV_DELIVERY_DONE", flush=True)
+"""
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_spawn_delivers_env_overlay_and_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cooperation-tier slice 2: the child observes delivered values.
+
+    Proves the three disclosed overlay semantics at once: a delivered
+    variable reaches the child, an overlay variable wins over an ambient
+    variable of the same name, and the ambient environment is inherited
+    underneath the overlay. The working directory is the delivered sandbox
+    root, observed by the child itself.
+    """
+    monkeypatch.setenv("TV_AMBIENT_CANARY", "ambient")
+    monkeypatch.setenv("TV_OVERRIDE_CANARY", "ambient")
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    child = ConptyChild.spawn(
+        [sys.executable, "-I", "-u", "-c", _DELIVERY_CHILD],
+        rows=_INITIAL_ROWS,
+        columns=_INITIAL_COLUMNS,
+        env_overlay={
+            "TERMVERIFY_SEED": "42",
+            "TV_OVERRIDE_CANARY": "delivered",
+        },
+        cwd=str(sandbox),
+    )
+    watchdog = _ForcedCloseWatchdog(child)
+    collected: list[str] = []
+    try:
+        _read_until(child, "TV_DELIVERY_DONE", collected)
+    finally:
+        watchdog.cancel()
+        child.close(force=True)
+
+    combined = "".join(collected)
+    assert "TV_ENV_SEED:42" in combined
+    assert "TV_ENV_AMBIENT:ambient" in combined
+    assert "TV_ENV_OVERRIDE:delivered" in combined
+    cwd_match = re.search(r"TV_CWD:([^\r\n]+)", combined)
+    assert cwd_match is not None
+    assert Path(cwd_match.group(1)).resolve() == sandbox.resolve()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_spawn_without_overlay_keeps_the_ambient_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Omitted overlay and cwd preserve the pre-amendment spawn behavior."""
+    monkeypatch.setenv("TV_AMBIENT_CANARY", "ambient")
+    child = ConptyChild.spawn(
+        [sys.executable, "-I", "-u", "-c", _DELIVERY_CHILD],
+        rows=_INITIAL_ROWS,
+        columns=_INITIAL_COLUMNS,
+    )
+    watchdog = _ForcedCloseWatchdog(child)
+    collected: list[str] = []
+    try:
+        _read_until(child, "TV_DELIVERY_DONE", collected)
+    finally:
+        watchdog.cancel()
+        child.close(force=True)
+
+    combined = "".join(collected)
+    assert "TV_ENV_SEED:<missing>" in combined
+    assert "TV_ENV_AMBIENT:ambient" in combined
+    cwd_match = re.search(r"TV_CWD:([^\r\n]+)", combined)
+    assert cwd_match is not None
+    assert Path(cwd_match.group(1)).resolve() == Path(os.getcwd()).resolve()
