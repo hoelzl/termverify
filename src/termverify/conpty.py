@@ -29,9 +29,10 @@ Negotiation is truthful by construction:
   negotiation states ``os`` (an OS-level pseudoconsole parameter, proven on
   the Windows matrix), and injected ports may state only ``delivered`` —
   exact recorded values placed in the subject's spawn environment, honored
-  only by subject cooperation. The cooperation ports that emit that tier are
-  the next authorized slice of the accepted cooperation-tier design; nothing
-  shipped emits it yet.
+  only by subject cooperation. The opt-in ports that emit that tier live in
+  ``termverify.cooperation``; the spawn is evidence-driven, with the child's
+  environment overlay and working directory assembled from the validated
+  receipts' delivery records under fail-closed disjointness invariants.
 
 Readiness and quiescence are defined only by observable evidence:
 
@@ -63,7 +64,7 @@ Readiness and quiescence are defined only by observable evidence:
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Final, Literal, Protocol, cast, runtime_checkable
 
 from termverify._conpty import (
@@ -79,6 +80,7 @@ from termverify.adapter import (
     ClockReceipt,
     ConstraintPorts,
     ConstraintUnsupported,
+    DeliveryRecord,
     Diagnostic,
     DispatchInput,
     EnforcedConstraints,
@@ -197,7 +199,13 @@ class ConptyBindingPort(Protocol):
     def is_supported(self) -> bool: ...
 
     def spawn(
-        self, argv: Sequence[str], *, rows: int, columns: int
+        self,
+        argv: Sequence[str],
+        *,
+        rows: int,
+        columns: int,
+        env_overlay: Mapping[str, str] | None = None,
+        cwd: str | None = None,
     ) -> ConptyChildPort: ...
 
 
@@ -241,10 +249,20 @@ class ConptyBinding:
 
         return _conpty.is_supported()
 
-    def spawn(self, argv: Sequence[str], *, rows: int, columns: int) -> ConptyChildPort:
+    def spawn(
+        self,
+        argv: Sequence[str],
+        *,
+        rows: int,
+        columns: int,
+        env_overlay: Mapping[str, str] | None = None,
+        cwd: str | None = None,
+    ) -> ConptyChildPort:
         from termverify._conpty import ConptyChild
 
-        return ConptyChild.spawn(argv, rows=rows, columns=columns)
+        return ConptyChild.spawn(
+            argv, rows=rows, columns=columns, env_overlay=env_overlay, cwd=cwd
+        )
 
 
 class UnenforcedConstraintPorts:
@@ -356,6 +374,36 @@ def _validate_deadline(deadline_ms: object) -> int:
     if deadline_ms <= 0:
         raise ValueError("abort_deadline_ms must be positive")
     return deadline_ms
+
+
+def _assemble_spawn_overlay(
+    deliveries: Sequence[DeliveryRecord],
+) -> tuple[dict[str, str] | None, str | None]:
+    """Assemble the spawn environment overlay from validated delivery records.
+
+    Evidence-driven spawn: what the receipts record is exactly what the
+    child is given, with no side channel between ports and spawn. The
+    delivery records must be mutually disjoint and name at most one working
+    directory; a violation raises ``ValueError`` for the caller to report as
+    an invariant breach.
+    """
+    overlay: dict[str, str] = {}
+    cwd: str | None = None
+    for delivery in deliveries:
+        for name, value in delivery.env.items():
+            if name in overlay:
+                raise ValueError(
+                    "delivery records must be mutually disjoint; variable"
+                    f" {name!r} was delivered twice"
+                )
+            overlay[name] = value
+        if delivery.cwd is not None:
+            if cwd is not None:
+                raise ValueError(
+                    "delivery records may name at most one working directory"
+                )
+            cwd = delivery.cwd
+    return (overlay if overlay else None), cwd
 
 
 class _EpochFailure(Exception):
@@ -715,8 +763,30 @@ class ConptyAdapter:
         )
         terminal = configuration.terminal
         try:
+            env_overlay, cwd = _assemble_spawn_overlay(
+                tuple(
+                    receipt.delivery
+                    for receipt in receipts
+                    if receipt.delivery is not None
+                )
+            )
+        except ValueError:
+            # Defense-in-depth against a buggy or hostile injected port:
+            # the shipped ports deliver disjoint, closed variable sets, so
+            # this invariant breach is not reachable through them. It occurs
+            # after negotiation completed, with the full receipt set
+            # available for diagnostics, and is never silently merged.
+            return start_failed(
+                "the delivered spawn environment violates the delivery invariants",
+                {"during": "spawn-overlay", "invariant": "delivery-disjoint"},
+            )
+        try:
             self._child = self._binding.spawn(
-                self._argv, rows=terminal.rows, columns=terminal.columns
+                self._argv,
+                rows=terminal.rows,
+                columns=terminal.columns,
+                env_overlay=env_overlay,
+                cwd=cwd,
             )
         except Exception:
             return start_failed(

@@ -10,8 +10,9 @@ default through; that evidence lives in the Windows integration module
 
 from __future__ import annotations
 
+import os
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import cast
 
 import pytest
@@ -79,12 +80,16 @@ def _configuration() -> RunConfiguration:
 
 
 def _delivery(constraint: str) -> DeliveryRecord:
-    """One structurally valid fake delivery record per constraint."""
+    """One structurally valid fake delivery record per constraint.
+
+    The filesystem record names this process's working directory: fakes
+    never inspect it, but the Windows integration module reuses these ports
+    against the real binding, whose child must start in a directory that
+    actually exists.
+    """
     if constraint == "filesystem":
-        return DeliveryRecord(
-            env={"TERMVERIFY_FS_ROOT": "C:\\sandbox\\fixture-root"},
-            cwd="C:\\sandbox\\fixture-root",
-        )
+        root = os.getcwd()
+        return DeliveryRecord(env={"TERMVERIFY_FS_ROOT": root}, cwd=root)
     return DeliveryRecord(env={f"TERMVERIFY_{constraint.upper()}": "value"})
 
 
@@ -201,12 +206,24 @@ class _FakeBinding:
         self.child = child if child is not None else _FakeChild()
         self._spawn_error = spawn_error
         self.spawns: list[tuple[tuple[str, ...], int, int]] = []
+        self.overlays: list[tuple[dict[str, str] | None, str | None]] = []
 
     def is_supported(self) -> bool:
         return True
 
-    def spawn(self, argv: Sequence[str], *, rows: int, columns: int) -> ConptyChildPort:
+    def spawn(
+        self,
+        argv: Sequence[str],
+        *,
+        rows: int,
+        columns: int,
+        env_overlay: Mapping[str, str] | None = None,
+        cwd: str | None = None,
+    ) -> ConptyChildPort:
         self.spawns.append((tuple(argv), rows, columns))
+        self.overlays.append(
+            (dict(env_overlay) if env_overlay is not None else None, cwd)
+        )
         if self._spawn_error is not None:
             raise self._spawn_error
         return self.child

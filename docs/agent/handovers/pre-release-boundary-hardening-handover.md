@@ -200,6 +200,32 @@ recorded in `CHANGELOG.md`. No cooperation port exists at the end of this
 slice; nothing shipped can emit `delivered`, and shipped defaults still fail
 closed unchanged.
 
+Cooperation-tier implementation slice 2 landed on 2026-07-18 (issue #127):
+the opt-in `termverify.cooperation` module with all six delivered-tier ports
+under the accepted per-constraint contracts — `TERMVERIFY_SEED`,
+`TERMVERIFY_CLOCK_INITIAL_MS` (initial manual time only),
+`TERMVERIFY_LOCALE` (no `LANG`/`LC_ALL` delivery), `TZ=UTC0` plus
+`TERMVERIFY_TIMEZONE=UTC` (UTC-only; non-UTC requests unsupported),
+`TERMVERIFY_FS_ROOT` plus working directory from an explicit
+`root_id -> host directory` mapping resolved through an injectable directory
+probe (default: the real filesystem, the ports' single disclosed ambient
+touchpoint; host-owned lifecycle), and `TERMVERIFY_NETWORK=deny` (deny-only;
+allow-list stays rejected). `enforce_terminal` stays truthfully
+`constraint-not-enforced`. `ConptyBindingPort.spawn` and the native binding
+gained `env_overlay`/`cwd` with overlay composition in the binding (the
+reviewed ratchet exclusion) and durable Windows-matrix evidence: the child
+observes delivered variables, overlay-over-ambient precedence, ambient
+inheritance underneath, and the delivered working directory. The ConPTY
+adapter spawns evidence-driven — the overlay is assembled from the validated
+receipts' delivery records with fail-closed disjointness and
+single-working-directory invariants (violations are structured `StartFailed`
+after negotiation). The carried slice-1 nit is closed: `DeliveryRecord` and
+transcript delivery validation reject `=`/NUL in names and NUL in values and
+cwd. Shipped defaults are unchanged and everything except the native binding
+is cross-platform, fake-driven, and ratcheted. The sandbox disclosures are
+recorded in `docs/developer-guide/conpty-adapter.md`. No end-to-end
+successful real start is claimed; that evidence is slice 3.
+
 ### 4. Distribution and release governance
 
 Define installed schema access, canonical publication, release/security/provenance

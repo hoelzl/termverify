@@ -637,11 +637,16 @@ def _validate_capability_tier(constraint: str, payload: dict[str, JsonValue]) ->
                 "capability delivery env must map non-empty variable names"
                 " to non-empty string values"
             )
+        if "=" in name or "\0" in name or "\0" in value:
+            raise TranscriptValidationError(
+                "capability delivery env members must be deliverable:"
+                " no '=' in names and no NUL anywhere"
+            )
     if constraint == "filesystem":
         cwd = delivery.get("cwd")
-        if not isinstance(cwd, str) or not cwd:
+        if not isinstance(cwd, str) or not cwd or "\0" in cwd:
             raise TranscriptValidationError(
-                "filesystem capability delivery must name a non-empty cwd"
+                "filesystem capability delivery must name a non-empty NUL-free cwd"
             )
     elif "cwd" in delivery:
         raise TranscriptValidationError(

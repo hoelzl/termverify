@@ -9,7 +9,7 @@ spawned. Epoch behavior after a complete negotiation is covered in
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import cast
 
 import pytest
@@ -80,13 +80,25 @@ class _Binding:
         self._supported = supported
         self.probe_calls = 0
         self.spawn_calls = 0
+        self.overlays: list[tuple[dict[str, str] | None, str | None]] = []
 
     def is_supported(self) -> bool:
         self.probe_calls += 1
         return self._supported
 
-    def spawn(self, argv: Sequence[str], *, rows: int, columns: int) -> ConptyChildPort:
+    def spawn(
+        self,
+        argv: Sequence[str],
+        *,
+        rows: int,
+        columns: int,
+        env_overlay: Mapping[str, str] | None = None,
+        cwd: str | None = None,
+    ) -> ConptyChildPort:
         self.spawn_calls += 1
+        self.overlays.append(
+            (dict(env_overlay) if env_overlay is not None else None, cwd)
+        )
         raise OSError("this negotiation fake refuses to spawn a child")
 
 
@@ -201,18 +213,35 @@ def test_native_binding_delegates_the_probe(
 
 def test_native_binding_delegates_spawn(monkeypatch: pytest.MonkeyPatch) -> None:
     sentinel = ConptyChild(object(), 7, 0, 0)
-    recorded: list[tuple[tuple[str, ...], int, int]] = []
+    recorded: list[
+        tuple[tuple[str, ...], int, int, Mapping[str, str] | None, str | None]
+    ] = []
 
-    def fake_spawn(argv: Sequence[str], *, rows: int, columns: int) -> ConptyChild:
-        recorded.append((tuple(argv), rows, columns))
+    def fake_spawn(
+        argv: Sequence[str],
+        *,
+        rows: int,
+        columns: int,
+        env_overlay: Mapping[str, str] | None = None,
+        cwd: str | None = None,
+    ) -> ConptyChild:
+        recorded.append((tuple(argv), rows, columns, env_overlay, cwd))
         return sentinel
 
     monkeypatch.setattr(ConptyChild, "spawn", staticmethod(fake_spawn))
 
-    child = ConptyBinding().spawn(["subject", "--flag"], rows=24, columns=80)
+    child = ConptyBinding().spawn(
+        ["subject", "--flag"],
+        rows=24,
+        columns=80,
+        env_overlay={"TERMVERIFY_SEED": "42"},
+        cwd="C:/sandbox",
+    )
 
     assert child is sentinel
-    assert recorded == [(("subject", "--flag"), 24, 80)]
+    assert recorded == [
+        (("subject", "--flag"), 24, 80, {"TERMVERIFY_SEED": "42"}, "C:/sandbox")
+    ]
 
 
 @pytest.mark.parametrize("constraint", _NON_TERMINAL_CONSTRAINTS)

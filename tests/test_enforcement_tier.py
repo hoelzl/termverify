@@ -10,7 +10,7 @@ cross-platform and fake-driven; no cooperation port exists in this slice.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import cast
 
@@ -359,7 +359,15 @@ class _Binding:
     def is_supported(self) -> bool:
         return True
 
-    def spawn(self, argv: Sequence[str], *, rows: int, columns: int) -> ConptyChildPort:
+    def spawn(
+        self,
+        argv: Sequence[str],
+        *,
+        rows: int,
+        columns: int,
+        env_overlay: Mapping[str, str] | None = None,
+        cwd: str | None = None,
+    ) -> ConptyChildPort:
         self.spawn_calls += 1
         raise OSError("this negotiation fake refuses to spawn a child")
 
