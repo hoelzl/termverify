@@ -7,7 +7,7 @@
   completion gates passed independent integrated review. Phase 2 is not active.
 - **Owner:** project maintainer
 - **Created:** 2026-07-17
-- **Updated:** 2026-07-17
+- **Updated:** 2026-07-18
 - **Review required:** yes — activation and every workstream that changes public
   compatibility, enforcement, distribution, security, or release claims require
   executable evidence and independent human-readable review.
@@ -21,7 +21,10 @@
   reviewed documentation transition resolving issue #87 merges and archives the
   predecessor.
 - **Completion:** every transferred criterion below is implemented and verified,
-  or is moved intact through another explicit owner-reviewed successor boundary;
+  is moved intact through another explicit owner-reviewed successor boundary,
+  or is retired to an explicit non-goal by a recorded, reviewed owner decision
+  (amendment 2026-07-18: retirement admitted as a disposition by the
+  cooperation-tier decision);
   no unsupported semantic, containment, terminal, schema-publication, or release
   claim is exposed in the meantime.
 
@@ -41,7 +44,11 @@ that completed boundary.
 
 ## Accepted transferred scope
 
-Every row has disposition **transfer intact to this named successor**.
+Every row originally had disposition **transfer intact to this named
+successor**. Amendment 2026-07-18: the two production-containment rows now
+carry the disposition **retired to an explicit non-goal by recorded owner
+decision** with a narrower replacement scope; every other row remains
+transfer-intact.
 
 | Workstream | Transferred criterion | Current boundary |
 | --- | --- | --- |
@@ -49,13 +56,13 @@ Every row has disposition **transfer intact to this named successor**.
 | Deterministic vocabulary and configuration semantics | Closed, versioned semantic key-name registry, including modifier/chord spelling and adapter mapping | Implemented as protocol-owned `termverify.key/v1`, immutable `KeyInput`, and direct dispatch that forwards it unchanged. Terminal-byte/toolkit mapping and key-support negotiation remain separate unsupported work. |
 | Deterministic vocabulary and configuration semantics | Closed, versioned terminal-capability registry with observable semantics and enforcement evidence | Non-empty terminal-capability receipts remain rejected; requested/effective equality is not enforcement proof. |
 | Concurrent event correlation | Explicit correlation and ordering for concurrent inputs or unsolicited/asynchronous events | V1 remains single-flight; idle unsolicited body records remain invalid; no wall-clock quiet period is evidence of causality or quiescence. |
-| Production containment | Filesystem root mapping and lifecycle, traversal, symlink/reparse-point handling, child-process inheritance/containment, cleanup, and failure semantics | Direct execution may route an explicit application port but does not prove OS containment; terminal/subprocess enforcement remains unsupported. |
-| Production containment | Network allow-list DNS, address normalization, redirects, proxies, loopback, subprocess inheritance, and failure semantics | Direct receipts remain deny-only; allow-list enforcement remains rejected; terminal/subprocess enforcement remains unsupported. |
+| Production containment | Filesystem root mapping and lifecycle, traversal, symlink/reparse-point handling, child-process inheritance/containment, cleanup, and failure semantics | Owner decision 2026-07-18 (cooperation-tier design): OS containment is retired to an explicit non-goal — traversal, symlink/reparse, and child-process containment leave this boundary with it. Replacement scope is delivery-tier sandbox-root mapping with truthful `delivered` receipts; root mapping, existence validation, and host-owned lifecycle remain in scope there. Reopening containment requires a new owner-accepted design. |
+| Production containment | Network allow-list DNS, address normalization, redirects, proxies, loopback, subprocess inheritance, and failure semantics | Owner decision 2026-07-18 (cooperation-tier design): OS-level network enforcement is retired to the same explicit non-goal. Replacement scope is deny-mode delivery with truthful `delivered` receipts; allow-list requests remain rejected fail-closed, and allow-list semantics (DNS, redirects, proxies, loopback) remain undefined and out of scope. |
 | Distribution and release governance | Installed schema access API and exact wheel/sdist resource contract | Implemented: the canonical schema is a packaged resource with public byte/object accessors, and isolated wheel and sdist installation checks verify byte identity with the committed copy. Canonical `$id` publication remains transferred and unresolved. |
 | Distribution and release governance | Resolvable canonical schema publication for the documented `$id` | The current unresolved host is not a publication contract. Runtime validation remains authoritative. |
 | Distribution and release governance | Release checklist, changelog/compatibility policy, security-disclosure process, and build/release provenance | Implemented as governance: reviewed checklist, changelog with pre-1.0 policy, private-disclosure process, and a tag-triggered attested draft-artifact workflow. No release is authorized, no index publishing exists, and the package remains pre-alpha. |
 | Distribution and release governance | Reviewed behavior-based coverage-ratchet activation | Implemented: the committed `fail_under` floor is the integer floor of the reviewed observed total (94.43% at activation), raises require sustained durable coverage, and lowering requires explicit owner review. |
-| Production terminal adapter | Direct native pseudoconsole ownership/close, native EOF and final-frame draining, process-tree teardown, cancellation/recovery, and truthful OS-level enforcement evidence | The accepted dependency decision (`docs/agent/design/terminal-adapter-dependency-decision.md`) authorizes reviewed implementation slices with pinned `pywinpty`/ConPTY behind its verification plan. Binding slices 2–4 landed durable Windows-matrix evidence for native ownership/close, EOF/final-frame drain, job-object process-tree teardown, and binding-level cancellation/recovery with hostile-child fixtures (plan items 2–4 and the binding half of item 5). Adapter slices 1–4 landed the fail-closed normalizer, truthful negotiation, epoch machinery, and real-path Windows integration evidence for items 5–8: classification, dimensions receipts through a real resize epoch, verbatim OSC readiness-marker passthrough, and replayable evidence normalization. The adapter enforces only the terminal constraint; the six non-terminal constraints remain truthfully not enforced at this boundary, and their enforcement claims stay with their own transferred workstreams. |
+| Production terminal adapter | Direct native pseudoconsole ownership/close, native EOF and final-frame draining, process-tree teardown, cancellation/recovery, and truthful OS-level enforcement evidence | The accepted dependency decision (`docs/agent/design/terminal-adapter-dependency-decision.md`) authorizes reviewed implementation slices with pinned `pywinpty`/ConPTY behind its verification plan. Binding slices 2–4 landed durable Windows-matrix evidence for native ownership/close, EOF/final-frame drain, job-object process-tree teardown, and binding-level cancellation/recovery with hostile-child fixtures (plan items 2–4 and the binding half of item 5). Adapter slices 1–4 landed the fail-closed normalizer, truthful negotiation, epoch machinery, and real-path Windows integration evidence for items 5–8: classification, dimensions receipts through a real resize epoch, verbatim OSC readiness-marker passthrough, and replayable evidence normalization. The adapter enforces only the terminal constraint; the six non-terminal constraints remain truthfully not enforced at this boundary, and their enforcement claims stay with their own workstreams (the two production-containment rows were retired to an explicit non-goal on 2026-07-18; the rest remain transferred). |
 
 ## Completion-definition amendments retained from the predecessor
 
@@ -156,6 +163,19 @@ Specify and prove filesystem and network policy at the relevant direct or OS
 boundary. Requested policy remains distinct from receipts and observations of
 what was actually enforced. Fail unsupported rather than falling back to ambient
 filesystem, DNS, proxy, loopback, or subprocess behavior.
+
+The owner decided on 2026-07-18 (recorded in the accepted
+[`cooperation-tier-constraint-ports.md`](../design/cooperation-tier-constraint-ports.md),
+PR #124) that OS containment is retired to an explicit
+non-goal: termverify verifies autonomous terminal applications whose authors
+control the subject and is not an execution sandbox for untrusted code.
+The same decision authorizes replacement scope at an honestly weaker tier:
+all six non-terminal constraints become satisfiable through opt-in
+cooperation ports whose receipts carry a mandatory enforcement-tier
+disclosure (`termverify.enforcement-tier/v1`) and record the exact delivered
+environment, while shipped defaults stay fail-closed and unchanged. Nothing
+in that scope may claim containment, quiescence, or subject compliance; a
+future owner-accepted design is required to reopen OS enforcement.
 
 ### 4. Distribution and release governance
 
@@ -468,6 +488,10 @@ POSIX adapter remain outside this slice and fail-closed.
 - Mark **blocked** only when all safe work depends on an unresolved owner decision,
   unavailable independent review, or external enforcement evidence.
 - Mark **complete** only when every transferred criterion is implemented and the
-  integrated boundary passes its required review, or when another named successor
-  accepts every unresolved criterion intact.
+  integrated boundary passes its required review, when another named successor
+  accepts every unresolved criterion intact, or — for criteria retired to an
+  explicit non-goal by a recorded, reviewed owner decision (amendment
+  2026-07-18) — when the retirement is recorded in the criterion's row and its
+  design document; a retired criterion imposes no implementation obligation but
+  its non-goal must not be silently reversed.
 - Activation or completion of this handover does not activate Phase 2.
