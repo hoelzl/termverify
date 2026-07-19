@@ -148,6 +148,7 @@ def _input_from_record(record: Record) -> ScriptedInput:
         return Resize(at_ms, cast(int, payload["columns"]), cast(int, payload["rows"]))
     if kind == "input.clock_advanced":
         return ClockAdvance(at_ms, cast(int, payload["delta_ms"]))
+    assert kind == "input.stop", kind
     return Stop(at_ms)
 
 
@@ -166,6 +167,11 @@ def replay_transcript(
     a structured error: the engine fabricates no stop the source did not
     contain. An adapter that refuses to start is an honest executed replay
     — its refusal is recorded and compared like any other outcome.
+
+    ``x-`` extension members in the source's config or input payloads are
+    not carried into the re-executed run — the adapter contract has no
+    place for them — so such a source can never replay equivalent; the
+    comparison discloses the difference.
     """
     if type(source) is not bytes:
         raise ReplayError("invalid-source", "source transcript must be bytes")

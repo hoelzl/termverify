@@ -393,6 +393,64 @@ def test_a_non_bytes_source_is_a_structured_error() -> None:
     assert caught.value.code == "invalid-source"
 
 
+def test_edge_configuration_and_inputs_replay_faithfully() -> None:
+    configuration = RunConfiguration(
+        seed=2**64 - 1,
+        clock=ClockConfiguration(initial_ms=5000),
+        locale="en-US",
+        timezone="UTC",
+        terminal=TerminalConfiguration(columns=80, rows=24, capabilities=()),
+        filesystem=FilesystemConfiguration(root_id="fixture-root"),
+        network=NetworkConfiguration.deny(),
+    )
+
+    def constraints(run_id: str) -> EnforcedConstraints:
+        return EnforcedConstraints(
+            run_id=run_id,
+            requested=configuration,
+            seed=SeedReceipt(run_id, configuration.seed, "constructive"),
+            clock=ClockReceipt(run_id, configuration.clock, "constructive"),
+            locale=LocaleReceipt(run_id, configuration.locale, "constructive"),
+            timezone=TimezoneReceipt(run_id, configuration.timezone, "constructive"),
+            terminal=TerminalReceipt(run_id, configuration.terminal, "constructive"),
+            filesystem=FilesystemReceipt(
+                run_id, configuration.filesystem, "constructive"
+            ),
+            network=NetworkReceipt(run_id, configuration.network, "constructive"),
+        )
+
+    inputs: tuple[ScriptedInput, ...] = (
+        TextInput(ManualTime(5000), ""),
+        KeyInput(ManualTime(5000), ("Control", "Shift", "F5")),
+        Stop(ManualTime(5000)),
+    )
+
+    def results() -> list[EpochResult]:
+        return [
+            EpochCompleted(_observation(5000)),
+            EpochCompleted(_observation(5000)),
+            _terminal_result(5000),
+        ]
+
+    source = run_scripted(
+        _ScriptedAdapter(Started(constraints(RUN_ID), _observation(5000)), results()),
+        RUN_ID,
+        configuration,
+        SUBJECT,
+        inputs,
+    ).transcript
+    replay_adapter = _ScriptedAdapter(
+        Started(constraints("run-replayed"), _observation(5000)), results()
+    )
+
+    outcome = replay_transcript(source, replay_adapter, "run-replayed", SUBJECT)
+
+    assert type(outcome) is ReplayRun
+    assert outcome.comparison.equivalent is True
+    assert replay_adapter.started_with == ("run-replayed", configuration)
+    assert replay_adapter.received == list(inputs)
+
+
 @given(epochs=st.lists(st.sampled_from(["text", "key", "resize", "clock"]), max_size=5))
 def test_property_a_faithful_replay_of_any_input_sequence_is_equivalent(
     epochs: list[str],
