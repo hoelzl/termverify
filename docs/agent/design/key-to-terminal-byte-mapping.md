@@ -39,7 +39,8 @@ then runs the same quiescent input epoch as `TextInput`; an unencodable
 chord is a structured runtime failure before any byte reaches the child.
 
 The mapping is delivery, not interpretation. The adapter claims only that
-the registry's exact bytes were handed to the pseudoconsole input pipe; it
+the registry's exact string was handed to the disclosed native
+console-input encoding path; it
 claims nothing about how the subject decodes or reacts to them. Subject
 reaction remains observable frame evidence, exactly as for `input.text`.
 The transcript protocol is unchanged: `input.key` stays semantic, no
@@ -97,7 +98,7 @@ decision, not a new design to un-retire a non-goal.
 
 ### Encoding scheme
 
-All encoded values are strings of code points in the range U+0000–U+007F,
+All encoded values are strings of code points in the range U+0001–U+007F,
 written verbatim through the existing `ConptyChildPort.write(text: str)`
 primitive — the same disclosed native console-input encoding path that
 `input.text` already rides. The scheme is the fixed xterm-compatible legacy
@@ -113,7 +114,7 @@ The xterm modifier parameter is `1 + (Shift:1) + (Alt:2) + (Control:4) +
 | `ArrowUp`/`ArrowDown`/`ArrowRight`/`ArrowLeft`, `Home`, `End` (final byte `A`/`B`/`C`/`D`/`H`/`F`) | `ESC [ <final>` | `ESC [ 1 ; m <final>` — all 15 modified subsets encodable |
 | Tilde family — `Insert` 2, `Delete` 3, `PageUp` 5, `PageDown` 6, `F5` 15, `F6` 17, `F7` 18, `F8` 19, `F9` 20, `F10` 21, `F11` 23, `F12` 24 | `ESC [ <n> ~` | `ESC [ <n> ; m ~` — all 15 modified subsets encodable |
 | `F1`–`F4` (final byte `P`/`Q`/`R`/`S`) | `ESC O <final>` | `ESC [ 1 ; m <final>` — all 15 modified subsets encodable |
-| `Enter`, `Tab`, `Escape`, `Backspace` | `CR` (0x0D), `HT` (0x09), `ESC` (0x1B), `DEL` (0x7F) | Exactly two modified shapes exist: `["Shift", "Tab"]` → `ESC [ Z`, and `["Alt", <base>]` → `ESC` prefix of the unmodified byte. Every other modified subset is **unencodable**. |
+| `Enter`, `Tab`, `Escape`, `Backspace` | `CR` (0x0D), `HT` (0x09), `ESC` (0x1B), `DEL` (0x7F) | Exactly five modified chords are encodable: `["Shift", "Tab"]` → `ESC [ Z`, and `["Alt", <base>]` for each of the four bases → `ESC` prefix of the unmodified byte. Every other modified subset is **unencodable**. |
 | Letters `a`–`z` | (not a valid chord — unmodified printables are `input.text`) | `["Control", x]` → the C0 byte `chr(ord(x) - 0x60)`; `["Alt", x]` → `ESC x`; `["Control", "Alt", x]` → `ESC` + C0 byte. Every subset containing `Shift` or `Meta` is **unencodable**. |
 | Digits `0`–`9` | (not a valid chord) | `["Alt", d]` → `ESC d`. Every other subset is **unencodable**. |
 | `Space` | (not a valid chord) | `["Alt", "Space"]` → `ESC SP` (0x1B 0x20). Every other subset is **unencodable**. |
@@ -135,13 +136,30 @@ than an omission:
   native wide-string boundary, where truncation is a known hostile-input
   hazard — the same reason `DeliveryRecord` rejects NUL. Fail closed.
 - **Modified `Enter`/`Escape`/`Backspace` beyond `Alt`+base, and modified
-  `Tab` beyond `Shift+Tab`/`Alt+Tab`:** no deterministic legacy encoding
-  exists (for example `Control+Enter` is byte-identical to `Enter`);
-  emitting the ambiguous form would misrepresent the chord.
+  `Tab` beyond `Shift+Tab`/`Alt+Tab`:** the legacy byte space has no form
+  that represents the modifier at all — the only candidate bytes are the
+  base's own (`Control+Enter` has no encoding other than `Enter`'s `CR`),
+  so emitting them would silently drop the modifier, which is exactly the
+  misrepresentation the protocol forbids.
+
+The governing principle: a chord is encodable exactly when the legacy
+encoding represents every component of the chord by definition, and
+unencodable when the only candidate bytes drop a modifier or misrepresent
+the base. Distinct chords' correct encodings may still collide in the
+legacy byte space, and four such collisions exist and are disclosed:
+`["Control", "m"]` encodes to `CR`, byte-identical to `Enter`;
+`["Control", "i"]` to `HT`, byte-identical to `Tab`; and therefore
+`["Control", "Alt", "m"]` ≡ `["Alt", "Enter"]` and
+`["Control", "Alt", "i"]` ≡ `["Alt", "Tab"]`. These are not
+modifier-dropping: the C0 arithmetic *is* the definitional legacy encoding
+of a `Control`+letter chord, every component is represented, and the
+resulting byte ambiguity is inherent to legacy terminals and subject-side,
+like every other interpretation concern — the transcript retains the
+distinct semantic chords regardless of what bytes they share.
 
 A future encoding version (for example one adopting an unambiguous
-extended keyboard protocol) may shrink the unencodable set; v1 never
-guesses.
+extended keyboard protocol) may shrink the unencodable set and resolve the
+disclosed collisions; v1 never guesses.
 
 ### Signal-byte disclosure
 
@@ -164,9 +182,13 @@ authors know cooperative raw-mode input handling is their responsibility.
   chunks, normalizer) exactly as `TextInput` does today.
 - An unencodable chord is a structured runtime failure **before any child
   write**: the existing `adapter-runtime-failed` path with details
-  `{"unsupported": "key-encoding", "keys": [...]}` (the chord's registry
-  names are protocol vocabulary, not sensitive evidence, and may appear in
-  details). The run aborts through the same machinery as every other
+  `{"unsupported": "key-encoding", "keys": [...]}`. Including the chord
+  here aids live diagnosis without weakening safe evidence: under the
+  evidence-governance policy, failure details are blanket-redacted by safe
+  persistence, and its key-chord rule already replaces every persisted
+  chord with the `["Escape"]` sentinel — chord identity is hidden by those
+  existing rules, not by a claim that it is non-sensitive. The run aborts
+  through the same machinery as every other
   runtime failure; there is no fallback to `input.text`, no partial write,
   and no silent degradation, matching the direct adapter's precedent.
 - The transcript records the semantic `input.key` event exactly as before.
@@ -181,8 +203,10 @@ authors know cooperative raw-mode input handling is their responsibility.
 ## Honesty boundaries
 
 - **Delivery, not interpretation.** The only claim is that the registry's
-  exact bytes were written to the pseudoconsole input pipe via the
-  single-flight write. No claim is made that the child read them, decoded
+  exact string was handed, exactly once, to the disclosed native
+  console-input encoding path via the single-flight write — the same
+  boundary `input.text` crosses, which returns no byte-count receipt. No
+  claim is made that the child read the bytes, decoded
   them as the intended key, or reacted; that evidence is the subject's
   observable frames, as with every other input.
 - **No input-mode tracking.** The adapter does not track, set, or respond
