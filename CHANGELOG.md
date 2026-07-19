@@ -103,6 +103,23 @@ with the pre-1.0 policy below.
   implementation, and no test asserts stored report bytes as behavioral
   truth. No normalizers, tolerances, or per-scenario configuration exist;
   extending the exclusion set requires an owner-accepted amendment.
+- Phase 2 verification core, slice 3 (`termverify.replay`): caller-bound
+  transcript replay. `replay_transcript` takes a validated source
+  transcript and a caller-supplied adapter, re-executes the source's
+  configuration and input sequence in transcript order under the same
+  single-flight discipline, records the new run with the slice-1
+  recorder, and returns the new transcript plus the slice-2 comparison.
+  Replay binding is disclosed, not enforced: the caller-supplied
+  `termverify.replay-subject/v1` selector is recorded in the new
+  transcript and selector agreement is reported, never a precondition. A
+  source whose lifecycle ended in a failed or unsupported start replays
+  nothing and reports that structurally; sources carrying input kinds the
+  adapter contract cannot dispatch (`input.mouse`,
+  `input.clipboard_set`) fail closed before any adapter call; early
+  terminations disclose dispatched-versus-source input counts; a replay
+  whose input sequence ends with the run still open is a structured
+  error. No scheduling, retry, timeout, multi-subject, or differential
+  semantics.
 
 ### Changed
 
