@@ -1,14 +1,21 @@
 # Phase 2 Boundary: The Verification Core
 
-- **Status:** proposed — drafted 2026-07-19 in response to the converging
-  external-subject prioritization signal in
-  [issue #114](https://github.com/hoelzl/termverify/issues/114). The active
+- **Status:** accepted — owner decision 2026-07-19, recorded in
+  [issue #146](https://github.com/hoelzl/termverify/issues/146). The owner
+  accepted this design exactly as merged in PR #145, with no scope changes.
+  Acceptance activates Phase 2 for exactly the scope below and authorizes
+  the three implementation slices in order, per "Acceptance and
+  sequencing"; no slice is accepted by this decision, and no recorder,
+  comparator, replay, or report capability exists or is claimed until its
+  slice lands with evidence and an adversarial-review verdict. Drafted
+  2026-07-19 in response to the converging external-subject prioritization
+  signal in [issue #114](https://github.com/hoelzl/termverify/issues/114);
+  the active
   [pre-release boundary hardening handover](../handovers/pre-release-boundary-hardening-handover.md)
-  states that Phase 2 requires a separate accepted phase-boundary decision;
-  this document is that decision candidate. It authorizes nothing until the
-  owner accepts it, and it adds no code itself. Until acceptance, no
-  recorder, comparator, replay, or report capability exists or is claimed.
-- **Issue:** to be opened for acceptance review; prioritization input is
+  states that Phase 2 requires a separate accepted phase-boundary decision,
+  and this document is that decision.
+- **Issue:** [#146](https://github.com/hoelzl/termverify/issues/146)
+  (acceptance record); prioritization input is
   [#114](https://github.com/hoelzl/termverify/issues/114)
 - **Date:** 2026-07-19
 - **Inputs:** issue #114 and its follow-up comments (GlyphWright direct-spike
