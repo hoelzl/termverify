@@ -891,9 +891,17 @@ def test_real_child_observes_delivered_key_bytes_per_encodable_family() -> None:
             result = adapter.dispatch(KeyInput(ManualTime(0), chord))
             assert type(result) is EpochCompleted, (chord, result)
             observations.append(result.observation)
+            # Line-terminated on the raw chunks and line-anchored on the
+            # frame: the child's echo must be exactly the registry bytes,
+            # so a longer observed sequence sharing this prefix cannot
+            # satisfy either assertion.
             expected = "TV_KEY:" + encoded.encode("ascii").hex()
-            assert expected in "".join(_chunks(result.observation)), chord
-            assert expected in _frame_text(result.observation), chord
+            assert expected + "\r" in "".join(_chunks(result.observation)), chord
+            assert re.search(
+                rf"^{re.escape(expected)} *$",
+                _frame_text(result.observation),
+                re.MULTILINE,
+            ), chord
 
         final = adapter.dispatch(KeyInput(ManualTime(0), ("Control", "q")))
         assert type(final) is TerminalResult, final
