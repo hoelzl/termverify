@@ -121,3 +121,12 @@ signal-generating bytes as bytes has to disable processed input first.
 Four legacy byte collisions are disclosed (`Control+m` ≡ `Enter`,
 `Control+i` ≡ `Tab`, and their `Alt`-prefixed forms); the transcript retains
 the distinct semantic chords regardless of the shared bytes.
+
+Windows-matrix evidence (`tests/test_conpty_integration.py`) shows a real
+raw-mode child observing the registry bytes byte-identically for one
+representative chord per encodable family class — including the signal byte
+0x03 arriving as input once processed input is disabled — and the
+unencodable path staying fail-closed on the real adapter. A cooperative
+raw-mode subject clears `ENABLE_PROCESSED_INPUT`, `ENABLE_LINE_INPUT`, and
+`ENABLE_ECHO_INPUT` and sets `ENABLE_VIRTUAL_TERMINAL_INPUT` on its console
+input handle, as the fixture there demonstrates.

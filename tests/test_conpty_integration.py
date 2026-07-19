@@ -31,13 +31,21 @@ OS-level observations reuse the process-handle helpers from the binding
 evidence module; asserted evidence is adapter results, raw chunks, frames,
 and OS exit codes — never helper-thread or wall-clock state.
 
-The cooperation-tier section at the end of this module is slice 3 of the
-accepted cooperation-tier design
+The cooperation-tier section of this module is slice 3 of the accepted
+cooperation-tier design
 (`docs/agent/design/cooperation-tier-constraint-ports.md`): the first fully
 successful verified terminal run — cooperation ports with a host-owned
 sandbox, delivered-tier receipts, a subject echoing every delivered
 variable and its working directory into frames, replay identity, and the
 forced-stop/deadline paths re-exercised under those ports.
+
+The key-encoding section at the end is slice 2 of the accepted
+key-to-terminal byte mapping design
+(`docs/agent/design/key-to-terminal-byte-mapping.md`): a raw-mode fixture
+subject observes the exact `termverify.key-encoding/v1` bytes for one
+representative chord per encodable family class and echoes them into
+frames, with replay identity, and the unencodable path stays fail-closed on
+the real adapter.
 """
 
 from __future__ import annotations
@@ -69,11 +77,13 @@ from termverify._conpty import (
     ConptyChild,
     ConptyEndOfStreamError,
 )
+from termverify._key_encoding_v1 import encode_key_chord
 from termverify.adapter import (
     ClockConfiguration,
     EpochCompleted,
     ExitStatus,
     FilesystemConfiguration,
+    KeyInput,
     ManualTime,
     NetworkConfiguration,
     Observation,
@@ -740,3 +750,197 @@ def test_unresolvable_sandbox_fails_unsupported_before_any_child(
     assert type(result) is StartUnsupported, result
     assert result.constraint == "filesystem"
     assert result.code == "constraint-unsupported"
+
+
+# --- Key-encoding slice 2: real-child delivered key byte evidence ---
+
+# Cooperating fixture subject for the key-encoding evidence
+# (`docs/agent/design/key-to-terminal-byte-mapping.md`, slice 2). It switches
+# its console input to cooperative raw mode — processed input, line input,
+# and echo cleared; virtual-terminal input set — exactly the subject-side
+# obligation the signal-byte disclosure documents, so signal-generating
+# bytes such as 0x03 (`Control+c`) arrive as observable input instead of
+# CTRL_C_EVENT. It then reads one delivered key sequence per epoch and
+# echoes the exact observed bytes as hex into the terminal, followed by the
+# readiness marker. Sequences are parsed self-delimitingly (single byte,
+# `ESC [ ... final`, `ESC O x`, or `ESC` + one byte) with blocking
+# byte-at-a-time reads: no wall-clock waits and no reliance on one read
+# returning a whole sequence. The bare `Escape` chord is deliberately not a
+# representative — a lone ESC is not self-delimiting for a blocking byte
+# reader — while the ESC byte itself is still observed as the prefix of
+# every escape sequence below. `Control+q` (0x11) is the in-band quit
+# command: the fixture echoes TV_EXIT and exits without a marker so the run
+# ends in native end-of-stream with the observed exit record.
+_KEY_EVIDENCE_CHILD_TEMPLATE: Final = """\
+import ctypes
+import os
+import sys
+
+MARKER = {marker!r}
+
+kernel32 = ctypes.windll.kernel32
+handle = kernel32.GetStdHandle(-10)
+mode = ctypes.c_uint32()
+got_mode = kernel32.GetConsoleMode(handle, ctypes.byref(mode))
+set_mode = kernel32.SetConsoleMode(handle, (mode.value & ~0x7) | 0x200)
+sys.stdout.write(
+    "TV_PID:" + str(os.getpid())
+    + " TV_RAWMODE:" + str(got_mode) + ":" + str(set_mode)
+    + "\\r\\n" + MARKER
+)
+sys.stdout.flush()
+
+fd = sys.stdin.fileno()
+
+
+def read_byte():
+    data = os.read(fd, 1)
+    if not data:
+        sys.exit(1)
+    return data
+
+
+def read_chord():
+    first = read_byte()
+    if first != b"\\x1b":
+        return first
+    second = read_byte()
+    if second == b"[":
+        sequence = first + second
+        while True:
+            byte = read_byte()
+            sequence += byte
+            if 0x40 <= byte[0] <= 0x7E:
+                return sequence
+    if second == b"O":
+        return first + second + read_byte()
+    return first + second
+
+
+while True:
+    chord = read_chord()
+    if chord == b"\\x11":
+        sys.stdout.write("TV_EXIT\\r\\n")
+        sys.stdout.flush()
+        sys.exit(0)
+    sys.stdout.write("TV_KEY:" + chord.hex() + "\\r\\n" + MARKER)
+    sys.stdout.flush()
+"""
+
+#: One chord per encodable family class of `termverify.key-encoding/v1`,
+#: covering the unmodified and modified form of every scheme-table row:
+#: C0 bases (unmodified, the `Shift+Tab` special, an `Alt` prefix form),
+#: CSI-final (unmodified and modified), tilde (unmodified and modified),
+#: F1-F4 (SS3 unmodified and CSI modified), Control/Alt/Control+Alt
+#: letters — including the disclosed signal byte `Control+c` — and the
+#: Alt-only digit and Space forms. `Control+q` additionally exercises a
+#: second Control-letter chord as the quit command.
+_KEY_EVIDENCE_CHORDS: Final = (
+    ("Enter",),
+    ("Shift", "Tab"),
+    ("Alt", "Enter"),
+    ("ArrowUp",),
+    ("Control", "ArrowRight"),
+    ("Delete",),
+    ("Alt", "PageDown"),
+    ("F1",),
+    ("Control", "F4"),
+    ("Control", "a"),
+    ("Control", "c"),
+    ("Alt", "x"),
+    ("Control", "Alt", "a"),
+    ("Alt", "7"),
+    ("Alt", "Space"),
+)
+
+
+def _key_evidence_argv() -> list[str]:
+    return _argv(_KEY_EVIDENCE_CHILD_TEMPLATE.format(marker=READINESS_MARKER_DEFAULT))
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY integration evidence")
+def test_real_child_observes_delivered_key_bytes_per_encodable_family() -> None:
+    """The design's slice-2 claim: delivered key bytes observed end to end.
+
+    For one representative chord from each encodable family class, the real
+    adapter encodes the chord through `termverify.key-encoding/v1`, writes
+    the registry bytes into the real ConPTY input pipe, and the raw-mode
+    fixture child reads exactly those bytes and echoes them into the frame
+    — byte-identical delivery observed by the subject, not inferred from
+    the write. The signal byte 0x03 (`Control+c`) is observed as input
+    because the fixture disabled processed input, which is the cooperative
+    raw-mode obligation the signal-byte disclosure documents. The run ends
+    in native end-of-stream via the in-band quit chord, and the retained
+    raw chunks replay to the recorded frames.
+    """
+    adapter = _adapter(_key_evidence_argv())
+    observations: list[Observation] = []
+
+    with _reaped(adapter):
+        started = adapter.start("run-key-evidence", _configuration())
+        assert type(started) is Started, started
+        observations.append(started.observation)
+        # The mode switch itself is asserted evidence: both console-mode
+        # calls must have succeeded, or the child is not in raw mode and
+        # nothing below would mean what it claims.
+        assert "TV_RAWMODE:1:1" in _frame_text(started.observation)
+
+        for chord in _KEY_EVIDENCE_CHORDS:
+            encoded = encode_key_chord(chord)
+            assert encoded is not None, chord
+            result = adapter.dispatch(KeyInput(ManualTime(0), chord))
+            assert type(result) is EpochCompleted, (chord, result)
+            observations.append(result.observation)
+            expected = "TV_KEY:" + encoded.encode("ascii").hex()
+            assert expected in "".join(_chunks(result.observation)), chord
+            assert expected in _frame_text(result.observation), chord
+
+        final = adapter.dispatch(KeyInput(ManualTime(0), ("Control", "q")))
+        assert type(final) is TerminalResult, final
+        assert final.outcome == RunFinished(ExitStatus("code", 0))
+        assert final.observation is not None
+        observations.append(final.observation)
+        assert "TV_EXIT" in _frame_text(final.observation)
+        process = final.observation.process
+        assert process is not None
+        assert process.state == "exited"
+
+    _assert_replay_reproduces(
+        observations, rows=_INITIAL_ROWS, columns=_INITIAL_COLUMNS
+    )
+    with pytest.raises(RuntimeError):
+        adapter.dispatch(KeyInput(ManualTime(0), ("Enter",)))
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY integration evidence")
+def test_unencodable_chord_fails_closed_on_the_real_adapter() -> None:
+    """An unencodable chord aborts the real run before any child write.
+
+    The structured runtime failure carries the documented details, no
+    quiescent observation is claimed, and the OS confirms the real child
+    was torn down by the failure path — fail closed on the real adapter,
+    exactly as on the fake path.
+    """
+    adapter = _adapter(_key_evidence_argv())
+    started = adapter.start("run-key-unencodable", _configuration())
+    assert type(started) is Started, started
+    handle = _open_process_handle(_observed_pid(started.observation))
+    try:
+        result = adapter.dispatch(KeyInput(ManualTime(0), ("Control", "Enter")))
+        os_exit_code = _wait_for_os_exit_code(handle, _OS_WAIT_TIMEOUT_MS)
+    finally:
+        _terminate_process(handle)
+        _close_process_handle(handle)
+
+    assert type(result) is TerminalResult, result
+    assert result.observation is None
+    outcome = result.outcome
+    assert type(outcome) is RunFailed
+    assert outcome.failure.code == "adapter-runtime-failed"
+    assert outcome.failure.details == {
+        "unsupported": "key-encoding",
+        "keys": ("Control", "Enter"),
+    }
+    assert os_exit_code == FORCED_TERMINATION_EXIT_CODE
+    with pytest.raises(RuntimeError):
+        adapter.dispatch(TextInput(ManualTime(0), "late\r\n"))

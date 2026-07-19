@@ -71,6 +71,13 @@ with the pre-1.0 policy below.
   no key-support negotiation, no claim of subject decoding; processed-input
   signal bytes (for example `Control+c` → 0x03) are disclosed as
   subject-side interpretation.
+- Real-child Windows-matrix evidence for the key-encoding registry: a
+  cooperative raw-mode fixture subject (processed input, line input, and
+  echo disabled; virtual-terminal input enabled) observes the exact
+  registry bytes for one representative chord per encodable family class —
+  including the signal byte 0x03 arriving as input under raw mode — echoes
+  them into frames with replay identity, and the unencodable path stays
+  fail-closed on the real adapter with OS-observed teardown.
 
 ### Changed
 
