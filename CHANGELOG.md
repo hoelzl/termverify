@@ -120,6 +120,20 @@ with the pre-1.0 policy below.
   whose input sequence ends with the run still open is a structured
   error. No scheduling, retry, timeout, multi-subject, or differential
   semantics.
+- Curated top-level adapter-author surface: every name in
+  `termverify.adapter.__all__` and `termverify.direct.__all__` (the
+  `Adapter`/`ConstraintPorts`/`DirectApplication` contract, `DirectAdapter`,
+  and the immutable configuration/input/result/receipt/observation values)
+  is now re-exported from `termverify` itself, identical to its module-path
+  definition; both import styles are interchangeable and pinned by an
+  import-surface test. Re-export only — no semantic change to the contract
+  or the transcript protocol. Import-path commitment under the pre-1.0
+  policy above: these top-level names and their module paths move only with
+  a documented **Changed**/**Removed** entry. `termverify.conpty`,
+  `termverify.cooperation`, and the verification core
+  (`termverify.recorder`, `termverify.comparator`, `termverify.replay`)
+  deliberately stay module-path-only. Documented for external adapter
+  authors in `docs/developer-guide/adapter-authors.md`.
 
 ### Changed
 
