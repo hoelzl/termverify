@@ -90,6 +90,19 @@ with the pre-1.0 policy below.
   retry, timeout, or comparison capability is added. GlyphWright's spike
   transcript is imported unmodified as an external conformance fixture
   with provenance (`tests/fixtures/external/glyphwright-direct-spike/`).
+- Phase 2 verification core, slice 2 (`termverify.comparator`): an exact
+  transcript comparator — both inputs must pass the strict codec (an
+  invalid side is a structured `TranscriptInputError`, never a comparison
+  result), records compare by canonical semantic equality of envelope and
+  payload over the full sequence with exactly one disclosed identity
+  exclusion (envelope `run_id`), and the structured verdict lists every
+  divergent record with its exact differing members in deterministic
+  order. `render_report` renders a verdict as deterministic plain text
+  (summary, first divergence position, bounded member-level diff); it is
+  a rendering of the verdict only, never a second comparison
+  implementation, and no test asserts stored report bytes as behavioral
+  truth. No normalizers, tolerances, or per-scenario configuration exist;
+  extending the exclusion set requires an owner-accepted amendment.
 
 ### Changed
 
