@@ -1,7 +1,7 @@
 ---
 type: Architecture
 title: TermVerify architecture
-description: A layered adapter and runner design for semantic and PTY-backed terminal verification.
+description: A layered adapter and runner design for semantic and production-terminal verification.
 tags: [architecture, adapters, pty, terminal]
 ---
 
@@ -23,6 +23,12 @@ Application under test
   └── reports and failure artifacts
 ```
 
+The runner, comparison/replay, oracle-policy, and reporting rows describe the
+planned Phase 2 layer. At the current pre-release boundary, TermVerify ships the
+adapter/runtime contracts, direct and Windows terminal adapters, transcript
+codec/validation, and safe redacted persistence, but not that generic
+verification-core layer.
+
 # Boundary
 
 Applications expose a small adapter surface: start a deterministic run, dispatch an input event, advance an explicit clock, observe structured state/UI evidence, optionally save/restore state, and stop.
@@ -40,19 +46,26 @@ lifecycle semantics. `termverify.direct.DirectAdapter` composes explicit
 constraint and application ports without consulting ambient time, terminal, or
 process state.
 
-The direct adapter is the default for fast unit and property tests. The
-production adapter verifies the real terminal path: input decoding, focus,
-prompt handling, rendering, resize, and process lifecycle. Browser bridging is
-deferred until a terminal vertical slice proves that a shared abstraction is
-necessary.
+The direct adapter is the default for fast unit and property tests. The Windows
+production path is `termverify.conpty.ConptyAdapter`, layered over the reviewed
+ConPTY binding and fail-closed `termverify.vt.VtScreenNormalizer`. It verifies
+real terminal input, rendering, resize, EOF/exit evidence, forced teardown, and
+process-tree handling through explicit readiness-marker epochs. A successful
+Windows integration run has exercised the real binding, cooperation-tier
+constraint delivery, text input, normalized/replayable frames, resize, and
+observed exit. `termverify.key-encoding/v1` dispatch is implemented; real-child
+Windows-matrix evidence proves exact byte delivery to a cooperative raw-mode
+subject for one representative of every encodable family class, replay identity,
+native exit through an in-band key, and fail-closed unencodable input with
+OS-observed teardown. This is delivery evidence, not key-support negotiation,
+input-mode tracking, or a claim that an arbitrary subject decodes every chord.
 
-An isolated [Windows ConPTY lifecycle spike](../../spikes/conpty-lifecycle/README.md)
-has validated real child creation, independently serviced input/output, resize,
-and binding-level process termination with observable exit on one Windows 11
-host. Direct pseudoconsole close and native output-pipe draining remain
-unproven. This partial feasibility evidence is not a production adapter,
-dependency decision, enforcement receipt, or claim of process, filesystem,
-network, clock, or OS containment.
+The production adapter does not claim OS filesystem/network containment. Its
+terminal dimensions receipt is OS-level; the other constraints require explicit
+subject-cooperation ports whose `delivered` receipts disclose delivery rather
+than subject compliance. Non-empty terminal capabilities remain unsupported.
+There is no POSIX PTY adapter yet. Browser bridging remains deferred until the
+direct and terminal vertical slices prove that a shared abstraction is needed.
 
 # Design constraints
 
