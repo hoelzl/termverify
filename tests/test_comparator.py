@@ -227,7 +227,12 @@ def _mutated(transcript: bytes, sequence: int, **changes: object) -> bytes:
 
 
 def _full_transcript() -> bytes:
-    """One valid transcript touching every body record kind v1 admits."""
+    """One valid transcript touching every input kind the recorder emits.
+
+    The two v1 input kinds the slice-1 recorder cannot emit (mouse and
+    clipboard) get their divergence coverage through directly serialized
+    transcripts; see ``_replaced``.
+    """
     recorder = TranscriptRecorder(RUN_ID, _configuration(), SUBJECT)
     recorder.record_start(Started(_constraints(), _observation()))
     recorder.record_epoch(
@@ -574,6 +579,73 @@ def test_divergent_report_locates_the_first_divergence() -> None:
     assert "payload.text" in report
     assert '"hello"' in report
     assert '"world"' in report
+
+
+def _replaced(
+    transcript: bytes, sequence: int, kind: str, payload: dict[str, JsonValue]
+) -> bytes:
+    """Reserialize *transcript* with one record's kind and payload swapped.
+
+    Used for the two v1 input kinds the slice-1 recorder cannot emit
+    (`input.mouse`, `input.clipboard_set`): the comparator's contract is
+    transcript bytes, so valid transcripts carrying them are built through
+    the strict serializer directly.
+    """
+    records = [dict(item) for item in parse_transcript(transcript)]
+    record = dict(records[sequence])
+    record["kind"] = kind
+    record["payload"] = payload
+    records[sequence] = record
+    return serialize_transcript(records)
+
+
+def test_a_mouse_input_divergence_is_detected() -> None:
+    left = _replaced(
+        _FULL,
+        9,
+        "input.mouse",
+        {"at_ms": 0, "action": "press", "column": 1, "row": 1, "button": "left"},
+    )
+    right = _replaced(
+        _FULL,
+        9,
+        "input.mouse",
+        {"at_ms": 0, "action": "press", "column": 1, "row": 1, "button": "right"},
+    )
+
+    verdict = compare_transcripts(left, right)
+
+    assert verdict.equivalent is False
+    divergence = verdict.divergences[0]
+    assert divergence.left_kind == divergence.right_kind == "input.mouse"
+    assert [d.path for d in divergence.differences] == ["payload.button"]
+
+
+def test_a_clipboard_input_divergence_is_detected() -> None:
+    left = _replaced(_FULL, 9, "input.clipboard_set", {"at_ms": 0, "text": "alpha"})
+    right = _replaced(_FULL, 9, "input.clipboard_set", {"at_ms": 0, "text": "beta"})
+
+    verdict = compare_transcripts(left, right)
+
+    assert verdict.equivalent is False
+    divergence = verdict.divergences[0]
+    assert divergence.left_kind == divergence.right_kind == "input.clipboard_set"
+    assert [d.path for d in divergence.differences] == ["payload.text"]
+
+
+def test_both_sides_invalid_reports_the_left_side_first() -> None:
+    with pytest.raises(TranscriptInputError) as caught:
+        compare_transcripts(b"", b"")
+    assert caught.value.side == "left"
+
+
+def test_truncation_discloses_the_exact_hidden_byte_count() -> None:
+    long_text = "é" * 200
+    report = render_report(
+        compare_transcripts(_FULL, _mutated(_FULL, 9, payload={"text": long_text}))
+    )
+
+    assert "(+283 bytes)" in report
 
 
 def test_report_bounds_long_member_values() -> None:

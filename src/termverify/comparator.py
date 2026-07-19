@@ -62,7 +62,11 @@ class MemberDifference:
     """One differing member, located by its dotted path from the record root.
 
     ``left`` and ``right`` are the canonical RFC 8785 JSON encodings of the
-    differing values; ``None`` means the member is absent on that side.
+    differing values; ``None`` means the member is absent on that side. The
+    path is a rendering aid: a member name that itself contains ``.`` or
+    ``[`` (for example a delivered-tier environment-variable name) is not
+    escaped, so such a path can read like deeper nesting — the comparison
+    itself is unaffected.
     """
 
     path: str
@@ -232,7 +236,8 @@ def _bounded(rendered: str | None) -> str:
     if len(encoded) <= _REPORT_VALUE_LIMIT:
         return rendered
     prefix = encoded[:_REPORT_VALUE_LIMIT].decode("utf-8", errors="ignore")
-    return f"{prefix}... (+{len(encoded) - _REPORT_VALUE_LIMIT} bytes)"
+    hidden = len(encoded) - len(prefix.encode("utf-8"))
+    return f"{prefix}... (+{hidden} bytes)"
 
 
 def render_report(verdict: ComparisonVerdict) -> str:
