@@ -1071,42 +1071,74 @@ def _validate_replay_subject(subject: dict[str, JsonValue]) -> None:
         "normalizer",
         "state_schema",
     }
-    if not required <= subject.keys() or any(
-        key not in required | {"platform"} and not key.startswith("x-")
-        for key in subject
-    ):
-        raise TranscriptValidationError("run.started subject members are incomplete")
+    allowed = required | {"platform"}
+    missing = sorted(required - subject.keys())
+    if missing:
+        raise TranscriptValidationError(
+            f"run.started subject members are incomplete: missing {', '.join(missing)}"
+        )
+    unknown = sorted(
+        key for key in subject if key not in allowed and not key.startswith("x-")
+    )
+    if unknown:
+        raise TranscriptValidationError(
+            "run.started subject members are invalid: "
+            f"unknown member {', '.join(unknown)}"
+        )
     application = subject["application"]
-    if not isinstance(application, dict) or not _has_exact_selector_members(
-        application, frozenset({"id", "version", "build"})
-    ):
-        raise TranscriptValidationError("run.started subject application is invalid")
+    if not isinstance(application, dict):
+        raise TranscriptValidationError(
+            "run.started subject application is invalid: expected an object"
+        )
+    _validate_subject_selector(
+        "application", application, frozenset({"id", "version", "build"})
+    )
     for name in ("fixture", "adapter", "normalizer", "state_schema"):
         selector = subject[name]
-        if not isinstance(selector, dict) or not _has_exact_selector_members(
-            selector, frozenset({"id", "version"})
-        ):
-            raise TranscriptValidationError(f"run.started subject {name} is invalid")
+        if not isinstance(selector, dict):
+            raise TranscriptValidationError(
+                f"run.started subject {name} is invalid: expected an object"
+            )
+        _validate_subject_selector(name, selector, frozenset({"id", "version"}))
     if "platform" in subject:
         platform = subject["platform"]
-        if not isinstance(platform, dict) or not _has_exact_selector_members(
-            platform, frozenset({"os", "architecture"})
-        ):
-            raise TranscriptValidationError("run.started subject platform is invalid")
-
-
-def _has_exact_selector_members(
-    value: dict[str, JsonValue], required: frozenset[str]
-) -> bool:
-    return (
-        required <= value.keys()
-        and all(
-            isinstance(value[key], str)
-            and _IDENTIFIER_PATTERN.fullmatch(cast(str, value[key])) is not None
-            for key in required
+        if not isinstance(platform, dict):
+            raise TranscriptValidationError(
+                "run.started subject platform is invalid: expected an object"
+            )
+        _validate_subject_selector(
+            "platform", platform, frozenset({"os", "architecture"})
         )
-        and not any(key not in required and not key.startswith("x-") for key in value)
+
+
+def _validate_subject_selector(
+    name: str, selector: dict[str, JsonValue], required: frozenset[str]
+) -> None:
+    missing = sorted(required - selector.keys())
+    if missing:
+        raise TranscriptValidationError(
+            f"run.started subject {name} is invalid: "
+            f"missing member {', '.join(missing)}"
+        )
+    unknown = sorted(
+        key for key in selector if key not in required and not key.startswith("x-")
     )
+    if unknown:
+        raise TranscriptValidationError(
+            f"run.started subject {name} is invalid: "
+            f"unknown member {', '.join(unknown)}"
+        )
+    for key in sorted(required):
+        value = selector[key]
+        if not isinstance(value, str):
+            raise TranscriptValidationError(
+                f"run.started subject {name} is invalid: member {key} must be a string"
+            )
+        if _IDENTIFIER_PATTERN.fullmatch(value) is None:
+            raise TranscriptValidationError(
+                f"run.started subject {name} is invalid: "
+                f"member {key} must match {_IDENTIFIER_PATTERN.pattern!r}"
+            )
 
 
 def _has_unknown_generic_members(

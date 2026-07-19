@@ -9,6 +9,7 @@ import pytest
 
 from termverify.transcript import (
     JsonValue,
+    Record,
     TranscriptValidationError,
     parse_transcript,
     serialize_transcript,
@@ -364,6 +365,108 @@ def test_serialize_transcript_rejects_unknown_replay_subject_member() -> None:
 
     with pytest.raises(TranscriptValidationError, match="subject members"):
         serialize_transcript(transcript)
+
+
+def _valid_subject() -> dict[str, JsonValue]:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[0]["payload"]
+    assert isinstance(payload, dict)
+    subject = payload["subject"]
+    assert isinstance(subject, dict)
+    return deepcopy(subject)
+
+
+def test_replay_subject_error_names_missing_required_member() -> None:
+    subject = _valid_subject()
+    subject.pop("state_schema")
+
+    with pytest.raises(
+        TranscriptValidationError,
+        match=r"run\.started subject members are incomplete: missing state_schema",
+    ):
+        serialize_transcript(_transcript_with_subject(subject))
+
+
+def test_replay_subject_error_names_unknown_member() -> None:
+    subject = _valid_subject()
+    subject["hostname"] = "developer-machine"
+
+    with pytest.raises(
+        TranscriptValidationError,
+        match=r"run\.started subject members are invalid: unknown member hostname",
+    ):
+        serialize_transcript(_transcript_with_subject(subject))
+
+
+def test_replay_subject_error_details_selector_missing_member() -> None:
+    subject = _valid_subject()
+    fixture = subject["fixture"]
+    assert isinstance(fixture, dict)
+    fixture.pop("version")
+
+    with pytest.raises(
+        TranscriptValidationError,
+        match=r"run\.started subject fixture is invalid: missing member version",
+    ):
+        serialize_transcript(_transcript_with_subject(subject))
+
+
+def test_replay_subject_error_details_selector_unknown_member() -> None:
+    subject = _valid_subject()
+    adapter = subject["adapter"]
+    assert isinstance(adapter, dict)
+    adapter["label"] = "extra"
+
+    with pytest.raises(
+        TranscriptValidationError,
+        match=r"run\.started subject adapter is invalid: unknown member label",
+    ):
+        serialize_transcript(_transcript_with_subject(subject))
+
+
+def test_replay_subject_error_details_selector_bad_value() -> None:
+    subject = _valid_subject()
+    application = subject["application"]
+    assert isinstance(application, dict)
+    application["id"] = "Developer App"
+
+    with pytest.raises(
+        TranscriptValidationError,
+        match=(r"run\.started subject application is invalid: member id must match"),
+    ):
+        serialize_transcript(_transcript_with_subject(subject))
+
+
+def test_replay_subject_error_details_application_missing_build() -> None:
+    subject = _valid_subject()
+    application = subject["application"]
+    assert isinstance(application, dict)
+    application.pop("build")
+
+    with pytest.raises(
+        TranscriptValidationError,
+        match=r"run\.started subject application is invalid: missing member build",
+    ):
+        serialize_transcript(_transcript_with_subject(subject))
+
+
+def test_replay_subject_error_details_platform_missing_member() -> None:
+    subject = _valid_subject()
+    subject["platform"] = {"os": "windows"}
+
+    with pytest.raises(
+        TranscriptValidationError,
+        match=r"run\.started subject platform is invalid: missing member architecture",
+    ):
+        serialize_transcript(_transcript_with_subject(subject))
+
+
+def _transcript_with_subject(subject: dict[str, JsonValue]) -> list[Record]:
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[0]["payload"]
+    assert isinstance(payload, dict)
+    payload["subject"] = subject
+    return transcript
 
 
 def test_serialize_transcript_requires_application_build_identity() -> None:
