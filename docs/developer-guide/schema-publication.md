@@ -13,12 +13,18 @@ required validation gate may depend on the site being reachable.
 Every push to `main` runs the `Pages` workflow
 (`.github/workflows/pages.yml`):
 
-1. **Build** — `scripts/build_site.py` assembles the static site from the
-   checkout: each committed resource under `src/termverify/schemas/` is
-   copied byte-for-byte to `/schemas/<protocol>/<version>.schema.json`, plus
-   a generated landing page at `/`. The build fails closed on any file that
-   does not match the publishable layout and refuses a non-empty output
-   directory.
+1. **Build** — `scripts/build_site.py --docs` assembles the static site
+   from the checkout: each committed resource under `src/termverify/schemas/`
+   is copied byte-for-byte to `/schemas/<protocol>/<version>.schema.json`,
+   and the curated documentation renders at the root with MkDocs + Material
+   (`mkdocs.yml`, locked `docs` dependency group): `README.md` becomes the
+   landing page, plus the `docs/knowledge/` and `docs/developer-guide/`
+   trees; `docs/agent/` is never staged. During staging, relative links
+   that point at unpublished repository files are rewritten to GitHub URLs,
+   and the MkDocs build runs `--strict`, so a broken link fails the deploy.
+   The build fails closed on any file that does not match the publishable
+   schema layout, on docs output under the reserved `/schemas/` prefix, and
+   on a non-empty output directory.
 2. **Deploy** — the artifact is deployed with the GitHub Actions Pages flow
    (`actions/upload-pages-artifact` + `actions/deploy-pages`). There is no
    `gh-pages` branch; the site is always a pure function of one `main`
@@ -30,8 +36,11 @@ Every push to `main` runs the `Pages` workflow
    library correctness and CI are unaffected by design.
 
 The site build never joins the required build/test path. `pytest` covers the
-build and comparison logic (`tests/test_site_publication.py`) without any
-network access.
+staging, link-rewriting, guard, and comparison logic
+(`tests/test_site_publication.py`) without any network access; the tests
+that exercise a real MkDocs build skip themselves when the `docs` dependency
+group is not installed, so the required gate never depends on the docs
+build tooling.
 
 ## DNS and domain state (configured 2026-07-19)
 
