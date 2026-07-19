@@ -15,9 +15,9 @@ with the pre-1.0 policy below.
 - **Before 1.0.0** every `0.x` release may contain breaking changes to the
   Python API. Breaking changes are listed under a **Changed** or **Removed**
   heading with a migration note; they are never silent.
-- **Pre-alpha status.** No published release exists yet and no stable/public
-  support claim is made. The first supported external artifact requires the
-  release checklist in `docs/developer-guide/release.md`.
+- **Pre-1.0 status.** 0.1.0 is published on PyPI (2026-07-19); no stable/public
+  support claim is made. Releases follow the checklist in
+  `docs/developer-guide/release.md`.
 - Golden masters, baselines, and fixtures never update automatically as part
   of a release; human-reviewed diffs remain mandatory.
 

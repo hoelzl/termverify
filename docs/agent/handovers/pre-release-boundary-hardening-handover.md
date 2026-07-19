@@ -20,6 +20,12 @@
   [Phase 1 readiness hardening handover](archive/phase-1-readiness-hardening-handover.md)
   (superseded and archived in the same transition)
 - **Successor:** none
+- **Status note (2026-07-19):** the first supported external artifact exists —
+  termverify 0.1.0 was published to PyPI via the CI-gated Release workflow
+  (PRs #160/#161) after the owner confirmed this handover's completion gate
+  satisfied. The "authorizes no release / cannot publish" paragraphs below
+  describe the state *before* that transition; the distribution-surface
+  criteria it exercised remain in force for subsequent releases.
 - **Activation:** authorized by the independent integrated review of exact merged
   `main` at `806372efa3897b7c2d88c2f58b0c8a9abe9cb401`, tree
   `bbf85b7b4ccae7a97bbc81016f70b25fe2be997e`, and effective when the separately
