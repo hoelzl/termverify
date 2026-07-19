@@ -256,7 +256,9 @@ contract and receipts; PR #51 added deterministic direct execution. The archived
 Phase 1 handover completed deterministic transcript resource governance and its
 amended behavior-based fixture gate. Installed-schema and release controls remain
 transferred to the active pre-release successor; Phase 2 remains separately
-gated.
+gated (its boundary decision,
+[`phase-2-verification-core-boundary.md`](phase-2-verification-core-boundary.md),
+was accepted 2026-07-19, and each of its slices stays gated there).
 
 ## Deferred decisions
 
