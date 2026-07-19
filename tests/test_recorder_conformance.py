@@ -159,7 +159,14 @@ def _input_from_record(record: dict[str, Any]) -> DispatchInput | ClockAdvance |
     return Stop(at_ms)
 
 
-def test_recorder_reproduces_the_glyphwright_spike_transcript() -> None:
+def reproduce_spike_transcript() -> tuple[list[dict[str, Any]], bytes]:
+    """Rebuild the spike's adapter result sequence and record it.
+
+    Returns the parsed spike records and the recorder's reproduction as
+    validated transcript bytes. Shared with the comparator fixture tests,
+    which need a codec-accepted form of the GlyphWright transcript (the
+    committed spike predates the mandatory enforcement-tier member).
+    """
     spike_records = [
         cast(dict[str, Any], json.loads(line))
         for line in FIXTURE.read_bytes()[:-1].split(b"\n")
@@ -217,8 +224,13 @@ def test_recorder_reproduces_the_glyphwright_spike_transcript() -> None:
                 input_event,
                 EpochCompleted(observation, diagnostics=tuple(diagnostics)),
             )
+    return spike_records, recorder.transcript()
 
-    reproduced = parse_transcript(recorder.transcript())
+
+def test_recorder_reproduces_the_glyphwright_spike_transcript() -> None:
+    spike_records, transcript = reproduce_spike_transcript()
+
+    reproduced = parse_transcript(transcript)
 
     assert len(reproduced) == len(spike_records)
     for spike_record, record in zip(spike_records, reproduced, strict=True):

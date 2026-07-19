@@ -28,10 +28,12 @@ Phase 2 verification-core layer, active under the accepted
 `phase-2-verification-core-boundary.md` decision. At the current pre-release
 boundary, TermVerify ships the adapter/runtime contracts, direct and Windows
 terminal adapters, transcript codec/validation, safe redacted persistence,
-and — from Phase 2 slice 1 — the `termverify.recorder` transcript recorder
-with its minimal scripted-run orchestrator. Transcript comparison, replay,
-oracle policies, and reports remain unimplemented until their authorized
-slices land.
+and — from Phase 2 slices 1 and 2 — the `termverify.recorder` transcript
+recorder with its minimal scripted-run orchestrator and the
+`termverify.comparator` exact comparator with its deterministic plain-text
+report (equivalence excludes only the envelope `run_id`; the exclusion set
+is closed). Transcript replay and oracle policies remain unimplemented
+until their authorized slices land.
 
 # Boundary
 

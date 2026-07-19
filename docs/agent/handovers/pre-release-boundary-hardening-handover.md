@@ -73,9 +73,30 @@ module line-and-branch coverage, byte-identical repeat runs over the real
 `DirectAdapter` with a cooperative fixture application, and GlyphWright's
 spike transcript imported unmodified as an external conformance fixture
 with provenance and license — reproduced exactly except the disclosed
-mandatory enforcement-tier member the spike predates. Slice 2 (exact
-comparator + deterministic report) is now authorized to begin; comparison,
-replay, and report capabilities remain absent until their slices land.
+mandatory enforcement-tier member the spike predates.
+
+The owner accepted Phase 2 slice 2 on 2026-07-19 (issue #151, PR #152,
+adversarial review REJECT then ACCEPT after one fix round — one must-fix,
+the missing mouse/clipboard divergence evidence; one should-fix, an exact
+truncation byte count; two nits — all addressed and re-verified by the
+reviewer): `termverify.comparator` provides `compare_transcripts`, which
+validates both inputs with the strict codec (an invalid side is a
+structured `TranscriptInputError`, never a comparison result) and compares
+records by canonical semantic equality of envelope and payload over the
+full sequence with exactly one disclosed identity exclusion, the envelope
+`run_id` — the exclusion set is closed, and extending it requires an
+owner-accepted amendment — and `render_report`, a deterministic plain-text
+rendering of the structured verdict with a bounded member-level diff,
+never a second comparison implementation and never a golden master.
+Evidence: reflexivity, symmetry, and run-id-insensitivity properties;
+targeted divergence tests for all fourteen v1 record kinds plus
+envelope-only, type, list-length, and record-count differences (every
+mutated copy passes back through the strict codec); fixture tests over the
+recorder's accepted reproduction of the GlyphWright transcript against
+mutated copies; report determinism and bounding tests that never assert
+stored report bytes; 100% module line-and-branch coverage. Slice 3
+(caller-bound transcript replay) is now authorized to begin; replay
+remains absent until its slice lands.
 
 The predecessor completed deterministic, fail-closed transcript byte, line,
 record-count, nesting, and structured-value limits with parser/serializer
