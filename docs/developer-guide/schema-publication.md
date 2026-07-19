@@ -36,8 +36,11 @@ Every push to `main` runs the `Pages` workflow
    library correctness and CI are unaffected by design.
 
 The site build never joins the required build/test path. `pytest` covers the
-build and comparison logic (`tests/test_site_publication.py`) without any
-network access.
+staging, link-rewriting, guard, and comparison logic
+(`tests/test_site_publication.py`) without any network access; the tests
+that exercise a real MkDocs build skip themselves when the `docs` dependency
+group is not installed, so the required gate never depends on the docs
+build tooling.
 
 ## DNS and domain state (configured 2026-07-19)
 

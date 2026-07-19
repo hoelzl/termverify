@@ -34,7 +34,7 @@ CURATED_DOC_TREES = ("knowledge", "developer-guide")
 REPOSITORY_BLOB_BASE = "https://github.com/hoelzl/termverify/blob/main"
 
 _MARKDOWN_LINK = re.compile(r"(\]\()([^)\s]+)(\))")
-_EXTERNAL_TARGET = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|#)")
+_EXTERNAL_TARGET = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|#)", re.IGNORECASE)
 
 _PROTOCOL_DIRECTORY = re.compile(r"^[a-z0-9._-]+$")
 _SCHEMA_FILE = re.compile(r"^v[1-9][0-9]*\.schema\.json$")

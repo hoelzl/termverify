@@ -7,6 +7,7 @@ required gate depends on the published site being reachable.
 
 from __future__ import annotations
 
+import importlib.util
 import runpy
 import shutil
 from collections.abc import Callable
@@ -14,6 +15,8 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+
+MKDOCS_AVAILABLE = importlib.util.find_spec("mkdocs") is not None
 
 _BUILDER = runpy.run_path(
     str(Path("scripts/build_site.py")),
@@ -293,6 +296,11 @@ class TestReservedPrefixGuard:
             ensure_reserved_prefix_free(tmp_path)
 
 
+@pytest.mark.skipif(
+    not MKDOCS_AVAILABLE,
+    reason="docs dependency group not installed; the required gate must not"
+    " depend on the docs build tooling",
+)
 class TestBuildSiteWithDocs:
     def test_combined_site_renders_docs_and_mirrors_schemas(
         self, tmp_path: Path

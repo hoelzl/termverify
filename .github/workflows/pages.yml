@@ -1,6 +1,7 @@
 name: Pages
 
-# Publishes the canonical schema mirror and landing page to termverify.dev.
+# Publishes the canonical schema mirror and the curated documentation site
+# to termverify.dev.
 # The published site is a pure function of one main commit; the verify job
 # fails the workflow on any byte difference between the live schema and the
 # committed resource. This workflow is not part of the required validation
@@ -29,8 +30,8 @@ jobs:
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           python-version: "3.12"
-      - run: uv --no-config sync --locked --all-groups
-      - run: uv --no-config run python scripts/build_site.py --docs _site
+      - run: uv --no-config sync --locked --only-group docs
+      - run: uv --no-config run --no-sync python scripts/build_site.py --docs _site
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: _site
