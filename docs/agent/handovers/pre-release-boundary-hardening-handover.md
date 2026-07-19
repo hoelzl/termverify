@@ -94,9 +94,48 @@ envelope-only, type, list-length, and record-count differences (every
 mutated copy passes back through the strict codec); fixture tests over the
 recorder's accepted reproduction of the GlyphWright transcript against
 mutated copies; report determinism and bounding tests that never assert
-stored report bytes; 100% module line-and-branch coverage. Slice 3
-(caller-bound transcript replay) is now authorized to begin; replay
-remains absent until its slice lands.
+stored report bytes; 100% module line-and-branch coverage.
+
+The owner accepted Phase 2 slice 3 on 2026-07-19 (issue #153, PR #154,
+adversarial review ACCEPT WITH NITS then final ACCEPT after all four nits
+were addressed and re-verified), completing the three slices the Phase 2
+boundary decision authorizes: `termverify.replay` provides
+`replay_transcript`, which validates the source with the strict codec,
+reconstructs the source's exact configuration and input sequence,
+re-executes them against a caller-supplied adapter in transcript order
+under the single-flight discipline, records the new run with the slice-1
+recorder, and returns the new transcript plus the slice-2 comparison.
+Replay binding is disclosed, not enforced: the caller-supplied subject
+selector is recorded and selector agreement reported, never a
+precondition. A source whose lifecycle ended in a failed or unsupported
+start replays nothing and reports that structurally; undispatchable v1
+input kinds (`input.mouse`, `input.clipboard_set`) fail closed before any
+adapter call; early terminations disclose dispatched-versus-source input
+counts; a replay whose input sequence ends with the run still open is a
+structured `replay-not-terminated` error rather than a fabricated stop.
+Evidence: fake-adapter tests plus a property for faithful re-dispatch of
+every dispatchable input kind, honest handling of early-terminating,
+start-refusing, and non-terminating replays, exact configuration
+reconstruction including a hand-crafted allow-list source, and
+`DirectAdapter` integration — a slice-1-recorded run replays
+byte-identically and a perturbed subject yields the expected structured
+divergence; 100% module line-and-branch coverage.
+
+Owner note for the reassessment (recorded from the slice-3 adversarial
+review): a source that ended by natural termination, replayed against a
+subject that stays open at the last input, raises the structured
+`replay-not-terminated` error and discards the partial recording instead
+of returning a divergence verdict. This is design-consistent (fabricating
+a stop is forbidden) and disclosed, but it loses behavioral-divergence
+evidence for that shape; changing it requires an owner-accepted
+amendment.
+
+With slice 3 accepted, the design's authorized scope is complete, and its
+named reassessment point is reached: the deferred asks (JSONL subprocess
+control transport — issue #114 ask 2 — and differential multi-target
+orchestration) are due for owner reassessment against the external
+subjects' then-current examples. No further implementation is authorized
+by the Phase 2 boundary decision.
 
 The predecessor completed deterministic, fail-closed transcript byte, line,
 record-count, nesting, and structured-value limits with parser/serializer
