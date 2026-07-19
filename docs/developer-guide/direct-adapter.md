@@ -65,3 +65,16 @@ contract; any other tier, or a `delivery` record (which belongs exclusively
 to the `delivered` tier), is a contract breach the adapter rejects as a
 structured `StartFailed`. An unsupported constraint or enforcement failure
 stops negotiation immediately; the subject is not initialized.
+
+## Zero-reach subjects
+
+`constructive` also covers a subject that does not reach a constrained
+resource at all: "only through the injected port" is vacuously true when
+there is no reach. Stating `constructive` for a zero-reach constraint is
+truthful and never over-claims — the run is more constrained than the
+receipt asserts, never less — so the closed `termverify.enforcement-tier/v1`
+vocabulary has no separate no-reach tier. An application that can prove
+zero reach (for example by a guarded import or a static capability audit)
+may record the stronger claim in a `diagnostic` record or an `x-` member on
+the receipt; both are non-oracle evidence and change nothing about
+negotiation.
