@@ -24,10 +24,14 @@ Application under test
 ```
 
 The runner, comparison/replay, oracle-policy, and reporting rows describe the
-planned Phase 2 layer. At the current pre-release boundary, TermVerify ships the
-adapter/runtime contracts, direct and Windows terminal adapters, transcript
-codec/validation, and safe redacted persistence, but not that generic
-verification-core layer.
+Phase 2 verification-core layer, active under the accepted
+`phase-2-verification-core-boundary.md` decision. At the current pre-release
+boundary, TermVerify ships the adapter/runtime contracts, direct and Windows
+terminal adapters, transcript codec/validation, safe redacted persistence,
+and — from Phase 2 slice 1 — the `termverify.recorder` transcript recorder
+with its minimal scripted-run orchestrator. Transcript comparison, replay,
+oracle policies, and reports remain unimplemented until their authorized
+slices land.
 
 # Boundary
 
