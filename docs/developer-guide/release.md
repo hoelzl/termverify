@@ -27,8 +27,12 @@ owner-reviewed completion state recorded in the active handover under
    `[[package]]` entry in `uv.lock`, and creates a `Bump version X.Y.Z →
    A.B.C` commit (`[tool.bumpversion]` in `pyproject.toml`; `tag = false` —
    no local tag is ever created).
-2. Move the `Unreleased` changelog entries under a `## [A.B.C]` heading in
-   the same pull request, and open the PR for human review.
+2. In the same branch, fold the pending changelog fragments into a dated
+   release section: `uv --no-config run python scripts/collect_changelog.py
+   A.B.C` (preview with `--dry-run`). This deletes the collected
+   `changelog.d/` fragments; day-to-day PRs never touch `CHANGELOG.md`'s
+   `[Unreleased]` section — they add fragments (`changelog.d/README.md`).
+   Open the release PR for human review.
 3. Merge the reviewed release pull request into `main`. The `Release`
    workflow detects the `Bump version` commit in the push and runs the gated
    pipeline: it waits for the `CI` workflow to be green on that commit,
@@ -60,6 +64,6 @@ owner-reviewed completion state recorded in the active handover under
 
 ## After publishing
 
-1. Confirm the changelog heading, tag, and PyPI version agree, and start a
-   fresh `Unreleased` section.
+1. Confirm the changelog heading, tag, and PyPI version agree. The collector
+   already left a fresh `Unreleased` section in place for the next cycle.
 2. Record follow-up work as issues rather than editing the published notes.
