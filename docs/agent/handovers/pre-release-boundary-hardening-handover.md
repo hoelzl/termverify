@@ -52,10 +52,10 @@ transfer-intact.
 
 | Workstream | Transferred criterion | Current boundary |
 | --- | --- | --- |
-| Deterministic vocabulary and configuration semantics | Named-timezone enforcement evidence and any post-freeze registry evolution beyond the protocol-bound v1 registry | `TimezoneReceipt` continues to reject named zones other than `UTC`; no ambient `zoneinfo` membership or enforcement is inferred. |
-| Deterministic vocabulary and configuration semantics | Closed, versioned semantic key-name registry, including modifier/chord spelling and adapter mapping | Implemented as protocol-owned `termverify.key/v1`, immutable `KeyInput`, and direct dispatch that forwards it unchanged. Terminal-byte/toolkit mapping and key-support negotiation remain separate unsupported work. |
-| Deterministic vocabulary and configuration semantics | Closed, versioned terminal-capability registry with observable semantics and enforcement evidence | Non-empty terminal-capability receipts remain rejected; requested/effective equality is not enforcement proof. |
-| Concurrent event correlation | Explicit correlation and ordering for concurrent inputs or unsolicited/asynchronous events | V1 remains single-flight; idle unsolicited body records remain invalid; no wall-clock quiet period is evidence of causality or quiescence. |
+| Deterministic vocabulary and configuration semantics | Named-timezone enforcement evidence and any post-freeze registry evolution beyond the protocol-bound v1 registry | `TimezoneReceipt` continues to reject named zones other than `UTC`; no ambient `zoneinfo` membership or enforcement is inferred. Owner decision 2026-07-19: deferred until demonstrated need; the criterion stays transferred intact, and reopening needs only a new owner decision. |
+| Deterministic vocabulary and configuration semantics | Closed, versioned semantic key-name registry, including modifier/chord spelling and adapter mapping | Implemented as protocol-owned `termverify.key/v1`, immutable `KeyInput`, and direct dispatch that forwards it unchanged. Owner decision 2026-07-19: the key-to-terminal byte mapping workstream proceeds under the accepted [`key-to-terminal-byte-mapping.md`](../design/key-to-terminal-byte-mapping.md) design — a closed, digest-bound `termverify.key-encoding/v1` registry with fail-closed unencodable chords and delivery-only claims; until its slice 1 merges, the ConPTY adapter still rejects every `KeyInput`. Key-support negotiation remains separate unsupported work. |
+| Deterministic vocabulary and configuration semantics | Closed, versioned terminal-capability registry with observable semantics and enforcement evidence | Non-empty terminal-capability receipts remain rejected; requested/effective equality is not enforcement proof. Owner decision 2026-07-19: deferred until a real subject demonstrates a capability need; the criterion stays transferred intact. |
+| Concurrent event correlation | Explicit correlation and ordering for concurrent inputs or unsolicited/asynchronous events | V1 remains single-flight; idle unsolicited body records remain invalid; no wall-clock quiet period is evidence of causality or quiescence. Owner decision 2026-07-19: deferred until a demonstrated application requires concurrent or unsolicited work, per this workstream's own gate; the criterion stays transferred intact. |
 | Production containment | Filesystem root mapping and lifecycle, traversal, symlink/reparse-point handling, child-process inheritance/containment, cleanup, and failure semantics | Owner decision 2026-07-18 (cooperation-tier design): OS containment is retired to an explicit non-goal — traversal, symlink/reparse, and child-process containment leave this boundary with it. Replacement scope is delivery-tier sandbox-root mapping with truthful `delivered` receipts; root mapping, existence validation, and host-owned lifecycle remain in scope there. Reopening containment requires a new owner-accepted design. |
 | Production containment | Network allow-list DNS, address normalization, redirects, proxies, loopback, subprocess inheritance, and failure semantics | Owner decision 2026-07-18 (cooperation-tier design): OS-level network enforcement is retired to the same explicit non-goal. Replacement scope is deny-mode delivery with truthful `delivered` receipts; allow-list requests remain rejected fail-closed, and allow-list semantics (DNS, redirects, proxies, loopback) remain undefined and out of scope. |
 | Distribution and release governance | Installed schema access API and exact wheel/sdist resource contract | Implemented: the canonical schema is a packaged resource with public byte/object accessors, and isolated wheel and sdist installation checks verify byte identity with the committed copy. Canonical `$id` publication is implemented; see the next row. |
@@ -150,12 +150,30 @@ non-exhaustive schema. Post-freeze membership or meaning changes require a new
 transcript and key-registry version. Terminal encoding and capability evidence
 remain outside this slice.
 
+On 2026-07-19 the owner resolved this gate's three open decisions in one
+session: named-timezone enforcement and the terminal-capability registry are
+deferred until demonstrated need (both criteria stay transferred intact —
+deferral is not retirement and reopening needs only a new owner decision),
+and the key-to-terminal byte mapping workstream proceeds under the accepted
+[`key-to-terminal-byte-mapping.md`](../design/key-to-terminal-byte-mapping.md)
+design. That design defines the closed, digest-bound
+`termverify.key-encoding/v1` registry (fixed xterm-compatible normal-mode
+byte forms, committed data and arithmetic, never derived from terminfo,
+toolkit enums, or virtual-key codes), a fail-closed unencodable set with
+recorded rationale, delivery-only honesty (no claim of subject decoding, no
+input-mode tracking, no key-support negotiation), an unchanged transcript
+protocol, and two authorized slices: the registry plus ConPTY dispatch
+integration, then real-child Windows-matrix evidence. Accepting the design
+changes no behavior: until slice 1 merges, the ConPTY adapter still rejects
+every `KeyInput` as a structured runtime failure.
+
 ### 2. Concurrent event correlation
 
 Introduce explicit versioned correlation only when a demonstrated application
 requires concurrent or unsolicited work. Preserve transcript-position causality
 and single-flight v1 rather than weakening it retroactively. This workstream does
-not authorize replay/comparison.
+not authorize replay/comparison. Owner decision 2026-07-19: explicitly deferred
+until that demonstrated need exists; the criterion stays transferred intact.
 
 ### 3. Production containment
 
@@ -247,12 +265,15 @@ child exists.
 Reassessment at slice-3 completion (the design names this the natural
 point): the production-containment workstream's replacement scope is now
 fully implemented and evidenced; its two retired rows stay retired
-non-goals. Still transferred and unresolved, all blocked on owner
-decisions: canonical schema `$id` publication (owner decision since taken
-on 2026-07-19; see the gate 4 acceptance paragraph), named-timezone
+non-goals. Still transferred and unresolved at that reassessment, all blocked on
+owner decisions: canonical schema `$id` publication, named-timezone
 enforcement, the terminal-capability registry, concurrent event
-correlation, and key-to-terminal byte mapping. No further implementation
-slices are authorized by the cooperation-tier design.
+correlation, and key-to-terminal byte mapping. Every one of those
+decisions has since been taken on 2026-07-19: publication is implemented
+(gate 4), key-to-terminal byte mapping proceeds under its accepted design
+(gate 1), and the other three are deferred until demonstrated need
+(gates 1 and 2). No further implementation slices are authorized by the
+cooperation-tier design.
 
 ### 4. Distribution and release governance
 
