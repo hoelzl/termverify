@@ -643,6 +643,79 @@ def test_recorder_state_is_unchanged_after_a_rejected_contribution() -> None:
     ]
 
 
+def test_mistimed_epoch_observation_is_a_structured_error() -> None:
+    recorder = _started_recorder()
+    with pytest.raises(TranscriptRecorderError) as caught:
+        recorder.record_epoch(
+            TextInput(ManualTime(0), "x"), EpochCompleted(_observation(5))
+        )
+    assert caught.value.code == "evidence-time-mismatch"
+
+
+def test_mistimed_terminal_observation_is_a_structured_error() -> None:
+    recorder = _started_recorder()
+    with pytest.raises(TranscriptRecorderError) as caught:
+        recorder.record_epoch(Stop(ManualTime(0)), _terminal_result(5))
+    assert caught.value.code == "evidence-time-mismatch"
+
+
+def test_mistimed_terminal_diagnostic_is_a_structured_error() -> None:
+    recorder = _started_recorder()
+    with pytest.raises(TranscriptRecorderError) as caught:
+        recorder.record_epoch(
+            TextInput(ManualTime(0), "crash"),
+            TerminalResult(
+                None,
+                RunFailed(AdapterFailure("adapter-runtime-failed", "boom")),
+                diagnostics=(Diagnostic(ManualTime(999), "late", "m"),),
+            ),
+        )
+    assert caught.value.code == "evidence-time-mismatch"
+
+
+def test_mistimed_contribution_appends_no_record() -> None:
+    recorder = _started_recorder()
+    with pytest.raises(TranscriptRecorderError):
+        recorder.record_epoch(
+            TextInput(ManualTime(0), "x"), EpochCompleted(_observation(5))
+        )
+    recorder.record_epoch(Stop(ManualTime(0)), _terminal_result())
+    records = parse_transcript(recorder.transcript())
+    assert [record["kind"] for record in records][9:] == [
+        "input.stop",
+        "observation",
+        "run.finished",
+    ]
+
+
+def test_stop_drain_without_final_observation() -> None:
+    recorder = _started_recorder()
+    recorder.record_epoch(
+        Stop(ManualTime(0)), TerminalResult(None, RunFinished.code(0))
+    )
+    records = parse_transcript(recorder.transcript())
+    assert [record["kind"] for record in records][9:] == [
+        "input.stop",
+        "run.finished",
+    ]
+
+
+def test_unfreezable_subject_is_a_structured_error() -> None:
+    with pytest.raises(TranscriptRecorderError) as caught:
+        TranscriptRecorder(
+            RUN_ID,
+            _configuration(),
+            {**SUBJECT, "x-bad": float("nan")},
+        )
+    assert caught.value.code == "invalid-subject"
+
+
+def test_invalid_run_id_is_a_structured_error() -> None:
+    with pytest.raises(TranscriptRecorderError) as caught:
+        TranscriptRecorder("RUN-X", _configuration(), SUBJECT)
+    assert caught.value.code == "invalid-run-id"
+
+
 class _ScriptedAdapter:
     """A fake adapter that answers each call from a scripted result list."""
 
@@ -746,6 +819,45 @@ def test_run_scripted_returns_unsupported_start_without_dispatching() -> None:
     assert adapter.dispatched == []
     records = parse_transcript(scripted.transcript)
     assert records[-1]["kind"] == "run.unsupported"
+
+
+def test_run_scripted_returns_a_failed_start_without_dispatching() -> None:
+    failed = StartFailed(
+        RUN_ID,
+        _configuration(),
+        (),
+        AdapterFailure("adapter-start-failed", "boom"),
+    )
+    adapter = _ScriptedAdapter(failed)
+    scripted = run_scripted(
+        adapter,
+        RUN_ID,
+        _configuration(),
+        SUBJECT,
+        (TextInput(ManualTime(0), "never sent"),),
+    )
+
+    assert scripted.result is failed
+    assert adapter.dispatched == []
+    assert parse_transcript(scripted.transcript)[-1]["kind"] == "run.failed"
+
+
+def test_run_scripted_returns_a_terminated_start_without_dispatching() -> None:
+    terminated = StartTerminated(
+        _constraints(), TerminalResult(None, RunFinished.code(0))
+    )
+    adapter = _ScriptedAdapter(terminated)
+    scripted = run_scripted(
+        adapter,
+        RUN_ID,
+        _configuration(),
+        SUBJECT,
+        (TextInput(ManualTime(0), "never sent"),),
+    )
+
+    assert scripted.result is terminated
+    assert adapter.dispatched == []
+    assert parse_transcript(scripted.transcript)[-1]["kind"] == "run.finished"
 
 
 def test_run_scripted_without_termination_is_a_structured_error() -> None:

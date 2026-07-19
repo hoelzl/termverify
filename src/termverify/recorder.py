@@ -40,6 +40,7 @@ from termverify.adapter import (
     Stop,
     TerminalResult,
     TextInput,
+    _validate_run_id,
     freeze_json,
 )
 from termverify.transcript import (
@@ -188,10 +189,13 @@ class TranscriptRecorder:
     Contributions arrive as the immutable adapter result values in occurrence
     order: exactly one :meth:`record_start`, then, for a started run, one
     :meth:`record_epoch` per dispatched input until a terminal result. An
-    out-of-order contribution is an immediate
-    :class:`TranscriptRecorderError`. :meth:`transcript` returns the finished
-    run through the strict serializer — the codec remains the only
-    acceptance gate.
+    out-of-order or mistimed contribution is an immediate
+    :class:`TranscriptRecorderError`, and a rejected contribution appends
+    nothing. :meth:`transcript` returns the finished run through the strict
+    serializer — the codec remains the only acceptance gate, and a codec
+    rule the recorder does not mirror (for example the canonical-encoding
+    string rules) still surfaces there as a
+    :class:`~termverify.transcript.TranscriptValidationError`.
     """
 
     def __init__(
@@ -209,10 +213,14 @@ class TranscriptRecorder:
             raise TranscriptRecorderError(
                 "invalid-subject", "subject must be a JSON object"
             )
-        subject_payload = cast(dict[str, JsonValue], _thaw(freeze_json(subject)))
         try:
+            _validate_run_id(run_id)
+        except (TypeError, ValueError) as error:
+            raise TranscriptRecorderError("invalid-run-id", str(error)) from error
+        try:
+            subject_payload = cast(dict[str, JsonValue], _thaw(freeze_json(subject)))
             _validate_replay_subject(subject_payload)
-        except TranscriptValidationError as error:
+        except (TranscriptValidationError, TypeError, ValueError) as error:
             raise TranscriptRecorderError("invalid-subject", str(error)) from error
         self._run_id = run_id
         self._configuration = configuration
@@ -389,6 +397,21 @@ class TranscriptRecorder:
                 "stop-result-mismatch",
                 "a stop input requires a terminal result",
             )
+        epoch_time = int(input_event.at_ms)
+        if type(result) is EpochCompleted:
+            evidence_times = [int(result.observation.at_ms)]
+        else:
+            terminal = cast(TerminalResult, result)
+            evidence_times = [
+                int(diagnostic.at_ms) for diagnostic in terminal.diagnostics
+            ]
+            if terminal.observation is not None:
+                evidence_times.append(int(terminal.observation.at_ms))
+        if any(evidence_time != epoch_time for evidence_time in evidence_times):
+            raise TranscriptRecorderError(
+                "evidence-time-mismatch",
+                "epoch evidence does not use the input's manual time",
+            )
         if input_type is KeyInput:
             key = cast(KeyInput, input_event)
             self._append(
@@ -452,7 +475,11 @@ def run_scripted(
     outcome once the run ends by scripted stop or natural termination.
     Inputs remaining after a natural termination are never dispatched. A
     script that ends with the run still open is a structured error: the
-    orchestrator fabricates no stop on the caller's behalf.
+    orchestrator fabricates no stop on the caller's behalf. An exception
+    raised by the adapter itself (a caller contract breach such as
+    dispatching from a non-idle state) propagates unchanged and discards
+    the partial recording — structured outcomes, including runtime
+    failures, are returned as recorded results instead.
     """
     if type(inputs) is not tuple or any(
         type(item) not in (KeyInput, TextInput, Resize, ClockAdvance, Stop)

@@ -7,7 +7,8 @@
   (2026-07-18), retrieved unmodified on 2026-07-19.
 - **SHA-256:** `46daa2fcc25ead6310eabc3fad16a653d9bc99208fc5ccb04f5af1fc246449d3`
 - **License:** GlyphWright is Apache-2.0; this fixture is redistributed
-  under that license with this attribution.
+  under that license with this attribution and the accompanying
+  `LICENSE` copy in this directory.
 - **Classification:** public synthetic game-fixture content produced by
   GlyphWright's deterministic `reference-vale` fixture; it contains no
   personal, credential, or host-environment data.
@@ -24,7 +25,8 @@ sequence (`tests/test_recorder_conformance.py`).
 Disclosed delta: the spike predates the 2026-07-18 enforcement-tier
 protocol amendment that made `tier` mandatory on enforced
 `capability.result` payloads, so this fixture alone no longer passes the
-strict v1 codec. The conformance test asserts byte-level agreement on
+strict v1 codec. The conformance test asserts semantic member-level
+agreement — every envelope member and every parsed payload value — on
 everything except exactly that delta: the recorder's enforced capability
 payloads equal the spike's plus `"tier": "constructive"`. The fixture is
 deliberately kept unmodified; it is not a golden master and no test
