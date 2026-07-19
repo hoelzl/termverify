@@ -78,6 +78,18 @@ with the pre-1.0 policy below.
   including the signal byte 0x03 arriving as input under raw mode — echoes
   them into frames with replay identity, and the unencodable path stays
   fail-closed on the real adapter with OS-observed teardown.
+- Phase 2 verification core, slice 1 (`termverify.recorder`): a public
+  `TranscriptRecorder` that assembles the immutable adapter result values
+  into `termverify.transcript/v1` records in occurrence order, enforcing
+  the lifecycle shape at record time with structured
+  `TranscriptRecorderError` values, and a minimal `run_scripted`
+  orchestrator that drives one adapter through a scripted input sequence
+  and returns validated transcript bytes plus the terminal outcome. Output
+  passes only through the existing strict serializer; the codec remains
+  the sole acceptance gate, no protocol member changes, and no scheduling,
+  retry, timeout, or comparison capability is added. GlyphWright's spike
+  transcript is imported unmodified as an external conformance fixture
+  with provenance (`tests/fixtures/external/glyphwright-direct-spike/`).
 
 ### Changed
 

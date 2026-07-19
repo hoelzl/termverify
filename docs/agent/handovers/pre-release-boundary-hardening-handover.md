@@ -56,6 +56,27 @@ adds no dependency, makes no release claim, and leaves every transferred
 criterion, retirement, and deferral in this handover unchanged; behavioral
 baselines and golden-master governance remain outside its boundary.
 
+The owner accepted Phase 2 slice 1 on 2026-07-19 (issue #148, PR #150,
+adversarial review ACCEPT after one fix round — three should-fix findings
+and five nits, all addressed and re-verified by the reviewer):
+`termverify.recorder` provides the public `TranscriptRecorder`, which
+assembles the immutable adapter result values into
+`termverify.transcript/v1` records in occurrence order and fails closed
+with structured errors on out-of-order, mistimed, or foreign
+contributions, and the minimal `run_scripted` orchestrator, which drives
+one adapter through a scripted input sequence and returns validated
+transcript bytes plus the terminal outcome. Output passes only through
+the existing strict serializer — the codec remains the sole acceptance
+gate, and the protocol is unchanged. Evidence: unit and property tests
+over fake adapters for every lifecycle shape the protocol admits at 100%
+module line-and-branch coverage, byte-identical repeat runs over the real
+`DirectAdapter` with a cooperative fixture application, and GlyphWright's
+spike transcript imported unmodified as an external conformance fixture
+with provenance and license — reproduced exactly except the disclosed
+mandatory enforcement-tier member the spike predates. Slice 2 (exact
+comparator + deterministic report) is now authorized to begin; comparison,
+replay, and report capabilities remain absent until their slices land.
+
 The predecessor completed deterministic, fail-closed transcript byte, line,
 record-count, nesting, and structured-value limits with parser/serializer
 symmetry before supersession. This successor does not absorb, weaken, or reopen
