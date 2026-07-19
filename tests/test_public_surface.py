@@ -37,6 +37,21 @@ def test_every_direct_runtime_name_is_reexported_identically() -> None:
         assert getattr(termverify, name) is getattr(termverify.direct, name), name
 
 
+def test_dunder_all_is_exactly_the_curated_surface() -> None:
+    curated = (
+        set(termverify.adapter.__all__)
+        | set(termverify.direct.__all__)
+        | {
+            "TRANSCRIPT_SCHEMA_V1_ID",
+            "__version__",
+            "persist_transcript_evidence",
+            "transcript_schema_v1_bytes",
+            "transcript_schema_v1_json",
+        }
+    )
+    assert set(termverify.__all__) == curated
+
+
 def test_dunder_all_is_sorted_deduplicated_and_resolvable() -> None:
     assert list(termverify.__all__) == sorted(set(termverify.__all__))
     for name in termverify.__all__:

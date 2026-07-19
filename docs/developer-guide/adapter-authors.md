@@ -31,7 +31,7 @@ drift: every name in `termverify.adapter.__all__` and
 - **Run configuration values**: `RunConfiguration` and the per-constraint
   configurations (`ClockConfiguration`, `TerminalConfiguration`,
   `FilesystemConfiguration`, `NetworkConfiguration`, `NetworkEndpoint`),
-  plus `ManualTime` and `Region`.
+  plus `ManualTime`.
 - **Inputs**: `TextInput`, `KeyInput`, `Resize`, `ClockAdvance`, `Stop`, and
   the `DispatchInput` union.
 - **Results and receipts**: the start results (`Started`, `StartFailed`,
@@ -44,11 +44,12 @@ drift: every name in `termverify.adapter.__all__` and
   `ConstraintUnsupported`), and the enforcement-tier vocabulary
   (`EnforcementTier`, `ENFORCEMENT_TIERS`, `DeliveryRecord`).
 - **Observations and evidence values**: `Observation`, `UiObservation`,
-  `ProcessObservation`, `Frame`, `Cursor`, `Event`, `Diagnostic`.
+  `ProcessObservation`, `Frame`, `Cursor`, `Region`, `Event`, `Diagnostic`.
 - **Supporting types**: `ConstraintName`, `JsonInput`, `FrozenJsonValue`,
-  `freeze_json`, and the transcript-schema access API
-  (`TRANSCRIPT_SCHEMA_V1_ID`, `transcript_schema_v1_bytes`,
-  `transcript_schema_v1_json`, `persist_transcript_evidence`).
+  `freeze_json`, the package version string `__version__`, and the
+  transcript-schema access API (`TRANSCRIPT_SCHEMA_V1_ID`,
+  `transcript_schema_v1_bytes`, `transcript_schema_v1_json`,
+  `persist_transcript_evidence`).
 
 ## What the surface deliberately excludes
 
