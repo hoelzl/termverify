@@ -83,3 +83,41 @@ A verified subject emits the configured readiness marker after startup and
 after processing each input, detects resizes itself (a resize delivers no
 stdin bytes to a Windows console client), and reads its constraints from the
 delivered environment variables.
+
+## Key input encoding
+
+`dispatch` executes a semantic `KeyInput` chord through the closed
+`termverify.key-encoding/v1` registry (see the
+[protocol companion note](../knowledge/protocol.md)): an encodable chord's
+exact registry string is written to the child exactly once through the
+single-flight write — the same disclosed native console-input encoding path
+`TextInput` rides — and then runs the standard quiescent input epoch. An
+unencodable chord is a structured runtime failure before any byte reaches
+the child (`adapter-runtime-failed` with details
+`{"unsupported": "key-encoding", "keys": [...]}`); there is no fallback to
+text input, no partial write, and no silent degradation.
+
+The encoding is delivery, not interpretation:
+
+- The adapter claims only that the registry bytes were handed to the native
+  encoding path. Whether the subject reads, decodes, or reacts to them is
+  frame-observable evidence, exactly as for `input.text`.
+- Encodings are the fixed xterm-legacy **normal-mode** forms. The adapter
+  never tracks or negotiates DECCKM/application cursor-key mode,
+  win32-input-mode, or bracketed paste; a subject that switches input modes
+  still receives the fixed normal-mode bytes.
+- There is no key-support negotiation and no per-subject encodable set; the
+  encodable set is a global property of the registry version.
+
+**Signal-byte disclosure.** Some encodable chords produce bytes that a
+Windows console child with default *processed input* turns into control
+events instead of readable input — `["Control", "c"]` delivers 0x03, which
+such a child receives as `CTRL_C_EVENT`. The adapter delivers the registry
+bytes verbatim and never detects, suppresses, or compensates for
+processed-input semantics: cooperative raw-mode (unprocessed) input handling
+is the subject author's responsibility, and a fixture that must observe
+signal-generating bytes as bytes has to disable processed input first.
+
+Four legacy byte collisions are disclosed (`Control+m` ≡ `Enter`,
+`Control+i` ≡ `Tab`, and their `Alt`-prefixed forms); the transcript retains
+the distinct semantic chords regardless of the shared bytes.

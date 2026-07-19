@@ -58,6 +58,19 @@ with the pre-1.0 policy below.
   subject echoing every delivered variable and its working directory into
   frames, subject exit via native end-of-stream, replay identity over the
   retained raw output, and forced-stop/deadline paths re-exercised.
+- Closed `termverify.key-encoding/v1` registry: a digest-bound total mapping
+  from each of the 934 valid `termverify.key/v1` chords to exactly one
+  xterm-legacy normal-mode byte string or the explicit fail-closed verdict
+  unencodable, with four disclosed legacy byte collisions. The ConPTY
+  adapter's `dispatch` now executes encodable `KeyInput` chords by writing
+  the registry bytes exactly once through the single-flight child write and
+  running the standard quiescent epoch; an unencodable chord is a structured
+  runtime failure (`{"unsupported": "key-encoding", "keys": [...]}`) before
+  any child write, replacing the previous unconditional `KeyInput` rejection
+  (`{"unsupported": "key-input"}`). Delivery only: no input-mode tracking,
+  no key-support negotiation, no claim of subject decoding; processed-input
+  signal bytes (for example `Control+c` → 0x03) are disclosed as
+  subject-side interpretation.
 
 ### Changed
 

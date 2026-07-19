@@ -53,7 +53,7 @@ transfer-intact.
 | Workstream | Transferred criterion | Current boundary |
 | --- | --- | --- |
 | Deterministic vocabulary and configuration semantics | Named-timezone enforcement evidence and any post-freeze registry evolution beyond the protocol-bound v1 registry | `TimezoneReceipt` continues to reject named zones other than `UTC`; no ambient `zoneinfo` membership or enforcement is inferred. Owner decision 2026-07-19: deferred until demonstrated need; the criterion stays transferred intact, and reopening needs only a new owner decision. |
-| Deterministic vocabulary and configuration semantics | Closed, versioned semantic key-name registry, including modifier/chord spelling and adapter mapping | Implemented as protocol-owned `termverify.key/v1`, immutable `KeyInput`, and direct dispatch that forwards it unchanged. Owner decision 2026-07-19: the key-to-terminal byte mapping workstream proceeds under the accepted [`key-to-terminal-byte-mapping.md`](../design/key-to-terminal-byte-mapping.md) design — a closed, digest-bound `termverify.key-encoding/v1` registry with fail-closed unencodable chords and delivery-only claims; until its slice 1 merges, the ConPTY adapter still rejects every `KeyInput`. Key-support negotiation remains separate unsupported work. |
+| Deterministic vocabulary and configuration semantics | Closed, versioned semantic key-name registry, including modifier/chord spelling and adapter mapping | Implemented as protocol-owned `termverify.key/v1`, immutable `KeyInput`, and direct dispatch that forwards it unchanged. Owner decision 2026-07-19: the key-to-terminal byte mapping workstream proceeds under the accepted [`key-to-terminal-byte-mapping.md`](../design/key-to-terminal-byte-mapping.md) design — a closed, digest-bound `termverify.key-encoding/v1` registry with fail-closed unencodable chords and delivery-only claims. The owner accepted slice 1 (registry + ConPTY dispatch integration, issue #141, PR #142) on 2026-07-19: the adapter now executes encodable `KeyInput` chords through the registry and fails closed on unencodable ones before any child write; real-child Windows evidence remains slice 2. Key-support negotiation remains separate unsupported work. |
 | Deterministic vocabulary and configuration semantics | Closed, versioned terminal-capability registry with observable semantics and enforcement evidence | Non-empty terminal-capability receipts remain rejected; requested/effective equality is not enforcement proof. Owner decision 2026-07-19: deferred until a real subject demonstrates a capability need; the criterion stays transferred intact. |
 | Concurrent event correlation | Explicit correlation and ordering for concurrent inputs or unsolicited/asynchronous events | V1 remains single-flight; idle unsolicited body records remain invalid; no wall-clock quiet period is evidence of causality or quiescence. Owner decision 2026-07-19: deferred until a demonstrated application requires concurrent or unsolicited work, per this workstream's own gate; the criterion stays transferred intact. |
 | Production containment | Filesystem root mapping and lifecycle, traversal, symlink/reparse-point handling, child-process inheritance/containment, cleanup, and failure semantics | Owner decision 2026-07-18 (cooperation-tier design): OS containment is retired to an explicit non-goal — traversal, symlink/reparse, and child-process containment leave this boundary with it. Replacement scope is delivery-tier sandbox-root mapping with truthful `delivered` receipts; root mapping, existence validation, and host-owned lifecycle remain in scope there. Reopening containment requires a new owner-accepted design. |
@@ -163,9 +163,23 @@ toolkit enums, or virtual-key codes), a fail-closed unencodable set with
 recorded rationale, delivery-only honesty (no claim of subject decoding, no
 input-mode tracking, no key-support negotiation), an unchanged transcript
 protocol, and two authorized slices: the registry plus ConPTY dispatch
-integration, then real-child Windows-matrix evidence. Accepting the design
-changes no behavior: until slice 1 merges, the ConPTY adapter still rejects
-every `KeyInput` as a structured runtime failure.
+integration, then real-child Windows-matrix evidence.
+
+The owner accepted slice 1 on 2026-07-19 (issue #141, PR #142, adversarial
+review ACCEPT): `src/termverify/_key_encoding_v1.py` implements the
+registry as committed data plus committed arithmetic, its full 934-chord
+enumeration is digest-bound in `tests/test_key_encoding_v1.py` (SHA-256
+`5df2113c9479ef68035ef74994d4502344a204a5f0b034633278e336137fcf3d`, 450
+encodable chords, the four disclosed legacy byte collisions proven to be
+the only ones), and `ConptyAdapter.dispatch` executes encodable `KeyInput`
+chords by writing the registry bytes exactly once through the single-flight
+child write and running the standard quiescent epoch, while an unencodable
+chord is a structured runtime failure (`{"unsupported": "key-encoding",
+"keys": [...]}`) before any child write. The registry, digest, fail-closed
+rationale, and signal-byte disclosure are documented in `protocol.md` and
+the ConPTY developer guide. Slice 2 (real-child Windows-matrix evidence for
+representative encodable chords with a raw-input fixture) is the remaining
+authorized work of this workstream; no real-child claim is made before it.
 
 ### 2. Concurrent event correlation
 

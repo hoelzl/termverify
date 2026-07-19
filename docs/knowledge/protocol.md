@@ -408,6 +408,33 @@ reviewed registry order is digest-bound in executable tests using newline-joined
 UTF-8 names with a final LF; its SHA-256 is
 `4db9a08e9eea24e48abb34f2d27d7d5936cd76f3843fda954f956266e2204a82`.
 
+#### Companion registry: `termverify.key-encoding/v1`
+
+The terminal execution path has a companion registry,
+`termverify.key-encoding/v1` (`src/termverify/_key_encoding_v1.py`), that maps
+each of the 934 valid `termverify.key/v1` chords either to exactly one
+xterm-legacy normal-mode byte string or to the explicit fail-closed verdict
+**unencodable**. It is committed data plus committed arithmetic owned by
+TermVerify — never derived from terminfo, toolkit enums, OS virtual-key
+codes, or other ambient host state — and it is not a transcript value: an
+`input.key` record stays semantic, no record carries encoded bytes, and this
+registry can version independently of the transcript protocol. A chord is
+encodable exactly when the legacy encoding represents every chord component
+by definition; when the only candidate bytes would drop a modifier
+(`Control+Enter`), alias one modifier to another (`Meta` as `Alt` on
+letters), or pass a NUL hazard (`Control+Space`), the registry returns
+unencodable and the adapter fails rather than misrepresent the chord. Four
+byte collisions inherent to the legacy byte space are disclosed:
+`["Control", "m"]`/`["Enter"]` (CR), `["Control", "i"]`/`["Tab"]` (HT), and
+their two `Alt`-prefixed forms. The full enumeration — each chord joined
+with `+`, then ` => ` and the space-joined two-digit lowercase hex code
+points of its encoding or the word `unencodable`, newline-joined UTF-8 with
+a final LF — is digest-bound in executable tests; its SHA-256 is
+`5df2113c9479ef68035ef74994d4502344a204a5f0b034633278e336137fcf3d`. The
+pre-freeze inception policy above applies to this registry as well; details
+of the adapter behavior live in the
+[ConPTY developer guide](../developer-guide/conpty-adapter.md).
+
 For `input.mouse`, `button` and `delta` are forbidden for `move`; `delta` is
 forbidden for `press` and `release`; and `button` is forbidden for `scroll`.
 Clipboard values are sensitive evidence and their
