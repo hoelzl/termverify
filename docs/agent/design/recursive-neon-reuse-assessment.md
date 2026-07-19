@@ -16,8 +16,11 @@ The original assessment predated the immutable adapter runtime. At TermVerify
   exact registry bytes for one representative of every encodable family class,
   replay identity holds, and an unencodable chord fails closed on the real
   adapter with OS-observed teardown;
-- Phase 2 remains inactive: no generic scenario runner or transcript recorder,
-  comparator, subject replay, report, differential orchestration, or governed
+- Phase 2 was inactive at this reassessment (activated later on 2026-07-19 by
+  the accepted
+  [Phase 2 verification-core boundary decision](phase-2-verification-core-boundary.md),
+  issue #146): no generic scenario runner or transcript recorder, comparator,
+  subject replay, report, differential orchestration, or governed
   content-preserving behavior-baseline workflow exists;
 - the external adapter-author types are documented at their module paths but are
   not yet presented as a curated top-level compatibility surface or example.

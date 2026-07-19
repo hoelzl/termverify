@@ -4,7 +4,12 @@
 
 - **Status:** active — effective when the reviewed transition resolving issue
   #87 merges. The predecessor's deterministic transcript-resource and amended
-  completion gates passed independent integrated review. Phase 2 is not active.
+  completion gates passed independent integrated review. Phase 2 is active as
+  of the owner-accepted
+  [Phase 2 verification-core boundary decision](../design/phase-2-verification-core-boundary.md)
+  (2026-07-19, issue #146) — for exactly that design's scope and nothing else;
+  this handover's transferred criteria, retirements, and deferrals are
+  unchanged by that activation.
 - **Owner:** project maintainer
 - **Created:** 2026-07-17
 - **Updated:** 2026-07-19
@@ -36,6 +41,20 @@ transfer is scope governance, not evidence that any criterion is complete. It
 also does not activate Phase 2, transcript replay/comparison, sensitive evidence
 retention, behavioral baselines, artifact publication, or a production terminal
 adapter.
+
+Phase 2 activation (2026-07-19): the separately accepted
+[Phase 2 verification-core boundary decision](../design/phase-2-verification-core-boundary.md)
+(issue #146) — not this handover — activates Phase 2 for a narrow
+verification core that is a pure consumer of the frozen
+`termverify.transcript/v1` protocol: three sequential implementation
+slices (transcript recorder + minimal run orchestrator, exact comparator +
+deterministic report, caller-bound transcript replay), each gated through
+its own focused issue, sibling worktree, TDD evidence, full validation,
+and adversarial review, with each slice beginning only after its
+predecessor's acceptance. That decision changes no transcript semantics,
+adds no dependency, makes no release claim, and leaves every transferred
+criterion, retirement, and deferral in this handover unchanged; behavioral
+baselines and golden-master governance remain outside its boundary.
 
 The predecessor completed deterministic, fail-closed transcript byte, line,
 record-count, nesting, and structured-value limits with parser/serializer
@@ -655,7 +674,10 @@ POSIX adapter remain outside this slice and fail-closed.
   durability.
 - Do not activate behavioral baselines or approve golden masters automatically.
 - Do not activate Phase 2 from this handover. A separate accepted phase-boundary
-  decision remains mandatory.
+  decision remains mandatory — satisfied 2026-07-19 by the accepted
+  [Phase 2 verification-core boundary decision](../design/phase-2-verification-core-boundary.md)
+  (issue #146); Phase 2 authority flows from that decision alone, and any
+  scope beyond it still requires a new owner decision.
 
 ## Transition rules
 

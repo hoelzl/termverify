@@ -11,7 +11,9 @@ source of truth for volatile work state.
   — **active**; accepts the transferred vocabulary, correlation, containment,
   schema-distribution, terminal-production, and release-governance boundaries.
   Each remains unsupported until separately accepted and implemented. Phase 2
-  is inactive.
+  is active as of the accepted
+  [Phase 2 verification-core boundary decision](../design/phase-2-verification-core-boundary.md)
+  (2026-07-19, issue #146), for exactly that design's scope.
 
 ## Draft
 
@@ -22,7 +24,7 @@ None.
 - [Phase 1 readiness hardening handover](archive/phase-1-readiness-hardening-handover.md)
   — **superseded**; its amended completion boundary passed independent integrated
   review, and every transferred criterion moved intact to the active Pre-release
-  Boundary Hardening successor. Phase 2 remains inactive.
+  Boundary Hardening successor. That supersession did not activate Phase 2.
 - [Adversarial review remediation handover](archive/adversarial-review-remediation-handover.md)
   — **complete**; Slices 1–8 and every accepted source-review disposition were
   integrated, reconciled, and accepted by final independent review through PR
