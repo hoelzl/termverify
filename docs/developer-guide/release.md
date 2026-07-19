@@ -15,41 +15,51 @@ owner-reviewed completion state recorded in the active handover under
    change carries a migration note, and no unreleased behavior is described as
    released.
 3. Documentation matches behavior; executable checks win over prose, and any
-   stale page found during review is fixed before tagging.
-4. The version in `pyproject.toml` is bumped in a reviewed pull request that
-   also moves the `Unreleased` changelog entries under the new version heading.
-5. A human has reviewed the release pull request; agents must not approve or
-   tag a release on their own authority.
+   stale page found during review is fixed before the bump.
+4. A human has reviewed the release pull request; agents must not approve or
+   publish a release on their own authority.
 
 ## Cutting the release
 
-1. Merge the reviewed release pull request into `main`.
-2. Tag the merge commit `vX.Y.Z` (matching `pyproject.toml` exactly) and push
-   the tag.
-3. The `Release` workflow builds the wheel and sdist with uv, runs the
-   isolated installed-package contract checks against both artifacts,
-   generates GitHub build-provenance attestations for them, and attaches them
-   to a **draft** GitHub release.
-4. Replace the draft's placeholder notes with the changelog section for the
-   new version.
-5. Verify the draft: artifact names and sizes, attestation subjects
-   (`gh attestation verify <artifact> --repo hoelzl/termverify`), and release
-   notes matching the changelog.
-6. Publishing the draft release is a manual, human decision. There is no
-   package-index (PyPI) publishing pipeline; adding one is a separate reviewed
-   change with its own credentials and provenance decisions.
+1. On a release branch, run `uv --no-config run bump-my-version bump <part>`
+   (for example `patch` or `minor`). bump-my-version updates the single
+   version source of truth in `pyproject.toml` plus the project's own
+   `[[package]]` entry in `uv.lock`, and creates a `Bump version X.Y.Z →
+   A.B.C` commit (`[tool.bumpversion]` in `pyproject.toml`; `tag = false` —
+   no local tag is ever created).
+2. Move the `Unreleased` changelog entries under a `## [A.B.C]` heading in
+   the same pull request, and open the PR for human review.
+3. Merge the reviewed release pull request into `main`. The `Release`
+   workflow detects the `Bump version` commit in the push and runs the gated
+   pipeline: it waits for the `CI` workflow to be green on that commit,
+   creates the annotated `vA.B.C` tag *after* the gate (a red commit is never
+   tagged), builds the wheel and sdist with uv, runs the isolated
+   installed-package contract checks against both artifacts, generates
+   build-provenance attestations, publishes to PyPI via OIDC trusted
+   publishing (no stored credentials; the `pypi` GitHub environment), and
+   creates the GitHub release with the extracted changelog section and the
+   attested artifacts attached.
+4. As a fallback (for example to re-drive a failed publish after fixing
+   credentials), push the `vA.B.C` tag manually at the release commit; the
+   workflow verifies the tag matches the version in `pyproject.toml` and runs
+   the same pipeline. Every step is idempotent: an existing tag, PyPI
+   version, or GitHub release is left as-is.
 
 ## Provenance
 
-- Build provenance comes from the tag-triggered GitHub Actions workflow with
-  `actions/attest-build-provenance`; local builds are never released.
+- Build provenance comes from the tag-gated GitHub Actions workflow with
+  `actions/attest-build-provenance`; local builds are never released. Verify
+  with `gh attestation verify <artifact> --repo hoelzl/termverify`.
+- PyPI publishing uses OIDC trusted publishing (`uv publish
+  --trusted-publishing always`) scoped to the `pypi` environment of this
+  repository; there are no long-lived PyPI tokens anywhere.
 - All workflow actions are pinned to commit SHAs; the workflow-security scan
-  covers the release workflow like any other.
-- The draft release's artifacts must be byte-identical to the attested
-  subjects; re-uploading modified artifacts invalidates the release.
+  (zizmor) covers the release workflow like any other.
+- The GitHub release's artifacts are exactly the attested subjects; the
+  pipeline never re-uploads modified artifacts.
 
 ## After publishing
 
-1. Confirm the changelog heading and tag agree, and start a fresh
-   `Unreleased` section.
+1. Confirm the changelog heading, tag, and PyPI version agree, and start a
+   fresh `Unreleased` section.
 2. Record follow-up work as issues rather than editing the published notes.
