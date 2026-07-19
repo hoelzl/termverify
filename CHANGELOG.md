@@ -23,6 +23,8 @@ with the pre-1.0 policy below.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-19
+
 ### Added
 
 - Deterministic transcript v1 codec, semantic lifecycle validator, and
@@ -38,8 +40,8 @@ with the pre-1.0 policy below.
   `transcript_schema_v1_json`) and isolated installed-artifact contract checks.
 - No-regression coverage ratchet with a strict committed floor.
 - Release governance: this changelog and policy, security-disclosure process,
-  release checklist, and tag-triggered build-provenance workflow producing
-  attested draft artifacts only.
+  release checklist, and a CI-gated release workflow publishing to PyPI via
+  OIDC trusted publishing with build-provenance attestation.
 - Closed `termverify.enforcement-tier/v1` vocabulary (`os`, `constructive`,
   `delivered`) with a per-negotiation-path authorization matrix validated
   fail-closed during receipt binding, and a `DeliveryRecord` value for
