@@ -8,6 +8,7 @@ required gate depends on the published site being reachable.
 from __future__ import annotations
 
 import runpy
+import shutil
 from collections.abc import Callable
 from pathlib import Path
 from typing import cast
@@ -21,7 +22,11 @@ _BUILDER = runpy.run_path(
 discover_schema_resources = cast(
     Callable[[Path], tuple[Path, ...]], _BUILDER["discover_schema_resources"]
 )
-build_site = cast(Callable[[Path, Path], tuple[str, ...]], _BUILDER["build_site"])
+build_site = cast(Callable[..., tuple[str, ...]], _BUILDER["build_site"])
+stage_docs = cast(Callable[[Path, Path], None], _BUILDER["stage_docs"])
+ensure_reserved_prefix_free = cast(
+    Callable[[Path], None], _BUILDER["ensure_reserved_prefix_free"]
+)
 
 _CHECKER = runpy.run_path(
     str(Path("scripts/check_published_schema.py")),
@@ -150,6 +155,171 @@ class TestBuildSite:
         output.write_bytes(b"a file, not a directory")
         with pytest.raises(ValueError, match="not a directory"):
             build_site(COMMITTED_SCHEMAS_ROOT, output)
+
+
+def _make_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    (repo / "docs" / "knowledge").mkdir(parents=True)
+    (repo / "docs" / "developer-guide").mkdir(parents=True)
+    (repo / "docs" / "agent" / "design").mkdir(parents=True)
+    (repo / "README.md").write_bytes(b"# Landing\n")
+    (repo / "docs" / "knowledge" / "index.md").write_bytes(b"# Knowledge\n")
+    (repo / "docs" / "knowledge" / "protocol.md").write_bytes(b"# Protocol\n")
+    (repo / "docs" / "developer-guide" / "guide.md").write_bytes(b"# Guide\n")
+    (repo / "docs" / "agent" / "design" / "secret.md").write_bytes(b"# Internal\n")
+    return repo
+
+
+class TestStageDocs:
+    def test_stages_readme_as_index_and_curated_trees_only(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _make_repo(tmp_path)
+        staging = tmp_path / "staging"
+        stage_docs(repo, staging)
+        files = sorted(
+            path.relative_to(staging).as_posix()
+            for path in staging.rglob("*")
+            if path.is_file()
+        )
+        assert files == [
+            "developer-guide/guide.md",
+            "index.md",
+            "knowledge/index.md",
+            "knowledge/protocol.md",
+        ]
+        assert (staging / "index.md").read_bytes() == (repo / "README.md").read_bytes()
+
+    def test_agent_tree_is_never_staged(self, tmp_path: Path) -> None:
+        repo = _make_repo(tmp_path)
+        staging = tmp_path / "staging"
+        stage_docs(repo, staging)
+        assert not (staging / "agent").exists()
+        staged = [path.relative_to(staging).as_posix() for path in staging.rglob("*")]
+        assert not any("agent" in path for path in staged)
+
+    def test_missing_source_tree_fails_closed(self, tmp_path: Path) -> None:
+        repo = _make_repo(tmp_path)
+        shutil.rmtree(repo / "docs" / "knowledge")
+        with pytest.raises(ValueError, match="knowledge"):
+            stage_docs(repo, tmp_path / "staging")
+
+    def test_refuses_nonempty_staging_directory(self, tmp_path: Path) -> None:
+        repo = _make_repo(tmp_path)
+        staging = tmp_path / "staging"
+        staging.mkdir()
+        (staging / "stale.md").write_bytes(b"stale")
+        with pytest.raises(ValueError, match="not empty"):
+            stage_docs(repo, staging)
+
+
+class TestStagedLinkRewriting:
+    def test_readme_links_into_curated_trees_are_remapped(self, tmp_path: Path) -> None:
+        repo = _make_repo(tmp_path)
+        (repo / "README.md").write_text(
+            "See [knowledge](docs/knowledge/index.md) and"
+            " [guide](docs/developer-guide/guide.md).\n",
+            encoding="utf-8",
+        )
+        staging = tmp_path / "staging"
+        stage_docs(repo, staging)
+        index = (staging / "index.md").read_text(encoding="utf-8")
+        assert "(knowledge/index.md)" in index
+        assert "(developer-guide/guide.md)" in index
+        assert "docs/" not in index
+
+    def test_links_to_unpublished_repo_files_become_github_urls(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _make_repo(tmp_path)
+        (repo / "README.md").write_text(
+            "Read [contributing](CONTRIBUTING.md) first.\n", encoding="utf-8"
+        )
+        (repo / "docs" / "knowledge" / "protocol.md").write_text(
+            "See the [design](../agent/design/secret.md#section) record.\n",
+            encoding="utf-8",
+        )
+        staging = tmp_path / "staging"
+        stage_docs(repo, staging)
+        index = (staging / "index.md").read_text(encoding="utf-8")
+        assert (
+            "(https://github.com/hoelzl/termverify/blob/main/CONTRIBUTING.md)" in index
+        )
+        protocol = (staging / "knowledge" / "protocol.md").read_text(encoding="utf-8")
+        assert (
+            "(https://github.com/hoelzl/termverify/blob/main/"
+            "docs/agent/design/secret.md#section)" in protocol
+        )
+
+    def test_intra_tree_absolute_and_anchor_links_are_untouched(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _make_repo(tmp_path)
+        (repo / "docs" / "knowledge" / "protocol.md").write_text(
+            "See [index](index.md), [site](https://example.org/x),"
+            " [anchor](#limits), and [mail](mailto:tc@xantira.com).\n",
+            encoding="utf-8",
+        )
+        staging = tmp_path / "staging"
+        stage_docs(repo, staging)
+        protocol = (staging / "knowledge" / "protocol.md").read_text(encoding="utf-8")
+        assert "(index.md)" in protocol
+        assert "(https://example.org/x)" in protocol
+        assert "(#limits)" in protocol
+        assert "(mailto:tc@xantira.com)" in protocol
+
+    def test_cross_tree_links_are_remapped_relative_to_staged_file(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _make_repo(tmp_path)
+        (repo / "docs" / "developer-guide" / "guide.md").write_text(
+            "See the [protocol](../knowledge/protocol.md).\n", encoding="utf-8"
+        )
+        staging = tmp_path / "staging"
+        stage_docs(repo, staging)
+        guide = (staging / "developer-guide" / "guide.md").read_text(encoding="utf-8")
+        assert "(../knowledge/protocol.md)" in guide
+
+
+class TestReservedPrefixGuard:
+    def test_docs_output_without_schemas_passes(self, tmp_path: Path) -> None:
+        (tmp_path / "index.html").write_bytes(b"<html></html>")
+        ensure_reserved_prefix_free(tmp_path)
+
+    def test_docs_output_with_schemas_fails_closed(self, tmp_path: Path) -> None:
+        (tmp_path / "schemas").mkdir()
+        (tmp_path / "schemas" / "index.html").write_bytes(b"<html></html>")
+        with pytest.raises(ValueError, match="reserved"):
+            ensure_reserved_prefix_free(tmp_path)
+
+
+class TestBuildSiteWithDocs:
+    def test_combined_site_renders_docs_and_mirrors_schemas(
+        self, tmp_path: Path
+    ) -> None:
+        output = tmp_path / "site"
+        published = build_site(COMMITTED_SCHEMAS_ROOT, output, include_docs=True)
+        assert published == ("schemas/termverify.transcript/v1.schema.json",)
+        landing = (output / "index.html").read_text(encoding="utf-8")
+        assert "TermVerify" in landing
+        assert (output / "knowledge" / "protocol" / "index.html").is_file()
+        assert (
+            output / "developer-guide" / "schema-publication" / "index.html"
+        ).is_file()
+        assert not (output / "agent").exists()
+        mirrored = output / "schemas" / TRANSCRIPT_V1_RELATIVE
+        committed = COMMITTED_SCHEMAS_ROOT / TRANSCRIPT_V1_RELATIVE
+        assert mirrored.read_bytes() == committed.read_bytes()
+
+    def test_okf_frontmatter_does_not_leak_into_rendered_pages(
+        self, tmp_path: Path
+    ) -> None:
+        output = tmp_path / "site"
+        build_site(COMMITTED_SCHEMAS_ROOT, output, include_docs=True)
+        rendered = (output / "knowledge" / "protocol" / "index.html").read_text(
+            encoding="utf-8"
+        )
+        assert "type: Protocol Design" not in rendered
 
 
 class TestVerifyPublishedBytes:

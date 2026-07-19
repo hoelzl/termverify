@@ -1,3 +1,6 @@
+# Generated docs-site staging tree (assembled by scripts/build_site.py)
+.site-docs/
+
 # Python-generated files
 __pycache__/
 *.py[oc]
