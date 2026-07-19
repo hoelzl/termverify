@@ -16,7 +16,7 @@ TermVerify is a Python library and reference tooling for verifying autonomous te
 | Dependencies and supported Python versions | `pyproject.toml` and `uv.lock` |
 | Test, lint, format, and type-check commands | `pyproject.toml`, `.pre-commit-config.yaml`, and CI workflow |
 | Public API | `src/termverify/` plus tests |
-| Protocol schemas and compatibility | `docs/knowledge/protocol.md`; committed schema files become authoritative in Phase 1 |
+| Protocol conformance and compatibility | Runtime validation in `src/termverify/transcript.py` is authoritative for protocol acceptance; the packaged Draft 2020-12 schema (`termverify.transcript_schema_v1_bytes()`) is a non-exhaustive structural aid — schema acceptance is not conformance. Policy and rationale: `docs/knowledge/protocol.md` |
 | Architecture decisions | `docs/knowledge/architecture.md` and ADRs under `docs/agent/design/` |
 | Current work state | GitHub issues/PRs and `git status`; do not encode volatile state in this file |
 
@@ -74,3 +74,7 @@ This file is portable by design. Do not rely on a vendor-specific instruction im
 - `AGENTS.md` and the documents it references are the only authoritative agent instructions. Harness entry points (for example the root `CLAUDE.md` for Claude Code) must stay thin pointers to this file and may add only harness-mechanics notes, never project knowledge.
 - Write durable knowledge — decisions, plans, handovers, workflow rules — to the repository locations in the Documentation Placement table. Never leave it only in a harness's private memory, state directory, or session context.
 - Harness state directories (`.hermes/`, `.claude/`) are local-only and gitignored, except deliberately shared harness configuration such as `.claude/settings.json`. The authoritative copy of any plan or decision they contain must live under `docs/agent/`.
+
+## GitHub Copilot Surfaces
+
+Root `AGENTS.md` is the canonical repository instruction source for GitHub Copilot. Per the current [GitHub support matrix](https://docs.github.com/en/copilot/reference/custom-instructions-support), `AGENTS.md` is consumed by Copilot cloud agent, GitHub.com Copilot code review, VS Code Copilot Chat, Xcode, JetBrains, and Copilot CLI — the surfaces TermVerify intends to support. GitHub.com Copilot Chat, VS Code Copilot code review, Visual Studio, and Eclipse read only `.github/copilot-instructions.md`; TermVerify deliberately does not ship that file (it would duplicate this document) and treats those surfaces as out of scope. Revisit only if a contributor demonstrates need on one of them.
