@@ -37,9 +37,20 @@ sdist. The public accessors `termverify.transcript_schema_v1_bytes()` and
 `termverify.transcript_schema_v1_json()` return the exact resource bytes and a
 fresh parsed object, and `termverify.TRANSCRIPT_SCHEMA_V1_ID` names the
 documented `$id`. Isolated installed-artifact checks verify byte identity
-between the installed resource and the committed schema. The `$id` remains an
-identifier only: no resolvable canonical publication exists yet, and installed
-access does not change the schema's non-exhaustive role or runtime authority.
+between the installed resource and the committed schema.
+
+The `$id` resolves: the canonical publication at
+`https://termverify.dev/schemas/termverify.transcript/v1.schema.json` is a
+byte-for-byte mirror of the committed resource, deployed from `main` by the
+`Pages` workflow and verified after every deployment by a fetch check that
+fails on any byte difference (see
+[`docs/developer-guide/schema-publication.md`](../developer-guide/schema-publication.md)).
+During the declared inception period the publication mirrors `main`, so
+published bytes follow the in-place v1 amendment rule below. The `$id`
+remains identifier-first: resolution is a distribution convenience,
+consumers must not fetch it at validation time, no library or required gate
+depends on the site being reachable, and neither publication nor installed
+access changes the schema's non-exhaustive role or runtime authority.
 
 Each UTF-8 JSON Lines file is one transcript for one verified run. A line ends
 with exactly one LF (`\n`); a final LF is required. Blank lines, comments, and
