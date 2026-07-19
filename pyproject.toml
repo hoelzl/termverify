@@ -31,6 +31,7 @@ Issues = "https://github.com/hoelzl/termverify/issues"
 
 [dependency-groups]
 dev = [
+    "bump-my-version>=1.2.4",
     "hypothesis>=6.156.2",
     "jsonschema>=4.23",
     "mypy>=1.0",
@@ -94,3 +95,34 @@ warn_unreachable = true
 # binding wrapper confines its untyped surface to termverify._conpty.
 module = "winpty.*"
 ignore_missing_imports = true
+
+[tool.bumpversion]
+current_version = "0.1.0"
+commit = true
+# No local tag: the Release workflow (.github/workflows/release.yml) creates the
+# authoritative vX.Y.Z tag on the server *after* the CI-green gate, so a red
+# commit is never tagged. bump-my-version only produces the `Bump version …`
+# commit that the workflow keys on. (tag_name documents the format the server
+# uses; it is inert while tag = false.)
+tag = false
+tag_name = "v{new_version}"
+commit_message = "Bump version {current_version} → {new_version}"
+
+[[tool.bumpversion.files]]
+# pyproject.toml is the single version source of truth: [project] version is
+# read directly by the Release workflow's resolve job, and `__version__` is
+# derived from the installed distribution metadata at runtime.
+filename = "pyproject.toml"
+search = 'version = "{current_version}"'
+replace = 'version = "{new_version}"'
+
+[[tool.bumpversion.files]]
+# uv.lock records the project's own version in its [[package]] block. If it is
+# not updated here, the next `uv sync --locked` fails or silently re-locks.
+# Scope the replacement to the project's own block via the unique two-line
+# name+version pair.
+filename = "uv.lock"
+search = """name = "termverify"
+version = "{current_version}\""""
+replace = """name = "termverify"
+version = "{new_version}\""""
