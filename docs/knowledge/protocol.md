@@ -501,10 +501,14 @@ require a new protocol version.
 That freeze includes `termverify.key/v1` membership, spelling, component roles,
 modifier ordering, and chord validity. A post-freeze change to any of them
 requires a new transcript protocol and key-registry version; ambient toolkit or
-host registry growth never changes v1. (Pre-freeze, the modified-only base set
-was widened once — see issue #155 and
+host registry growth never changes v1. (One owner-approved exception: the
+modified-only base set was widened once — see issue #155 and
 `docs/agent/design/key-v1-punctuation-bases.md` — to add the printable ASCII
-punctuation row; that amendment predates any supported external artifact.)
+punctuation row. That amendment was designed, implemented, and adversarially
+reviewed before the freeze but merged after it; the owner approved landing it
+as a one-time in-place amendment because it is purely additive and leaves the
+wire-protocol version unchanged. It sets no precedent — all later registry
+changes require a new version.)
 
 An inception transcript without `subject` is invalid and no tool may guess its
 identity from ambient or undocumented out-of-band context. A caller with the

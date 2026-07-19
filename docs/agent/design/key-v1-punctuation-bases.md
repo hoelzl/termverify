@@ -2,7 +2,16 @@
 
 - **Status:** accepted — decided 2026-07-19 by explicit owner direction. The
   owner selected the **full printable-ASCII punctuation row** over the curated
-  `/ _ < >` subset proposed in the issue.
+  `/ _ < >` subset proposed in the issue. **Post-freeze exception (owner
+  decision 2026-07-19):** this amendment was designed, implemented, and
+  adversarially reviewed before the 0.1.0 release froze the inception policy,
+  but merged after it. The owner approved landing it as a one-time in-place
+  amendment to `termverify.key/v1` rather than cutting a `termverify.key/v2`
+  registry, because the change is purely additive (no existing chord,
+  spelling, or encoding is altered) and the wire-protocol version is
+  unchanged. This exception does not set a precedent: any future change to
+  registry membership, meaning, or spelling requires a new registry version
+  per `docs/knowledge/protocol.md`.
 - **Issue:** [#155](https://github.com/hoelzl/termverify/issues/155)
 - **Date:** 2026-07-19
 - **Inputs:** the closed `termverify.key/v1` registry
