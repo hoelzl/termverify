@@ -82,7 +82,7 @@ def all_key_chords() -> tuple[tuple[str, ...], ...]:
     ascend by bitmask, where bit ``i`` selects ``KEY_MODIFIERS[i]``;
     modified-only bases skip the two subsets without a trigger modifier
     (the empty set and ``{Shift}``). This yields exactly
-    26*16 + 37*14 = 934 chords.
+    26*16 + 69*14 = 1382 chords.
     """
     chords: list[tuple[str, ...]] = []
     for base in KEY_NAMED_BASES + KEY_MODIFIED_BASES:

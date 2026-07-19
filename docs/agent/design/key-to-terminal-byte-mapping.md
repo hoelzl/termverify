@@ -77,9 +77,10 @@ decision, not a new design to un-retire a non-goal.
 
 - The registry is a pure function from valid `termverify.key/v1` chords to
   `encoded bytes | unencodable`, total over the finite valid-chord set (the
-  chord grammar admits exactly 934 chords: 26 named bases × 16 canonical
-  modifier subsets, plus 37 modified-only bases × the 14 subsets containing
-  a trigger modifier).
+  chord grammar admits exactly 1382 chords after the punctuation amendment in
+  [`key-v1-punctuation-bases.md`](key-v1-punctuation-bases.md): 26 named bases
+  × 16 canonical modifier subsets, plus 69 modified-only bases × the 14
+  subsets containing a trigger modifier).
 - It lives in one runtime module (working name
   `src/termverify/_key_encoding_v1.py`) as committed data and committed
   arithmetic. Runtime code is the single authority; no schema change is
@@ -239,7 +240,7 @@ authors know cooperative raw-mode input handling is their responsibility.
 
 ## Testing and coverage plan
 
-- Registry unit tests: totality over all 934 valid chords (every chord
+- Registry unit tests: totality over all 1382 valid chords (every chord
   yields exactly one encoding or `unencodable`, and invalid chords are
   rejected); the digest test binding the full enumeration; exact-byte
   assertions for every family and rule row in the scheme table, including

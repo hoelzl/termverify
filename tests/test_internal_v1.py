@@ -89,9 +89,9 @@ def test_v1_timezone_registry_complete_contents_match_reviewed_digest() -> None:
 def test_v1_key_registry_complete_contents_match_reviewed_digest() -> None:
     canonical_names = ("\n".join(KEY_NAMES) + "\n").encode()
 
-    assert len(KEY_NAMES) == 67
+    assert len(KEY_NAMES) == 99
     assert hashlib.sha256(canonical_names).hexdigest() == (
-        "4db9a08e9eea24e48abb34f2d27d7d5936cd76f3843fda954f956266e2204a82"
+        "51955be77ab11b23240c642edd0e4f08dbd56389b82f99bbe2ee87871ce9d0a0"
     )
 
 
@@ -108,6 +108,12 @@ def test_v1_key_registry_complete_contents_match_reviewed_digest() -> None:
         ["Control", "0"],
         ["Meta", "z"],
         ["Control", "Space"],
+        ["Control", "/"],
+        ["Control", "_"],
+        ["Alt", "<"],
+        ["Alt", ">"],
+        ["Meta", "?"],
+        ["Control", "Alt", "["],
     ],
 )
 def test_v1_key_chord_accepts_canonical_semantic_components(
@@ -136,6 +142,10 @@ def test_v1_key_chord_accepts_canonical_semantic_components(
         ["Shift", "a"],
         ["1"],
         ["Space"],
+        ["/"],
+        ["<"],
+        ["Shift", "/"],
+        ["Shift", "<"],
         ["\x1b[A"],
         [1],
         "Enter",

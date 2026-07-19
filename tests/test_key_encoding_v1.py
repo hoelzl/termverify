@@ -21,8 +21,8 @@ from termverify._key_v1 import is_key_chord
 def test_v1_enumeration_is_total_unique_and_canonical() -> None:
     chords = all_key_chords()
 
-    assert len(chords) == 934
-    assert len(set(chords)) == 934
+    assert len(chords) == 1382
+    assert len(set(chords)) == 1382
     assert all(type(chord) is tuple for chord in chords)
     assert all(is_key_chord(chord) for chord in chords)
 
@@ -43,8 +43,8 @@ def test_v1_encodable_set_has_the_designed_size() -> None:
     ]
 
     # 96 CSI-final + 192 tilde + 64 F1-F4 + 9 C0-base + 78 letter
-    # + 10 digit + 1 Space chords.
-    assert len(encodable) == 450
+    # + 10 digit + 1 Space + 32 punctuation (Alt form only) chords.
+    assert len(encodable) == 482
 
 
 @pytest.mark.parametrize(
@@ -264,6 +264,40 @@ def test_v1_control_digit_space_and_shift_meta_forms_are_unencodable(
     assert encode_key_chord(keys) is None
 
 
+# --- exact bytes and fail-closed verdicts: punctuation bases ----------------
+
+
+@pytest.mark.parametrize(
+    ("keys", "expected"),
+    [
+        (("Alt", "/"), "\x1b/"),
+        (("Alt", "<"), "\x1b<"),
+        (("Alt", ">"), "\x1b>"),
+        (("Alt", "_"), "\x1b_"),
+        (("Alt", "?"), "\x1b?"),
+        (("Alt", "["), "\x1b["),
+    ],
+)
+def test_v1_alt_punctuation_bytes(keys: tuple[str, ...], expected: str) -> None:
+    assert encode_key_chord(keys) == expected
+
+
+@pytest.mark.parametrize(
+    "keys",
+    [
+        ("Control", "/"),
+        ("Control", "_"),
+        ("Meta", "<"),
+        ("Alt", "Shift", ">"),
+        ("Control", "Alt", "["),
+    ],
+)
+def test_v1_control_meta_and_shift_punctuation_forms_are_unencodable(
+    keys: tuple[str, ...],
+) -> None:
+    assert encode_key_chord(keys) is None
+
+
 # --- disclosed byte collisions ---------------------------------------------
 
 
@@ -307,5 +341,5 @@ def test_v1_key_encoding_registry_complete_contents_match_reviewed_digest() -> N
     ).encode()
 
     assert hashlib.sha256(canonical).hexdigest() == (
-        "5df2113c9479ef68035ef74994d4502344a204a5f0b034633278e336137fcf3d"
+        "72a17da549238053c88a925cf6bf2bbe93ed2b8564c7a09188075987fcdcda95"
     )

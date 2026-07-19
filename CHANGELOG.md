@@ -171,3 +171,22 @@ with the pre-1.0 policy below.
 - **Breaking:** `DeliveryRecord` and transcript delivery validation now
   reject syntactically undeliverable environment entries — `=` or NUL in a
   variable name, NUL in a value or working directory — fail-closed.
+- **Breaking (pre-freeze registry amendment; transcript protocol stays
+  v1):** the `termverify.key/v1` modified-only base set is widened with the
+  full printable ASCII punctuation row (32 characters:
+  ``! " # $ % & ' ( ) * + , - . / : ; < = > ? @ [ \ ] ^ _ ` { | } ~``), each
+  requiring a trigger modifier like letters and digits. This makes
+  Emacs-lineage chords such as `["Control", "/"]`, `["Control", "_"]`, and
+  `["Alt", "<"]`/`["Alt", ">"]` expressible through `KeyInput` for the first
+  time; previously no valid chord could name a punctuation base. The change
+  is purely additive — every previously valid chord and its encoding is
+  unchanged — but it re-binds both reviewed digests: `termverify.key/v1`
+  (67 → 99 entries) and the `termverify.key-encoding/v1` full enumeration
+  (934 → 1382 chords, 450 → 482 encodable). Encoding semantics follow the
+  existing digits/`Space` rule: `["Alt", p]` encodes to `ESC p`; `Control`,
+  `Meta`, and `Shift` punctuation forms are unencodable and fail closed (no
+  legacy byte form represents them). Migration: re-derive any pinned copy of
+  either digest; ConPTY subjects now receive a structured
+  `{"unsupported": "key-encoding", ...}` failure for punctuation
+  `Control`/`Meta`/`Shift` chords instead of the chord being inexpressible.
+  See `docs/agent/design/key-v1-punctuation-bases.md`.

@@ -376,20 +376,23 @@ multiple input records and therefore multiple quiescent input epochs. The
 Modifiers are unique and, when present, appear in this canonical order:
 `Control`, `Alt`, `Shift`, `Meta`.
 
-The exact v1 component registry has 67 entries:
+The exact v1 component registry has 99 entries:
 
 - modifiers: `Control`, `Alt`, `Shift`, `Meta`;
 - named bases: `Enter`, `Tab`, `Escape`, `Backspace`, `Delete`, `Insert`,
   `ArrowUp`, `ArrowDown`, `ArrowLeft`, `ArrowRight`, `Home`, `End`, `PageUp`,
   `PageDown`, and `F1` through `F12`;
 - modified-only bases: lowercase ASCII `a` through `z`, ASCII `0` through `9`,
-  and `Space`.
+  `Space`, and the printable ASCII punctuation row
+  ``! " # $ % & ' ( ) * + , - . / : ; < = > ? @ [ \ ] ^ _ ` { | } ~``.
 
 A modified-only base requires at least one of `Control`, `Alt`, or `Meta`.
 `Shift` alone does not make a printable base valid. Thus `["Control", "c"]`,
-`["Alt", "1"]`, and `["Control", "Space"]` are valid; `["c"]`, `["1"]`,
-`["Space"]`, and `["Shift", "a"]` are invalid. Unmodified printable insertion,
-including an ordinary space or uppercase letter, uses `input.text`.
+`["Alt", "1"]`, `["Control", "Space"]`, `["Control", "/"]`, and
+`["Alt", "<"]` are valid; `["c"]`, `["1"]`, `["Space"]`, `["/"]`,
+`["Shift", "a"]`, and `["Shift", "<"]` are invalid. Unmodified printable
+insertion, including an ordinary space, punctuation, or uppercase letter,
+uses `input.text`.
 
 Names are exact and case-sensitive. V1 performs no trimming, case folding,
 Unicode normalization, alias rewriting, or modifier reordering. Toolkit names,
@@ -406,13 +409,13 @@ than silently translate an unknown value, alias, or ambiguous escape sequence.
 An `x-` extension cannot add registry entries or change chord meaning. The
 reviewed registry order is digest-bound in executable tests using newline-joined
 UTF-8 names with a final LF; its SHA-256 is
-`4db9a08e9eea24e48abb34f2d27d7d5936cd76f3843fda954f956266e2204a82`.
+`51955be77ab11b23240c642edd0e4f08dbd56389b82f99bbe2ee87871ce9d0a0`.
 
 #### Companion registry: `termverify.key-encoding/v1`
 
 The terminal execution path has a companion registry,
 `termverify.key-encoding/v1` (`src/termverify/_key_encoding_v1.py`), that maps
-each of the 934 valid `termverify.key/v1` chords either to exactly one
+each of the 1382 valid `termverify.key/v1` chords either to exactly one
 xterm-legacy normal-mode byte string or to the explicit fail-closed verdict
 **unencodable**. It is committed data plus committed arithmetic owned by
 TermVerify — never derived from terminfo, toolkit enums, OS virtual-key
@@ -421,16 +424,17 @@ codes, or other ambient host state — and it is not a transcript value: an
 registry can version independently of the transcript protocol. A chord is
 encodable exactly when the legacy encoding represents every chord component
 by definition; when the only candidate bytes would drop a modifier
-(`Control+Enter`), alias one modifier to another (`Meta` as `Alt` on
-letters), or pass a NUL hazard (`Control+Space`), the registry returns
-unencodable and the adapter fails rather than misrepresent the chord. Four
+(`Control+Enter`, `Control+/`), alias one modifier to another (`Meta` as
+`Alt` on letters), or pass a NUL hazard (`Control+Space`), the registry
+returns unencodable and the adapter fails rather than misrepresent the
+chord. Four
 byte collisions inherent to the legacy byte space are disclosed:
 `["Control", "m"]`/`["Enter"]` (CR), `["Control", "i"]`/`["Tab"]` (HT), and
 their two `Alt`-prefixed forms. The full enumeration — each chord joined
 with `+`, then ` => ` and the space-joined two-digit lowercase hex code
 points of its encoding or the word `unencodable`, newline-joined UTF-8 with
 a final LF — is digest-bound in executable tests; its SHA-256 is
-`5df2113c9479ef68035ef74994d4502344a204a5f0b034633278e336137fcf3d`. The
+`72a17da549238053c88a925cf6bf2bbe93ed2b8564c7a09188075987fcdcda95`. The
 pre-freeze inception policy above applies to this registry as well; details
 of the adapter behavior live in the
 [ConPTY developer guide](../developer-guide/conpty-adapter.md).
@@ -497,7 +501,10 @@ require a new protocol version.
 That freeze includes `termverify.key/v1` membership, spelling, component roles,
 modifier ordering, and chord validity. A post-freeze change to any of them
 requires a new transcript protocol and key-registry version; ambient toolkit or
-host registry growth never changes v1.
+host registry growth never changes v1. (Pre-freeze, the modified-only base set
+was widened once — see issue #155 and
+`docs/agent/design/key-v1-punctuation-bases.md` — to add the printable ASCII
+punctuation row; that amendment predates any supported external artifact.)
 
 An inception transcript without `subject` is invalid and no tool may guess its
 identity from ambient or undocumented out-of-band context. A caller with the
