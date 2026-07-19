@@ -649,18 +649,71 @@ def test_dispatch_requires_the_current_manual_time() -> None:
         adapter.dispatch(TextInput(ManualTime(5), "x"))
 
 
-def test_key_input_dispatch_uses_the_structured_runtime_failure_path() -> None:
+@pytest.mark.parametrize(
+    ("keys", "expected"),
+    [
+        (("Enter",), "\r"),
+        (("ArrowUp",), "\x1b[A"),
+        (("Control", "Shift", "ArrowLeft"), "\x1b[1;6D"),
+        (("Delete",), "\x1b[3~"),
+        (("Alt", "PageDown"), "\x1b[6;3~"),
+        (("F1",), "\x1bOP"),
+        (("Control", "F4"), "\x1b[1;5S"),
+        (("Shift", "Tab"), "\x1b[Z"),
+        (("Control", "c"), "\x03"),
+        (("Control", "Alt", "m"), "\x1b\r"),
+        (("Alt", "7"), "\x1b7"),
+        (("Alt", "Space"), "\x1b "),
+    ],
+)
+def test_encodable_key_dispatch_writes_registry_bytes_once_and_runs_an_epoch(
+    keys: tuple[str, ...], expected: str
+) -> None:
+    adapter, binding, factory, watchdog = _started([_MARKER])
+    binding.child.reads.append("reacted" + _MARKER)
+
+    result = adapter.dispatch(KeyInput(ManualTime(0), keys))
+
+    assert type(result) is EpochCompleted
+    assert binding.child.written == [expected]
+    assert [event.data for event in result.observation.events] == [
+        {"chunk": "reacted" + _MARKER}
+    ]
+    assert factory.created[0].fed == [_MARKER, "reacted" + _MARKER]
+    assert watchdog.arms == [_DEADLINE_MS, _DEADLINE_MS]
+    assert watchdog.disarms == 2
+
+
+def test_unencodable_key_dispatch_fails_closed_before_any_child_write() -> None:
     adapter, binding, _, _ = _started([_MARKER])
 
-    result = adapter.dispatch(KeyInput(ManualTime(0), ("Enter",)))
+    result = adapter.dispatch(KeyInput(ManualTime(0), ("Control", "Enter")))
 
     assert type(result) is TerminalResult
     assert type(result.outcome) is RunFailed
-    assert result.outcome.failure.details == {"unsupported": "key-input"}
+    assert result.outcome.failure.code == "adapter-runtime-failed"
+    assert result.outcome.failure.details == {
+        "unsupported": "key-encoding",
+        "keys": ("Control", "Enter"),
+    }
     assert result.observation is None
+    assert binding.child.written == []
     assert binding.child.closes == [True]
     with pytest.raises(RuntimeError):
         adapter.dispatch(TextInput(ManualTime(0), "x"))
+
+
+def test_key_dispatch_write_failure_uses_the_structured_runtime_path() -> None:
+    adapter, binding, _, _ = _started(
+        [_MARKER], write_error=RuntimeError("write refused")
+    )
+
+    result = adapter.dispatch(KeyInput(ManualTime(0), ("ArrowUp",)))
+
+    assert type(result) is TerminalResult
+    assert type(result.outcome) is RunFailed
+    assert result.outcome.failure.details == {"during": "write"}
+    assert binding.child.closes == [True]
 
 
 def test_resize_dispatch_resizes_child_and_normalizer() -> None:

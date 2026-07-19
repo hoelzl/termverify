@@ -72,6 +72,7 @@ from termverify._conpty import (
     ConptyConcurrentIOError,
     ConptyEndOfStreamError,
 )
+from termverify._key_encoding_v1 import encode_key_chord
 from termverify._negotiation import AuthorizedTiers, negotiate
 from termverify.adapter import (
     AdapterFailure,
@@ -849,11 +850,28 @@ class ConptyAdapter:
                 raise ValueError("input must use the current manual time")
             self._state = "active"
         if type(input_event) is KeyInput:
-            return self._fail_runtime(
+            encoded = encode_key_chord(input_event.keys)
+            if encoded is None:
+                return self._fail_runtime(
+                    input_event.at_ms,
+                    "the key chord has no termverify.key-encoding/v1 form;"
+                    " the registry fails closed rather than drop a modifier"
+                    " or misrepresent the base",
+                    {
+                        "unsupported": "key-encoding",
+                        "keys": list(input_event.keys),
+                    },
+                )
+            key_child = cast(ConptyChildPort, self._child)
+
+            def write_key() -> None:
+                key_child.write(encoded)
+
+            return self._run_epoch(
                 input_event.at_ms,
-                "the ConPTY adapter cannot execute semantic key input; no"
-                " key-to-terminal byte mapping exists",
-                {"unsupported": "key-input"},
+                write_key,
+                "write",
+                "the encoded key input could not be written to the child",
             )
         child = cast(ConptyChildPort, self._child)
         if type(input_event) is TextInput:
