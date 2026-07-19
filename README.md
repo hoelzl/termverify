@@ -93,6 +93,8 @@ uv --no-config run pre-commit install --hook-type pre-commit --hook-type pre-pus
 ```
 
 See [developer workflow](docs/developer-guide/agent-workflow.md) and [contributing guide](CONTRIBUTING.md).
+External subjects implementing the producer contract start with the
+[adapter-author surface](docs/developer-guide/adapter-authors.md).
 
 ## License
 
