@@ -165,8 +165,8 @@ is required and is exactly one of:
 Member-name and value rules for `spawn-env.env` are unchanged
 (non-empty names/values, no `=` or NUL in names, no NUL in values). The
 legacy bare form `{"env": ..., "cwd"?}` (no `channel` member) is
-accepted by normalization to `spawn-env`; a bare form carrying an
-explicit `channel` member rejects.
+accepted by normalization to `spawn-env`; a form carrying both `env`
+and an explicit `channel` member rejects.
 
 ### The `delivered` tier row (registry text, amended)
 
@@ -237,8 +237,7 @@ recorder produce the channel-tagged form.
 ## Evidence (per slice)
 
 - **Design amendment (this PR):** docs only — this document; amended
-  tier/delivery text in `docs/knowledge/protocol.md`; mirrored tier
-  wording in `docs/knowledge/control-protocol.md`; a supersession note
+  tier/delivery text in `docs/knowledge/protocol.md`; a supersession note
   in `jsonl-control-transport.md` ("Constraint semantics across the
   process boundary" paragraph naming six spawn-time deliveries);
   changelog fragment. No code, no tests.
@@ -246,9 +245,11 @@ recorder produce the channel-tagged form.
   `DeliveryRecord` discrimination + compat constructor; transcript
   validator channel dispatch + `_COMPAT_RULES` with the legacy-delivery
   rule; recorder emission of the tagged form; redaction updated for
-  channel shapes; schema update (`anyOf` legacy/canonical);
-  acceptance tests: legacy form validates and normalizes, bare form
-  with explicit `channel` rejects, per-channel member rules, redaction
+  channel shapes; schema update (`anyOf` legacy/canonical); mirrored
+  tier/channel wording in `docs/knowledge/control-protocol.md` (the
+  control protocol knowledge page lands with that slice);
+  acceptance tests: legacy form validates and normalizes, a mixed
+  `env`+`channel` form rejects, per-channel member rules, redaction
   round-trip on both vintages, JSONL terminal receipt at
   `hello-config`, all seven constraints start green against the fake
   child.

@@ -351,8 +351,8 @@ honoring, and nothing enforced.
 Compatibility (amendment of 2026-07-20, owner decision on issue #173): the
 pre-amendment bare form `{"env": ..., "cwd"?}` with no `channel` member
 remains accepted and is normalized to `{"channel": "spawn-env", ...}` at the
-ingest boundary; a bare form carrying an explicit `channel` member is
-invalid. Emitters produce only the channel-tagged form. Normalization is
+ingest boundary; a form carrying both `env` and an explicit `channel` member
+is invalid. Emitters produce only the channel-tagged form. Normalization is
 performed by the codec's compat rules — named, pure, total,
 normalize-toward-canonical functions applied between structural decode and
 validation (`_COMPAT_RULES` in the runtime); they never relax acceptance,
