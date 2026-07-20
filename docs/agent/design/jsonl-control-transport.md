@@ -273,6 +273,15 @@ material, never diagnostics.
 
 ## Constraint semantics across the process boundary
 
+> **Amended 2026-07-20** by
+> [channel-tagged delivery records](channel-tagged-delivery-records.md)
+> (owner decision on issue #173): the delivery model is no longer
+> spawn-env-only. Six constraints remain `spawn-env` deliveries; the
+> terminal constraint is a `hello-config` delivery — the dimensions in
+> `session.hello.config` are the delivered values, and the receipt's
+> delivery record names that channel. The tier claim (delivered, never
+> honored) is unchanged.
+
 Six constraints are spawn-time deliveries consumed from the existing
 cooperation ports, with identical tier semantics: `delivered` where the
 port delivers, honestly `unsupported` where the request exceeds the
