@@ -173,6 +173,26 @@ no attempt to detect, suppress, or compensate for processed-input
 semantics. The developer-guide documentation must disclose this so subject
 authors know cooperative raw-mode input handling is their responsibility.
 
+### ESC-prefixed sequences and C runtime input readers (issue #169)
+
+Windows integration evidence (2026-07-20, issue #169) shows the ConPTY
+input pipe delivers ESC-prefixed bytes to the child's console input buffer
+verbatim — including a bare ESC, which arrives as an Escape keypress — but
+the Microsoft C runtime's wide-character console reader (`msvcrt.getwch()`,
+and with it Python's `sys.stdin` text IO) parses ESC-prefixed sequences
+itself: `ESC x` surfaces as just `x` with the Alt modifier lost, `ESC [ A`
+surfaces as the translated virtual key, and a lone ESC blocks inside the
+runtime's sequence-assembly wait until another byte arrives or the reader
+gives up — so a subject reading through this layer turns a bare-`Escape`
+epoch into an abort-deadline expiry. Byte-wise readers (`os.read` on the
+stdin file descriptor, `ReadFile`/`ReadConsoleA` on the input handle)
+observe the registry bytes exactly. This is subject-side interpretation,
+like every other console-mode concern: the adapter delivers, the subject
+reads, and the developer-guide documentation discloses that subjects
+binding ESC-prefixed chords must read console input byte-wise. The
+adapter's claim set is unchanged — delivery, not interpretation — and no
+adapter compensation is possible from outside the child's runtime.
+
 ## Adapter integration contract
 
 - `ConptyAdapter.dispatch` replaces the current unconditional `KeyInput`

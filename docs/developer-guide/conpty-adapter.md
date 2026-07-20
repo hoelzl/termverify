@@ -122,6 +122,25 @@ Four legacy byte collisions are disclosed (`Control+m` ≡ `Enter`,
 `Control+i` ≡ `Tab`, and their `Alt`-prefixed forms); the transcript retains
 the distinct semantic chords regardless of the shared bytes.
 
+**ESC-prefixed sequences and C runtime input readers (issue #169).** The
+ConPTY input pipe delivers ESC-prefixed bytes to the child's console input
+buffer verbatim: a child reading that buffer byte-wise (`os.read` on the
+stdin file descriptor, or `ReadFile`/`ReadConsoleA` on the input handle)
+observes `("Alt", "x")` exactly as the registry's `1b 78`, and a bare ESC
+arrives as an Escape keypress. The Microsoft C runtime's *wide-character*
+console reader — `msvcrt.getwch()`, and with it Python's `sys.stdin` text
+IO and `_wread`-based paths — instead parses ESC-prefixed sequences itself:
+`ESC x` surfaces as just `x` (the ESC is consumed and the Alt modifier is
+lost), `ESC [ A` surfaces as the translated virtual key (`e0 48`), and a
+lone ESC blocks inside the runtime's sequence-assembly wait — which is how
+a subject reading through this layer makes a bare-`Escape` epoch expire
+the abort deadline instead of delivering the byte. This is subject-side
+input handling, exactly like the signal-byte disclosure above: the adapter
+delivers the registry bytes and never detects or compensates for the
+child's reader. A subject that binds ESC-prefixed (Emacs-style meta)
+chords must read console input byte-wise; the integration fixture
+demonstrates the working pattern.
+
 Windows-matrix evidence (`tests/test_conpty_integration.py`) shows a real
 raw-mode child observing the registry bytes byte-identically for one
 representative chord per encodable family class — including the signal byte
