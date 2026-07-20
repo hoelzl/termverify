@@ -224,9 +224,10 @@ its listed members plus uninterpreted `x-` extensions. In particular,
 requires the `delivered` tier. Application-defined JSON values such as
 observation `state`, event `data`, diagnostic `details`, and error `details`
 remain open semantic values rather than generic protocol objects. The
-`delivery.env` object is a value map of delivered environment-variable names,
-not a generic protocol object: its member names are exact variable names with
-no `x-` extension semantics.
+`delivery.env` object (present only with the `spawn-env` channel, below) is a
+value map of delivered environment-variable names, not a generic protocol
+object: its member names are exact variable names with no `x-` extension
+semantics.
 
 `message` is diagnostic only. Consumers use stable `code` values for behavior;
 v1 reserves `adapter-start-failed`, `adapter-runtime-failed`,
@@ -326,20 +327,46 @@ Its members, in decreasing claim strength:
 | --- | --- |
 | `os` | The constraint is applied by an operating-system mechanism at the subject boundary; evidence exists at the OS level. |
 | `constructive` | The constraint is applied by construction of the controlled in-process runtime: the emitting port asserts that the subject reaches the constrained resource only through it. Stating it truthfully is part of the injected application's port contract. |
-| `delivered` | The requested value was placed, exactly as recorded, into the subject's spawn environment; honoring it is subject cooperation. Nothing is enforced. |
+| `delivered` | The requested value was delivered to the subject, exactly as recorded, through the channel named in the delivery record; honoring it is subject cooperation. Nothing is enforced. |
 
 Every `enforced` capability result carries a mandatory `tier`. A
-`delivered`-tier result additionally carries a mandatory `delivery` object —
-`{"env": {name: value, ...}, "cwd"?: string}` — recording the exact non-empty
-environment variables delivered for that constraint; `cwd` is required for
-`filesystem` (the delivered working directory) and forbidden for every other
-constraint, and no other tier may carry a `delivery`. Membership in the
+`delivered`-tier result additionally carries a mandatory `delivery` object
+naming the channel through which delivery flowed; no other tier may carry a
+`delivery`. The `channel` member is a closed set fixed by this protocol
+version (like `network.mode`, not a registry): exactly one of the following
+shapes.
+
+| `channel` | Members | Claim |
+| --- | --- | --- |
+| `spawn-env` | `env` (required, non-empty), `cwd` (required iff the constraint is `filesystem`, forbidden otherwise) | The recorded environment variables (and, for filesystem, working directory) were placed into the subject's spawn environment. |
+| `hello-config` | none beyond `channel` | The constraint's `run.started.config` members — already recorded and validated in this transcript — were delivered to the subject in `session.hello.config` (`termverify.control/v1`). |
+| `wire-message` | none beyond `channel` | The value was delivered as a control-protocol message during the run; the protocol's own message records are the evidence. |
+
+`spawn-env` member rules are unchanged: `env` maps non-empty variable names
+(no `=` or NUL) to non-empty values (no NUL); `cwd` is a non-empty NUL-free
+string. A channel tag names where delivery flowed; the claim never widens —
+every channel claims delivery exactly as recorded, subject cooperation for
+honoring, and nothing enforced.
+
+Compatibility (amendment of 2026-07-20, owner decision on issue #173): the
+pre-amendment bare form `{"env": ..., "cwd"?}` with no `channel` member
+remains accepted and is normalized to `{"channel": "spawn-env", ...}` at the
+ingest boundary; a bare form carrying an explicit `channel` member is
+invalid. Emitters produce only the channel-tagged form. Normalization is
+performed by the codec's compat rules — named, pure, total,
+normalize-toward-canonical functions applied between structural decode and
+validation (`_COMPAT_RULES` in the runtime); they never relax acceptance,
+and validation proper sees only the canonical form.
+
+Membership in the
 vocabulary is not evidence that an emitter exists: which tier a negotiation
 path may state is fixed by the accepted cooperation-tier design and validated
 fail-closed at runtime during receipt binding (an adapter's own terminal
 negotiation may state `os`; ports injected into the ConPTY adapter may state
 only `delivered`; ports negotiated by the direct adapter may state only
-`constructive`). A transcript records the stated tier but cannot know the
+`constructive`). The same posture applies to channels: `wire-message` is
+admitted before any emitter exists. A transcript records the stated tier but
+cannot know the
 emitting path, so transcript validation checks vocabulary membership and the
 tier/`delivery` pairing only. A receipt never claims the subject honored a
 delivered value, and no tier claims containment.
