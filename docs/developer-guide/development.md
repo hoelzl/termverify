@@ -21,9 +21,26 @@ uv --no-config build
 
 The uv lockfile supplies the authoritative Ruff executable for direct commands,
 hooks, and CI; the local pre-commit hooks invoke that executable rather than a
-separately versioned mirror. The local pre-push stage runs tests, mypy, and
-package builds; workflow-policy and dependency-vulnerability checks remain
-CI-only.
+separately versioned mirror. The local pre-push stage runs mypy, package
+builds, and then the test suite — cheapest first, so a trivially fixable type
+or packaging failure aborts the push in seconds rather than after the
+multi-minute suite (issue #168); workflow-policy and
+dependency-vulnerability checks remain CI-only.
+
+When a push fails with only git's generic `error: failed to push some refs`,
+the cause is local, not a remote race: a pre-push hook failed and its output
+was lost to piping or buried under earlier hook output. Never retry with
+`--no-verify` — that pushes commits CI will reject. Instead rerun the gate
+in the foreground, where the failing hook's banner and captured output are
+visible:
+
+```bash
+uv --no-config run pre-commit run --hook-stage pre-push --all-files
+```
+
+To skip the suite while diagnosing, run the cheap checks directly
+(`uv --no-config run mypy src tests scripts`, then `uv --no-config build`)
+before re-running the full stage.
 
 Install the optional local hooks after the first sync:
 

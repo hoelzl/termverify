@@ -28,13 +28,6 @@ repos:
         language: system
         pass_filenames: false
 
-      - id: test
-        name: test suite
-        entry: uv --no-config run pytest
-        language: system
-        pass_filenames: false
-        stages: [pre-push]
-
       - id: type-check
         name: type check
         entry: uv --no-config run mypy src tests scripts
@@ -45,6 +38,17 @@ repos:
       - id: build-distributions
         name: build distributions
         entry: uv --no-config build
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+
+      # The test suite runs last within pre-push: it takes minutes while the
+      # type check and the build take seconds, and a trivially fixable failure
+      # in a cheap check should abort the push in seconds, not after the full
+      # suite (issue #168).
+      - id: test
+        name: test suite
+        entry: uv --no-config run pytest
         language: system
         pass_filenames: false
         stages: [pre-push]
