@@ -72,7 +72,7 @@ _FORCED_TERMINATION_EXIT_CODE: Final = 15
 FORCED_TERMINATION_SIGNAL: Final = 9  # SIGKILL
 
 
-if sys.platform == "win32":
+if sys.platform == "win32":  # pragma: no cover - Windows-only containment
     import ctypes
     from ctypes import wintypes
 
@@ -257,25 +257,25 @@ class PipeJsonlChild:
             cwd=cwd,
             start_new_session=os.name != "nt",
         )
-        if os.name != "nt":
-            return cls(process)
-        job: int | None = None
-        process_handle: int | None = None
-        try:
-            job = _create_containment_job()
-            process_handle = _open_containment_handle(process.pid)
-            _kernel32.AssignProcessToJobObject(job, process_handle)
-        except OSError as error:
-            process.kill()
-            process.wait()
-            if process_handle is not None:
-                _kernel32.CloseHandle(process_handle)
-            if job is not None:
-                _kernel32.CloseHandle(job)
-            raise OSError(
-                f"failed to contain pipe child {process.pid} in a job object"
-            ) from error
-        return cls(process, job=job, process_handle=process_handle)
+        if os.name == "nt":  # pragma: no cover - Windows-only containment leg
+            job: int | None = None
+            process_handle: int | None = None
+            try:
+                job = _create_containment_job()
+                process_handle = _open_containment_handle(process.pid)
+                _kernel32.AssignProcessToJobObject(job, process_handle)
+            except OSError as error:
+                process.kill()
+                process.wait()
+                if process_handle is not None:
+                    _kernel32.CloseHandle(process_handle)
+                if job is not None:
+                    _kernel32.CloseHandle(job)
+                raise OSError(
+                    f"failed to contain pipe child {process.pid} in a job object"
+                ) from error
+            return cls(process, job=job, process_handle=process_handle)
+        return cls(process)
 
     @property
     def pid(self) -> int:
@@ -407,14 +407,25 @@ class PipeJsonlChild:
             done.wait()
             return
         assert process is not None
+        live = process.poll() is None
+        if live and not force:
+            # Refusal must be a true no-op: restore ownership so the
+            # binding is exactly as it was — still usable, and a later
+            # forced close can still tear the live tree down honestly.
+            # Nothing outside this lock window has run yet (no read can
+            # have been interrupted: the tree was never terminated).
+            with self._lock:
+                self._process = process
+                self._job = job
+                self._process_handle = process_handle
+                self._closed = False
+                self._closing = False
+            raise RuntimeError(
+                "a release-only close of a live JSONL pipe child is"
+                " refused: the binding never abandons a live tree"
+                " and never fabricates an exit record"
+            )
         try:
-            live = process.poll() is None
-            if live and not force:
-                raise RuntimeError(
-                    "a release-only close of a live JSONL pipe child is"
-                    " refused: the binding never abandons a live tree"
-                    " and never fabricates an exit record"
-                )
             if live:
                 # Kill FIRST: the child's death closes its stdout
                 # write-end, which is the reliable interruption of a read
@@ -442,9 +453,13 @@ class PipeJsonlChild:
             self._exit_status = int(status)
         finally:
             self._close_pipes(process)
-            if process_handle is not None and os.name == "nt":
+            if (
+                process_handle is not None and os.name == "nt"
+            ):  # pragma: no cover - Windows-only leg
                 _kernel32.CloseHandle(process_handle)
-            if job is not None and os.name == "nt":
+            if (
+                job is not None and os.name == "nt"
+            ):  # pragma: no cover - Windows-only leg
                 # Kill-on-close sweeps every remaining job member, so even
                 # a failed graceful path cannot leak the tree.
                 _kernel32.CloseHandle(job)
@@ -494,7 +509,7 @@ class PipeJsonlChild:
         if process.stdin is not None:
             with _suppress_os_errors():
                 cast("io.BufferedWriter", process.stdin).detach()
-        if os.name == "nt":
+        if os.name == "nt":  # pragma: no cover - Windows-only containment leg
             if job is None:
                 # Defensive: unreachable on the only construction path.
                 raise OSError("no containment job to terminate")
@@ -507,7 +522,9 @@ class PipeJsonlChild:
         self, process: subprocess.Popen[bytes], process_handle: int | None
     ) -> None:
         """Wait for the real exit; on Windows prefer the handle wait."""
-        if os.name == "nt" and process_handle is not None:
+        if (
+            os.name == "nt" and process_handle is not None
+        ):  # pragma: no cover - Windows-only leg
             if not _wait_for_handle(process_handle, int(_CHILD_EXIT_WAIT_S * 1000)):
                 raise OSError(
                     f"pipe child {self._pid} did not terminate on forced close"

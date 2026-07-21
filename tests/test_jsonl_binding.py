@@ -204,6 +204,21 @@ def test_release_only_close_of_a_live_child_is_refused() -> None:
         child.read_line()
         with pytest.raises(RuntimeError, match="release-only close"):
             child.close(force=False)
+        # Refusal is a true no-op: the binding is exactly as it was —
+        # reads still work, and a later forced close still tears the
+        # live tree down honestly (a half-closed binding would abandon
+        # the contained tree until parent exit). Two banner lines remain
+        # after the first read (TV_MARK, TV_CWD).
+        child.read_line()
+        child.read_line()
+        child.write_line(b"ping\n")
+        assert child.read_line() == b"TV_ECHO:ping\n"
+        child.close(force=True)
+        expected = 15 if os.name == "nt" else -9
+        assert child.exit_status == expected
+        # After refusal and a real forced close, the close is settled:
+        # a further close returns immediately.
+        child.close(force=False)
 
 
 def test_release_only_close_of_an_exited_child_captures_the_record() -> None:

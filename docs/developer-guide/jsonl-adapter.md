@@ -24,12 +24,15 @@ The adapter speaks to any `JsonlChildPort`; the concrete wiring lives in the
 private `termverify._jsonl_pipe` module:
 
 ```python
+from termverify.cooperation import CooperationConstraintPorts
 from termverify.jsonl import JsonlAdapter, JsonlBinding
 
 binding = JsonlBinding()
 adapter = JsonlAdapter(
-    argv=[sys.executable, "-u", "subject.py"],
+    [sys.executable, "-u", "subject.py"],
     binding=binding,
+    abort_deadline_ms=60_000,
+    constraint_ports=CooperationConstraintPorts({"fixture-root": "/tmp/subject-data"}),
 )
 ```
 
@@ -41,7 +44,12 @@ adapter = JsonlAdapter(
   job object; on POSIX it becomes a process-group leader, so a forced stop
   terminates the whole tree, never a leaked grandchild;
 - **unbuffered-friendly framing**: writes are newline-terminated and flushed
-  per message; reads deliver one framed line per call.
+  per message; reads deliver one framed line per call. The subject has the
+  matching obligation: it must flush its stdout **after every protocol
+  message** (e.g. Python's `sys.stdout.buffer.flush()`, or run with `-u`).
+  A buffered subject that withholds its reply hangs every epoch until the
+  abort deadline, diagnosed only as `epoch-timeout` — the binding cannot
+  distinguish "slow" from "flushing late".
 
 The binding enforces honest teardown semantics:
 

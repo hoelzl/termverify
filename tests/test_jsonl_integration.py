@@ -351,8 +351,10 @@ def test_recorded_fixture_run_passes_recorder_and_comparator(
     verdict = compare_transcripts(first, second)
     assert verdict.equivalent, verdict
 
-    # The comparator is genuinely consuming the transport's transcript: a
-    # mutated run is detected, not washed through.
+    # The comparator compares the recorded payload bytes rather than
+    # washing mutations through a normalization: a single mutated digit
+    # in a recorded observation is detected. (The transport-pinning half
+    # of the claim is the byte-identity of the two real runs above.)
     mutated = bytearray(first)
     marker = b'"frame":{"columns":120'
     index = first.find(marker)
