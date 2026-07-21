@@ -17,11 +17,14 @@ surface there as `peer-lifecycle` rather than here as `peer-malformed`.
 from __future__ import annotations
 
 import json
+import math
 from typing import Final, NoReturn, cast
 
 import rfc8785
 
 from termverify._json import JsonValue
+from termverify._language_tag import is_well_formed_language_tag
+from termverify._timezone_v1 import is_timezone_name
 
 __all__ = [
     "CONTROL_PROTOCOL_V1",
@@ -51,6 +54,10 @@ _MAX_MESSAGE_STRING_BYTES: Final = 2 * 1024 * 1024
 #: policy, not adapter policy).
 MAX_STARTUP_DIAGNOSTICS: Final = 100
 MAX_EPOCH_DIAGNOSTICS: Final = 100
+
+#: Seed ceiling, mirrored from the transcript codec: an unsigned 64-bit
+#: integer as a decimal string with no leading zeros.
+_MAX_SEED: Final = "18446744073709551615"
 
 #: Adapter-to-child message kinds.
 _INPUT_KINDS: Final = frozenset(
@@ -282,6 +289,13 @@ def _validate_process(value: object) -> None:
 
 
 def _validate_observation_payload(payload: dict[str, JsonValue]) -> None:
+    for member in payload:
+        if (
+            member not in _REQUIRED_MEMBERS["observation"]
+            and member not in _OPTIONAL_MEMBERS["observation"]
+            and (not member.startswith("x-"))
+        ):
+            _fail(f"observation payload member {member!r} is reserved")
     if "state" not in payload:
         _fail("observation.state is required")
     if "ui" not in payload:
@@ -317,56 +331,114 @@ def _validate_config(value: object) -> None:
     missing = required - set(config)
     if missing:
         _fail(f"config is missing required members: {sorted(missing)}")
+    # The hello config is exactly the transcript/v1 run.started config
+    # shape (docs/knowledge/control-protocol.md); the checks below mirror
+    # the transcript validator member for member.
     _require_non_empty_string(config["seed"], "config.seed")
-    if not cast(str, config["seed"]).isdecimal():
-        _fail("config.seed must be a decimal string")
+    seed = cast(str, config["seed"])
+    if (
+        not seed.isascii()
+        or not seed.isdecimal()
+        or (len(seed) > 1 and seed.startswith("0"))
+        or len(seed) > len(_MAX_SEED)
+        or (len(seed) == len(_MAX_SEED) and seed > _MAX_SEED)
+    ):
+        _fail("config.seed must be a canonical unsigned 64-bit decimal string")
     clock = config["clock"]
     if type(clock) is not dict:
         _fail("config.clock must be an object")
-    if clock.get("mode") != "manual":
+    clock_members = clock
+    for member in clock_members:
+        if member not in ("mode", "initial_ms") and not member.startswith("x-"):
+            _fail(f"config.clock member {member!r} is reserved")
+    if clock_members.get("mode") != "manual":
         _fail("config.clock.mode must be 'manual'")
-    _require_plain_int(clock.get("initial_ms"), "config.clock.initial_ms")
+    _require_plain_int(clock_members.get("initial_ms"), "config.clock.initial_ms")
     _require_non_empty_string(config["locale"], "config.locale")
+    if not is_well_formed_language_tag(cast(str, config["locale"])):
+        _fail("config.locale must be a well-formed BCP 47 language tag")
     _require_non_empty_string(config["timezone"], "config.timezone")
+    if not is_timezone_name(config["timezone"]):
+        _fail("config.timezone must name a termverify.timezone/v1 entry")
     terminal = config["terminal"]
     if type(terminal) is not dict:
         _fail("config.terminal must be an object")
+    terminal_members = terminal
+    for member in terminal_members:
+        if member not in ("columns", "rows", "capabilities") and (
+            not member.startswith("x-")
+        ):
+            _fail(f"config.terminal member {member!r} is reserved")
     _require_plain_int(
-        terminal.get("columns"), "config.terminal.columns", positive=True
+        terminal_members.get("columns"), "config.terminal.columns", positive=True
     )
-    _require_plain_int(terminal.get("rows"), "config.terminal.rows", positive=True)
-    capabilities = terminal.get("capabilities")
+    _require_plain_int(
+        terminal_members.get("rows"), "config.terminal.rows", positive=True
+    )
+    capabilities = terminal_members.get("capabilities")
     if type(capabilities) is not list or any(
-        type(capability) is not str for capability in capabilities
+        type(capability) is not str or not capability for capability in capabilities
     ):
-        _fail("config.terminal.capabilities must be an array of strings")
+        _fail("config.terminal.capabilities must be an array of non-empty strings")
+    canonical_capabilities = cast(list[str], capabilities)
+    if canonical_capabilities != sorted(canonical_capabilities) or len(
+        canonical_capabilities
+    ) != len(set(canonical_capabilities)):
+        _fail("config.terminal.capabilities must be sorted and unique")
     filesystem = config["filesystem"]
     if type(filesystem) is not dict:
         _fail("config.filesystem must be an object")
-    if filesystem.get("mode") != "sandbox":
+    filesystem_members = filesystem
+    for member in filesystem_members:
+        if member not in ("mode", "root_id") and not member.startswith("x-"):
+            _fail(f"config.filesystem member {member!r} is reserved")
+    if filesystem_members.get("mode") != "sandbox":
         _fail("config.filesystem.mode must be 'sandbox'")
-    _require_non_empty_string(filesystem.get("root_id"), "config.filesystem.root_id")
+    _require_non_empty_string(
+        filesystem_members.get("root_id"), "config.filesystem.root_id"
+    )
     network = config["network"]
     if type(network) is not dict:
         _fail("config.network must be an object")
-    mode = network.get("mode")
+    network_members = network
+    mode = network_members.get("mode")
     if mode == "deny":
-        pass
+        for member in network_members:
+            if member != "mode" and not member.startswith("x-"):
+                _fail(f"config.network member {member!r} is reserved")
     elif mode == "allow-list":
-        allowed = network.get("allowed")
+        for member in network_members:
+            if member not in ("mode", "allowed") and not member.startswith("x-"):
+                _fail(f"config.network member {member!r} is reserved")
+        allowed = network_members.get("allowed")
         if type(allowed) is not list:
             _fail("config.network.allowed must be an array")
+        allow_pairs: list[tuple[str, int]] = []
         for index, endpoint in enumerate(allowed):
             if type(endpoint) is not dict:
                 _fail(f"config.network.allowed[{index}] must be an object")
+            endpoint_members = endpoint
+            for member in endpoint_members:
+                if member not in ("host", "port") and not member.startswith("x-"):
+                    _fail(
+                        f"config.network.allowed[{index}] member {member!r} is reserved"
+                    )
             _require_non_empty_string(
-                endpoint.get("host"), f"config.network.allowed[{index}].host"
+                endpoint_members.get("host"), f"config.network.allowed[{index}].host"
             )
+            port = endpoint_members.get("port")
             _require_plain_int(
-                endpoint.get("port"),
+                port,
                 f"config.network.allowed[{index}].port",
                 positive=True,
             )
+            if cast(int, port) > 65535:
+                _fail(f"config.network.allowed[{index}].port must be at most 65535")
+            allow_pairs.append((cast(str, endpoint_members["host"]), cast(int, port)))
+        if allow_pairs != sorted(allow_pairs) or len(allow_pairs) != len(
+            set(allow_pairs)
+        ):
+            _fail("config.network.allowed must be sorted and unique")
     else:
         _fail("config.network.mode must be 'deny' or 'allow-list'")
 
@@ -440,7 +512,11 @@ def _validate_payload(kind: str, payload: object) -> None:
 
 
 def _validate_json_value(value: object) -> None:
-    """Iterative structural budget check, mirroring the transcript codec."""
+    """Iterative structural budget check, mirroring the transcript codec.
+
+    Object keys are not value nodes (docs/knowledge/control-protocol.md):
+    they count against the string budgets only, never the value count.
+    """
     pending: list[tuple[object, int]] = [(value, 1)]
     value_count = 0
     string_bytes = 0
@@ -460,6 +536,8 @@ def _validate_json_value(value: object) -> None:
         if current is None or type(current) in {bool, int}:
             continue
         if type(current) is float:
+            if not math.isfinite(current):
+                _fail("message numbers must be finite")
             continue
         if type(current) is list:
             items = cast(list[JsonValue], current)
@@ -478,7 +556,6 @@ def _validate_json_value(value: object) -> None:
             for key, item in members.items():
                 if type(key) is not str:
                     _fail("message object keys must be strings")
-                value_count += 1
                 encoded = len(key.encode("utf-8", errors="replace"))
                 if encoded > _MAX_STRING_BYTES:
                     _fail("message string bytes exceed the v1 limit")
@@ -550,7 +627,11 @@ def parse_message(line: bytes) -> dict[str, JsonValue]:
     except UnicodeDecodeError as error:
         raise ControlProtocolError("message is not valid UTF-8") from error
     try:
-        raw: object = json.loads(text, object_pairs_hook=_reject_duplicate_members)
+        raw: object = json.loads(
+            text,
+            object_pairs_hook=_reject_duplicate_members,
+            parse_constant=lambda constant: _fail("message numbers must be finite"),
+        )
     except json.JSONDecodeError as error:
         raise ControlProtocolError("message is not valid JSON") from error
     if type(raw) is not dict:

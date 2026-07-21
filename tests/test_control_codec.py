@@ -33,7 +33,7 @@ def _hello_payload() -> dict[str, JsonValue]:
         "config": {
             "seed": "42",
             "clock": {"mode": "manual", "initial_ms": 0},
-            "locale": "en_US.UTF-8",
+            "locale": "en-US",
             "timezone": "UTC",
             "terminal": {"columns": 80, "rows": 24, "capabilities": []},
             "filesystem": {"mode": "sandbox", "root_id": "r"},

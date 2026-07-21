@@ -827,13 +827,6 @@ def test_serialize_rejects_missing_payload() -> None:
         serialize_message(message)
 
 
-def test_serialize_rejects_non_finite_float() -> None:
-    message = _envelope("diagnostic", {"code": "c", "message": "m"})
-    message["x-value"] = float("nan")
-    with pytest.raises(ControlProtocolError):
-        serialize_message(message)
-
-
 def test_serialize_rejects_message_past_the_line_cap() -> None:
     message = _envelope("diagnostic", {"code": "c", "message": "m"})
     message["x-pad"] = "x" * (4 * 1024 * 1024)
@@ -905,3 +898,192 @@ def test_serialize_rejects_collection_items_overflow() -> None:
     message = _envelope("input.stop", {"x-v": cast(JsonValue, [0] * 16_385)})
     with pytest.raises(ControlProtocolError):
         serialize_message(message)
+
+
+# --- review-driven regression tests (PR #175 adversarial review) ---------------
+
+
+def test_parse_rejects_non_finite_float_constants() -> None:
+    # RFC 8785's number model has no NaN/Infinity; the parser must be at
+    # least as strict as the serializer, which rejects them.
+    for constant in (b"NaN", b"Infinity", b"-Infinity"):
+        with pytest.raises(ControlProtocolError):
+            parse_message(
+                b'{"protocol":"termverify.control/v1","kind":"input.stop",'
+                b'"payload":{},"x-v":' + constant + b"}\n"
+            )
+
+
+def test_serialize_rejects_non_finite_float() -> None:
+    message = _envelope("input.stop", {})
+    message["x-v"] = cast(JsonValue, float("nan"))
+    with pytest.raises(ControlProtocolError):
+        serialize_message(message)
+
+
+def test_ready_rejects_reserved_observation_member() -> None:
+    _rejects(
+        "session.ready",
+        {"observation": _observation(bogus=1)},
+    )
+
+
+def test_ready_accepts_observation_x_member_and_optional_members() -> None:
+    parse_message(
+        _wire(
+            "session.ready",
+            {
+                "observation": _observation(
+                    frame=_frame(),
+                    process={"state": "running"},
+                    **{"x-trace": 1},
+                )
+            },
+        )
+    )
+
+
+def test_budget_does_not_count_object_keys_as_values() -> None:
+    # The spec is verbatim: "object keys are not value nodes". Built as
+    # raw JSON text: one 50-deep chain whose innermost object carries
+    # 16,384 members — 16,000 small lists of 5 (16,000×7 = 112,000 nodes
+    # if keys count; 96,000 value nodes if they do not) plus one 3,900-item
+    # list. Value nodes total 99,954, inside the 100,000 budget only when
+    # keys are not counted. Every collection stays at or under the
+    # 16,384-item ceiling, and the depth is 56 < 64.
+    small = "[" + ",".join(["0"] * 5) + "]"
+    members = [f'"x-{index}":{small}' for index in range(16_000)]
+    members.append('"x-pad":[' + ",".join(["0"] * 3_900) + "]")
+    chain = '{"x-0":' * 50 + "{" + ",".join(members) + "}" + "}" * 50
+    line = (
+        '{"protocol":"termverify.control/v1","kind":"input.stop",'
+        '"payload":{"x-v":' + chain + "}}\n"
+    )
+    parse_message(line.encode())
+
+
+def test_config_rejects_seed_with_leading_zero() -> None:
+    _rejects("session.hello", _hello_payload(seed="042"))
+
+
+def test_config_rejects_non_ascii_seed() -> None:
+    _rejects("session.hello", _hello_payload(seed="\u0664\u0662"))
+
+
+def test_config_rejects_seed_past_u64() -> None:
+    _rejects("session.hello", _hello_payload(seed="18446744073709551616"))
+
+
+def test_config_accepts_max_u64_seed() -> None:
+    parse_message(_wire("session.hello", _hello_payload(seed="18446744073709551615")))
+
+
+def test_config_rejects_clock_reserved_member() -> None:
+    _rejects(
+        "session.hello",
+        _hello_payload(clock={"mode": "manual", "initial_ms": 0, "bogus": 1}),
+    )
+
+
+def test_config_rejects_terminal_reserved_member() -> None:
+    _rejects(
+        "session.hello",
+        _hello_payload(
+            terminal={"columns": 80, "rows": 24, "capabilities": [], "bogus": 1}
+        ),
+    )
+
+
+def test_config_rejects_filesystem_reserved_member() -> None:
+    _rejects(
+        "session.hello",
+        _hello_payload(filesystem={"mode": "sandbox", "root_id": "root", "bogus": 1}),
+    )
+
+
+def test_config_rejects_network_reserved_member() -> None:
+    _rejects(
+        "session.hello",
+        _hello_payload(network={"mode": "deny", "allowed": []}),
+    )
+
+
+def test_config_rejects_endpoint_reserved_member() -> None:
+    _rejects(
+        "session.hello",
+        _hello_payload(
+            network={
+                "mode": "allow-list",
+                "allowed": [{"host": "h", "port": 1, "bogus": 1}],
+            }
+        ),
+    )
+
+
+def test_config_rejects_empty_capability() -> None:
+    _rejects(
+        "session.hello",
+        _hello_payload(terminal={"columns": 80, "rows": 24, "capabilities": [""]}),
+    )
+
+
+def test_config_rejects_unsorted_capabilities() -> None:
+    _rejects(
+        "session.hello",
+        _hello_payload(
+            terminal={"columns": 80, "rows": 24, "capabilities": ["b", "a"]}
+        ),
+    )
+
+
+def test_config_rejects_duplicate_capabilities() -> None:
+    _rejects(
+        "session.hello",
+        _hello_payload(
+            terminal={"columns": 80, "rows": 24, "capabilities": ["a", "a"]}
+        ),
+    )
+
+
+def test_config_rejects_malformed_locale() -> None:
+    _rejects("session.hello", _hello_payload(locale="!!!"))
+
+
+def test_config_rejects_unknown_timezone() -> None:
+    _rejects("session.hello", _hello_payload(timezone="Not/AZone"))
+
+
+def test_config_rejects_port_above_65535() -> None:
+    _rejects(
+        "session.hello",
+        _hello_payload(
+            network={
+                "mode": "allow-list",
+                "allowed": [{"host": "h", "port": 70000}],
+            }
+        ),
+    )
+
+
+def test_config_rejects_unsorted_allow_list() -> None:
+    _rejects(
+        "session.hello",
+        _hello_payload(
+            network={
+                "mode": "allow-list",
+                "allowed": [{"host": "b", "port": 1}, {"host": "a", "port": 1}],
+            }
+        ),
+    )
+
+
+def test_config_rejects_duplicate_allow_list_entry() -> None:
+    _rejects(
+        "session.hello",
+        _hello_payload(
+            network={
+                "mode": "allow-list",
+                "allowed": [{"host": "a", "port": 1}, {"host": "a", "port": 1}],
+            }
+        ),
+    )
