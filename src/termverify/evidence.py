@@ -299,15 +299,23 @@ def _redact_network_config(config: dict[str, JsonValue]) -> None:
 
 
 def _redact_delivery(delivery: dict[str, JsonValue]) -> None:
-    """Redact delivered spawn-environment values while keeping the shape valid.
+    """Redact delivered values while keeping the shape valid.
 
     Delivered values embed host-specific detail (absolute sandbox paths,
     requested configuration echoes), so safe evidence replaces every variable
     name and value with deterministic ordered markers and the working
     directory with a path marker; post-redaction revalidation still sees a
-    structurally valid delivery record.
+    structurally valid delivery record. `hello-config` and `wire-message`
+    deliveries carry no payload beyond the channel tag and redact to
+    themselves.
     """
-    _redact_unknown_members(delivery, frozenset({"env", "cwd"}))
+    if "channel" not in delivery:
+        # Legacy bare form: normalize toward canonical first (the codec's
+        # compat rule performs the same step at ingest).
+        delivery["channel"] = "spawn-env"
+    if delivery["channel"] != "spawn-env":
+        return
+    _redact_unknown_members(delivery, frozenset({"channel", "env", "cwd"}))
     env = delivery.get("env")
     if isinstance(env, dict):
         delivery["env"] = {

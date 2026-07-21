@@ -1,11 +1,11 @@
 # Channel-Tagged Delivery Records: A Design Amendment for Handshake and Wire-Message Delivery
 
-- **Status:** proposed — owner decisions taken in session 2026-07-20
+- **Status:** accepted — owner decisions taken in session 2026-07-20
   (issue #173 thread, decision comment
   [#issuecomment-5022762230](https://github.com/hoelzl/termverify/issues/173#issuecomment-5022762230));
-  acceptance is gated on this document's review and merge as a docs-only
-  PR. Implementation resumes in the issue #173 worktree only after
-  acceptance.
+  passed candidate-bound adversarial review and merged as PR #174.
+  This document authorizes the implementation items in "Evidence (per
+  slice)" and does not itself add code.
 - **Issue:** [#173](https://github.com/hoelzl/termverify/issues/173)
   (slice 1 of the JSONL control transport), blocking analysis at
   [#issuecomment-5022366679](https://github.com/hoelzl/termverify/issues/173#issuecomment-5022366679)

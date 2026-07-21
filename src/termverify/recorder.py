@@ -176,9 +176,11 @@ def _capability_payload(
         "tier": receipt.tier,
     }
     if receipt.delivery is not None:
-        delivery: dict[str, JsonValue] = {"env": dict(receipt.delivery.env)}
-        if receipt.delivery.cwd is not None:
-            delivery["cwd"] = receipt.delivery.cwd
+        delivery: dict[str, JsonValue] = {"channel": receipt.delivery.channel}
+        if receipt.delivery.channel == "spawn-env":
+            delivery["env"] = dict(receipt.delivery.env)
+            if receipt.delivery.cwd is not None:
+                delivery["cwd"] = receipt.delivery.cwd
         payload["delivery"] = delivery
     return payload
 

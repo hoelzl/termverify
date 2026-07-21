@@ -494,12 +494,13 @@ def test_delivered_tier_receipts_record_delivery() -> None:
         "status": "enforced",
         "effective": "42",
         "tier": "delivered",
-        "delivery": {"env": {"TERMVERIFY_SEED": "42"}},
+        "delivery": {"channel": "spawn-env", "env": {"TERMVERIFY_SEED": "42"}},
     }
     seq5 = records[5]["payload"]
     assert isinstance(seq5, dict) and seq5["tier"] == "os"
     seq6 = records[6]["payload"]
     assert isinstance(seq6, dict) and seq6["delivery"] == {
+        "channel": "spawn-env",
         "env": {"TERMVERIFY_FS_ROOT": "C:/sandbox"},
         "cwd": "C:/sandbox",
     }
