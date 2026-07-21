@@ -17,7 +17,11 @@ source of truth for volatile work state.
 
 ## Draft
 
-None.
+- [Issue #173 slice 1 implementation handover](issue-173-slice1-implementation-handover.md)
+  — **draft**; bounded session-continuation record for the uncommitted
+  `termverify.control/v1` codec + fake-child `JsonlAdapter` slice on branch
+  `feat/issue-173-control-v1-slice1`. Remove or archive without ceremony once
+  the slice PR merges or the work is abandoned.
 
 ## Archive
 

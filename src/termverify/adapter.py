@@ -600,18 +600,34 @@ class RunFailed:
 
 @dataclass(frozen=True, slots=True, init=False)
 class DeliveryRecord:
-    """Exact spawn-environment delivery claimed by a delivered-tier receipt.
+    """Exact delivery claimed by a delivered-tier receipt, tagged by channel.
 
-    The record is the claim: exactly these variables (and, for filesystem,
-    exactly this working directory) were placed into the subject's spawn
-    environment. Nothing is enforced, and the record never claims the
+    The record is the claim: the requested constraint value was delivered to
+    the subject, exactly as recorded, through the channel named by
+    ``channel``. Nothing is enforced, and the record never claims the
     subject honored the delivery.
+
+    Channels (closed set, per the amended `termverify.transcript/v1`
+    delivery model):
+
+    - ``spawn-env`` — exactly ``env`` (and, for filesystem, ``cwd``) were
+      placed into the subject's spawn environment.
+    - ``hello-config`` — the constraint's ``run.started.config`` members
+      were delivered in ``session.hello.config``; the record carries no
+      payload (``env`` is empty, ``cwd`` is ``None``).
+    - ``wire-message`` — the value was delivered as a control-protocol
+      message during the run; the record carries no payload.
     """
 
+    channel: str
     env: Mapping[str, str]
     cwd: str | None
 
     def __init__(self, env: Mapping[str, str], cwd: str | None = None) -> None:
+        """Compatibility alias for :meth:`spawn_env`."""
+        self._init_spawn_env(env, cwd)
+
+    def _init_spawn_env(self, env: Mapping[str, str], cwd: str | None) -> None:
         if not isinstance(env, Mapping):
             raise TypeError("delivery env must be a mapping of environment variables")
         frozen: dict[str, str] = {}
@@ -631,8 +647,34 @@ class DeliveryRecord:
             raise ValueError("delivery must record at least one environment variable")
         if cwd is not None and (type(cwd) is not str or not cwd or "\0" in cwd):
             raise ValueError("delivery cwd must be a non-empty NUL-free string or None")
+        object.__setattr__(self, "channel", "spawn-env")
         object.__setattr__(self, "env", MappingProxyType(frozen))
         object.__setattr__(self, "cwd", cwd)
+
+    @classmethod
+    def spawn_env(
+        cls, env: Mapping[str, str], cwd: str | None = None
+    ) -> DeliveryRecord:
+        """A spawn-environment delivery: exactly ``env`` (and ``cwd``)."""
+        return cls(env, cwd)
+
+    @classmethod
+    def hello_config(cls) -> DeliveryRecord:
+        """A handshake-config delivery; evidence is the recorded config."""
+        record = object.__new__(cls)
+        object.__setattr__(record, "channel", "hello-config")
+        object.__setattr__(record, "env", MappingProxyType({}))
+        object.__setattr__(record, "cwd", None)
+        return record
+
+    @classmethod
+    def wire_message(cls) -> DeliveryRecord:
+        """A control-protocol message delivery; evidence is the message."""
+        record = object.__new__(cls)
+        object.__setattr__(record, "channel", "wire-message")
+        object.__setattr__(record, "env", MappingProxyType({}))
+        object.__setattr__(record, "cwd", None)
+        return record
 
 
 def _validate_tier_and_delivery(
@@ -650,12 +692,15 @@ def _validate_tier_and_delivery(
         raise ValueError("only a delivered-tier receipt may carry a delivery record")
     if delivery is None:
         return
+    record = delivery
+    if record.channel != "spawn-env" and record.cwd is not None:
+        raise ValueError("only spawn-env delivery may name a working directory")
     if names_working_directory:
-        if delivery.cwd is None:
+        if record.channel != "spawn-env" or record.cwd is None:
             raise ValueError(
                 "filesystem delivery must name the delivered working directory"
             )
-    elif delivery.cwd is not None:
+    elif record.cwd is not None:
         raise ValueError("only filesystem delivery may name a working directory")
 
 

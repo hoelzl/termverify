@@ -272,6 +272,69 @@ def test_delivery_record_rejects_invalid_working_directories(cwd: object) -> Non
         DeliveryRecord(env={"TERMVERIFY_FS_ROOT": "C:\\x"}, cwd=cast(str, cwd))
 
 
+# --- channel-tagged delivery records (amendment: channel-tagged delivery) ---
+
+
+def test_spawn_env_record_names_its_channel() -> None:
+    record = DeliveryRecord.spawn_env({"TERMVERIFY_SEED": "42"})
+    assert record.channel == "spawn-env"
+    assert dict(record.env) == {"TERMVERIFY_SEED": "42"}
+    assert record.cwd is None
+
+
+def test_keyword_constructor_is_a_spawn_env_alias() -> None:
+    record = DeliveryRecord(env={"TERMVERIFY_SEED": "42"})
+    assert record.channel == "spawn-env"
+
+
+def test_hello_config_record_carries_no_payload() -> None:
+    record = DeliveryRecord.hello_config()
+    assert record.channel == "hello-config"
+    assert dict(record.env) == {}
+    assert record.cwd is None
+
+
+def test_wire_message_record_carries_no_payload() -> None:
+    record = DeliveryRecord.wire_message()
+    assert record.channel == "wire-message"
+    assert dict(record.env) == {}
+    assert record.cwd is None
+
+
+def test_delivery_records_of_one_channel_are_equal_and_frozen() -> None:
+    assert DeliveryRecord.hello_config() == DeliveryRecord.hello_config()
+    assert DeliveryRecord.wire_message() == DeliveryRecord.wire_message()
+    assert DeliveryRecord.hello_config() != DeliveryRecord.wire_message()
+    assert DeliveryRecord.spawn_env({"A": "1"}) != DeliveryRecord.hello_config()
+    with pytest.raises(AttributeError):
+        DeliveryRecord.hello_config().env = {}  # type: ignore[misc]
+
+
+def test_delivered_terminal_receipt_accepts_hello_config_delivery() -> None:
+    from termverify.adapter import TerminalConfiguration, TerminalReceipt
+
+    receipt = TerminalReceipt(
+        RUN_ID,
+        TerminalConfiguration(columns=80, rows=24, capabilities=()),
+        tier="delivered",
+        delivery=DeliveryRecord.hello_config(),
+    )
+    assert receipt.delivery is not None
+    assert receipt.delivery.channel == "hello-config"
+
+
+def test_non_spawn_env_delivery_rejects_a_working_directory() -> None:
+    from termverify.adapter import FilesystemConfiguration, FilesystemReceipt
+
+    with pytest.raises(ValueError, match="working directory"):
+        FilesystemReceipt(
+            RUN_ID,
+            FilesystemConfiguration(root_id="root"),
+            tier="delivered",
+            delivery=DeliveryRecord.hello_config(),
+        )
+
+
 # --- authorization matrix: direct adapter ----------------------------------
 
 
@@ -566,15 +629,113 @@ def test_delivered_capability_result_round_trips() -> None:
     records = _basic_records()
     payload = _capability_payload(records, 1)
     payload["tier"] = "delivered"
-    payload["delivery"] = {"env": {"TERMVERIFY_SEED": "0"}}
+    payload["delivery"] = {"channel": "spawn-env", "env": {"TERMVERIFY_SEED": "0"}}
     filesystem = _capability_payload(records, 6)
     filesystem["tier"] = "delivered"
     filesystem["delivery"] = {
+        "channel": "spawn-env",
         "env": {"TERMVERIFY_FS_ROOT": "C:\\sandbox\\fixture-root"},
         "cwd": "C:\\sandbox\\fixture-root",
     }
 
     assert parse_transcript(serialize_transcript(records)) == records
+
+
+def test_legacy_bare_delivery_form_normalizes_to_spawn_env() -> None:
+    records = _basic_records()
+    payload = _capability_payload(records, 1)
+    payload["tier"] = "delivered"
+    payload["delivery"] = {
+        "channel": "spawn-env",
+        "env": {"TERMVERIFY_SEED": "0"},
+    }
+    data = serialize_transcript(records).replace(
+        b'"delivery":{"channel":"spawn-env","env":{"TERMVERIFY_SEED":"0"}}',
+        b'"delivery":{"env":{"TERMVERIFY_SEED":"0"}}',
+    )
+
+    normalized = parse_transcript(data)
+    delivery = _capability_payload(normalized, 1)["delivery"]
+    assert delivery == {"channel": "spawn-env", "env": {"TERMVERIFY_SEED": "0"}}
+
+
+def test_legacy_bare_filesystem_delivery_normalizes_with_cwd() -> None:
+    records = _basic_records()
+    filesystem = _capability_payload(records, 6)
+    filesystem["tier"] = "delivered"
+    filesystem["delivery"] = {
+        "channel": "spawn-env",
+        "env": {"TERMVERIFY_FS_ROOT": "C:\\sandbox"},
+        "cwd": "C:\\sandbox",
+    }
+    data = serialize_transcript(records).replace(
+        b'"delivery":{"channel":"spawn-env","env":{"TERMVERIFY_FS_ROOT":"C:\\\\sandbox"},"cwd":"C:\\\\sandbox"}',
+        b'"delivery":{"env":{"TERMVERIFY_FS_ROOT":"C:\\\\sandbox"},"cwd":"C:\\\\sandbox"}',
+    )
+
+    normalized = parse_transcript(data)
+    delivery = _capability_payload(normalized, 6)["delivery"]
+    assert delivery == {
+        "channel": "spawn-env",
+        "env": {"TERMVERIFY_FS_ROOT": "C:\\sandbox"},
+        "cwd": "C:\\sandbox",
+    }
+
+
+def test_mixed_delivery_form_with_env_and_channel_rejects() -> None:
+    records = _basic_records()
+    payload = _capability_payload(records, 1)
+    payload["tier"] = "delivered"
+    payload["delivery"] = {
+        "channel": "spawn-env",
+        "env": {"TERMVERIFY_SEED": "0"},
+    }
+
+    # The canonical tagged form itself must validate.
+    assert parse_transcript(serialize_transcript(records)) == records
+
+    payload["delivery"] = {
+        "channel": "hello-config",
+        "env": {"TERMVERIFY_SEED": "0"},
+    }
+    with pytest.raises(TranscriptValidationError, match="delivery"):
+        serialize_transcript(records)
+
+
+def test_hello_config_delivery_carries_no_payload_members() -> None:
+    records = _basic_records()
+    terminal = _capability_payload(records, 5)
+    terminal["tier"] = "delivered"
+    terminal["delivery"] = {"channel": "hello-config"}
+
+    assert parse_transcript(serialize_transcript(records)) == records
+
+    terminal["delivery"] = {"channel": "hello-config", "cwd": "C:\\x"}
+    with pytest.raises(TranscriptValidationError, match="delivery"):
+        serialize_transcript(records)
+
+
+def test_wire_message_delivery_is_admitted_without_an_emitter() -> None:
+    records = _basic_records()
+    payload = _capability_payload(records, 1)
+    payload["tier"] = "delivered"
+    payload["delivery"] = {"channel": "wire-message"}
+
+    assert parse_transcript(serialize_transcript(records)) == records
+
+    payload["delivery"] = {"channel": "wire-message", "env": {"A": "1"}}
+    with pytest.raises(TranscriptValidationError, match="delivery"):
+        serialize_transcript(records)
+
+
+def test_unknown_delivery_channel_rejects() -> None:
+    records = _basic_records()
+    payload = _capability_payload(records, 1)
+    payload["tier"] = "delivered"
+    payload["delivery"] = {"channel": "bogus", "env": {"A": "1"}}
+
+    with pytest.raises(TranscriptValidationError, match="delivery"):
+        serialize_transcript(records)
 
 
 @pytest.mark.parametrize(
@@ -624,6 +785,7 @@ def test_safe_evidence_redacts_delivery_values_and_revalidates(
     payload = _capability_payload(records, 6)
     payload["tier"] = "delivered"
     payload["delivery"] = {
+        "channel": "spawn-env",
         "env": {"TERMVERIFY_FS_ROOT": "C:\\Users\\secret\\sandbox"},
         "cwd": "C:\\Users\\secret\\sandbox",
     }

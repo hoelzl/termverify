@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import re
+from collections.abc import Callable
 from typing import cast
 
 import rfc8785
@@ -77,7 +78,12 @@ class TranscriptValidationError(ValueError):
 
 
 def parse_transcript(data: bytes) -> list[Record]:
-    """Parse canonical v1 JSONL *data* and validate its envelope and lifecycle."""
+    """Parse canonical v1 JSONL *data* and validate its envelope and lifecycle.
+
+    Before validation, the codec's compat rules normalize documented legacy
+    forms toward the canonical shape (see ``_COMPAT_RULES``); validation
+    proper sees only the canonical form.
+    """
     if len(data) > _MAX_TRANSCRIPT_BYTES:
         raise TranscriptValidationError("transcript bytes exceed the v1 limit")
     if (
@@ -98,12 +104,42 @@ def parse_transcript(data: bytes) -> list[Record]:
         _validate_json_nesting(line, number)
     try:
         records = [_parse_line(line, number) for number, line in enumerate(lines)]
+        for rule in _COMPAT_RULES:
+            rule(records)
         _validate_lifecycle(records)
         return records
     except RecursionError as error:
         raise TranscriptValidationError(
             "transcript JSON nesting exceeds the supported depth"
         ) from error
+
+
+def _normalize_delivery_channel(records: list[Record]) -> None:
+    """Normalize the legacy bare delivery form to the canonical tagged form.
+
+    Compat rule for the amendment of 2026-07-20 (channel-tagged delivery
+    records, owner decision on issue #173): a delivered-tier
+    ``capability.result`` whose ``delivery`` object has no ``channel``
+    member is the pre-amendment bare form and is rewritten to
+    ``{"channel": "spawn-env", ...}``. A form carrying both ``env`` and an
+    explicit ``channel`` member is rejected by validation (the tagged
+    ``hello-config``/``wire-message`` shapes admit no payload members, and
+    an unknown channel rejects), so this rule never relaxes acceptance.
+    """
+    for record in records:
+        if record["kind"] != "capability.result":
+            continue
+        payload = record["payload"]
+        if not isinstance(payload, dict):
+            continue
+        delivery = payload.get("delivery")
+        if isinstance(delivery, dict) and "channel" not in delivery:
+            payload["delivery"] = {"channel": "spawn-env", **delivery}
+
+
+_COMPAT_RULES: tuple[Callable[[list[Record]], None], ...] = (
+    _normalize_delivery_channel,
+)
 
 
 def serialize_transcript(records: list[Record]) -> bytes:
@@ -603,10 +639,10 @@ def _validate_capability_tier(constraint: str, payload: dict[str, JsonValue]) ->
     """Validate the `termverify.enforcement-tier/v1` tier/delivery pairing.
 
     The tier states how strong the enforcement claim is; a delivered-tier
-    result additionally records the exact delivered spawn environment. Which
-    tier a negotiation path may state is runtime receipt-binding validation
-    inside the adapters — a transcript records the stated tier but cannot
-    know the emitting path.
+    result additionally records the channel through which delivery flowed.
+    Which tier a negotiation path may state is runtime receipt-binding
+    validation inside the adapters — a transcript records the stated tier but
+    cannot know the emitting path.
     """
     tier = payload.get("tier")
     if not is_enforcement_tier(tier):
@@ -624,34 +660,44 @@ def _validate_capability_tier(constraint: str, payload: dict[str, JsonValue]) ->
         raise TranscriptValidationError(
             "a delivered-tier capability result requires a delivery object"
         )
-    if _has_unknown_generic_members(delivery, frozenset({"env", "cwd"})):
-        raise TranscriptValidationError("capability delivery members are invalid")
-    env = delivery.get("env")
-    if not isinstance(env, dict) or not env:
-        raise TranscriptValidationError(
-            "capability delivery env must be a non-empty object"
-        )
-    for name, value in env.items():
-        if not name or not isinstance(value, str) or not value:
+    channel = delivery.get("channel")
+    if channel == "spawn-env":
+        if _has_unknown_generic_members(delivery, frozenset({"channel", "env", "cwd"})):
+            raise TranscriptValidationError("capability delivery members are invalid")
+        env = delivery.get("env")
+        if not isinstance(env, dict) or not env:
             raise TranscriptValidationError(
-                "capability delivery env must map non-empty variable names"
-                " to non-empty string values"
+                "capability delivery env must be a non-empty object"
             )
-        if "=" in name or "\0" in name or "\0" in value:
+        for name, value in env.items():
+            if not name or not isinstance(value, str) or not value:
+                raise TranscriptValidationError(
+                    "capability delivery env must map non-empty variable names"
+                    " to non-empty string values"
+                )
+            if "=" in name or "\0" in name or "\0" in value:
+                raise TranscriptValidationError(
+                    "capability delivery env members must be deliverable:"
+                    " no '=' in names and no NUL anywhere"
+                )
+        if constraint == "filesystem":
+            cwd = delivery.get("cwd")
+            if not isinstance(cwd, str) or not cwd or "\0" in cwd:
+                raise TranscriptValidationError(
+                    "filesystem capability delivery must name a non-empty NUL-free cwd"
+                )
+        elif "cwd" in delivery:
             raise TranscriptValidationError(
-                "capability delivery env members must be deliverable:"
-                " no '=' in names and no NUL anywhere"
+                "only filesystem capability delivery may name a cwd"
             )
-    if constraint == "filesystem":
-        cwd = delivery.get("cwd")
-        if not isinstance(cwd, str) or not cwd or "\0" in cwd:
+    elif channel in ("hello-config", "wire-message"):
+        if _has_unknown_generic_members(delivery, frozenset({"channel"})):
             raise TranscriptValidationError(
-                "filesystem capability delivery must name a non-empty NUL-free cwd"
+                "hello-config and wire-message delivery objects admit no"
+                " payload members beyond channel"
             )
-    elif "cwd" in delivery:
-        raise TranscriptValidationError(
-            "only filesystem capability delivery may name a cwd"
-        )
+    else:
+        raise TranscriptValidationError("capability delivery channel is invalid")
 
 
 def _validate_manual_clock(config: dict[str, JsonValue]) -> int:

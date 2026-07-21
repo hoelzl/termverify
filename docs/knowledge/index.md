@@ -10,6 +10,8 @@ This directory is an [Open Knowledge Format (OKF) v0.1](https://github.com/Googl
 - [Evidence governance](evidence-governance.md) — accepted redaction, capture,
   and baseline-approval controls.
 - [Protocol](protocol.md) — the planned interaction and observation contract.
+- [Control protocol](control-protocol.md) — the `termverify.control/v1`
+  live wire protocol for JSONL-subprocess subjects.
 
 ## Navigation rule
 
