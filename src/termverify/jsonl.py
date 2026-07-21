@@ -114,6 +114,7 @@ from termverify.control import (
 
 __all__ = [
     "JsonlAdapter",
+    "JsonlBinding",
     "JsonlBindingPort",
     "JsonlChildClosedError",
     "JsonlChildPort",
@@ -202,6 +203,28 @@ class TimerWatchdog:
         timer.daemon = True
         timer.start()
         return timer.cancel
+
+
+class JsonlBinding:
+    """The shipped real binding: one contained pipe subprocess per spawn.
+
+    A thin delegate to ``termverify._jsonl_pipe.PipeJsonlChild`` — the
+    pipe-only generalization of the ConPTY binding's containment patterns:
+    a kill-on-close job object on Windows, a process group on POSIX, with
+    identical observable outcomes on every platform (real exit record,
+    forced-termination record, no survivors).
+    """
+
+    def spawn(
+        self,
+        argv: Sequence[str],
+        *,
+        env_overlay: Mapping[str, str] | None = None,
+        cwd: str | None = None,
+    ) -> JsonlChildPort:
+        from termverify._jsonl_pipe import PipeJsonlChild
+
+        return PipeJsonlChild.spawn(argv, env_overlay=env_overlay, cwd=cwd)
 
 
 #: The `termverify.enforcement-tier/v1` authorization matrix row for the
