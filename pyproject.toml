@@ -96,6 +96,16 @@ warn_unreachable = true
 module = "winpty.*"
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+# _jsonl_pipe.py is deliberately two-platform: the Windows containment leg
+# is wrapped in ``if sys.platform == "win32"`` (unreachable to a POSIX
+# mypy, so the ctypes names need no stubs) and its POSIX fallthrough is
+# unreachable to a Windows mypy. warn_unreachable would flag the
+# fallthrough on Windows and the wrapped leg on POSIX; both are real code
+# on their own platform, so the warning is disabled for this module only.
+module = "termverify._jsonl_pipe"
+warn_unreachable = false
+
 [tool.bumpversion]
 current_version = "0.1.0"
 commit = true

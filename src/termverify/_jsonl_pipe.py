@@ -257,7 +257,7 @@ class PipeJsonlChild:
             cwd=cwd,
             start_new_session=os.name != "nt",
         )
-        if os.name == "nt":  # pragma: no cover - Windows-only containment leg
+        if sys.platform == "win32":  # pragma: no cover - Windows-only containment leg
             job: int | None = None
             process_handle: int | None = None
             try:
@@ -454,11 +454,11 @@ class PipeJsonlChild:
         finally:
             self._close_pipes(process)
             if (
-                process_handle is not None and os.name == "nt"
+                process_handle is not None and sys.platform == "win32"
             ):  # pragma: no cover - Windows-only leg
                 _kernel32.CloseHandle(process_handle)
             if (
-                job is not None and os.name == "nt"
+                job is not None and sys.platform == "win32"
             ):  # pragma: no cover - Windows-only leg
                 # Kill-on-close sweeps every remaining job member, so even
                 # a failed graceful path cannot leak the tree.
@@ -509,7 +509,7 @@ class PipeJsonlChild:
         if process.stdin is not None:
             with _suppress_os_errors():
                 cast("io.BufferedWriter", process.stdin).detach()
-        if os.name == "nt":  # pragma: no cover - Windows-only containment leg
+        if sys.platform == "win32":  # pragma: no cover - Windows-only containment leg
             if job is None:
                 # Defensive: unreachable on the only construction path.
                 raise OSError("no containment job to terminate")
@@ -523,7 +523,7 @@ class PipeJsonlChild:
     ) -> None:
         """Wait for the real exit; on Windows prefer the handle wait."""
         if (
-            os.name == "nt" and process_handle is not None
+            sys.platform == "win32" and process_handle is not None
         ):  # pragma: no cover - Windows-only leg
             if not _wait_for_handle(process_handle, int(_CHILD_EXIT_WAIT_S * 1000)):
                 raise OSError(
