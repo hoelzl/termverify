@@ -78,6 +78,9 @@ immutable after freeze.
 - [Direct adapter guide](direct-adapter.md) — semantics of the in-process
   path: single-flight discipline, manual-time rules, failure containment,
   receipt binding.
+- [JSONL adapter guide](jsonl-adapter.md) — operating the
+  `termverify.control/v1` adapter: spawning subjects over pipes, tree
+  containment, honest teardown, and the reference fixture subject.
 - `docs/knowledge/protocol.md` — the transcript wire contract your recorded
   runs must satisfy.
 - Issue [#114](https://github.com/hoelzl/termverify/issues/114) tracks the

@@ -233,8 +233,13 @@ A conforming subject:
 
 1. reads stdin as bytes, decodes UTF-8, splits on LF — pipe input has
    none of the console-input parsing caveats a terminal has;
-2. answers `session.hello` with exactly one handshake reply;
-3. honors the negotiated constraints as delivered in its spawn
+2. flushes its stdout **after every protocol message** — the transport
+   is a pipe, so an unflushed reply is invisible to the adapter and
+   hangs the epoch until the abort deadline (diagnosed only as
+   `epoch-timeout`). Use unbuffered mode (e.g. `python -u`) or an
+   explicit flush per message;
+3. answers `session.hello` with exactly one handshake reply;
+4. honors the negotiated constraints as delivered in its spawn
    environment and the hello configuration — delivery, not enforcement,
    is the adapter's boundary, so honoring is the subject's documented
    cooperation obligation. Receipts record the delivery channel per the
@@ -243,10 +248,10 @@ A conforming subject:
    the six cooperation-port constraints are `spawn-env` deliveries, and
    the terminal constraint is a `hello-config` delivery whose evidence
    is the hello `config` itself;
-4. treats `input.clock`'s target as its only current time from that
+5. treats `input.clock`'s target as its only current time from that
    epoch onward;
-5. closes every epoch with exactly one `observation` or a terminal
+6. closes every epoch with exactly one `observation` or a terminal
    message, and never speaks out of turn;
-6. exits after `run.finished` or `run.failed`, and may simply exit on
+7. exits after `run.finished` or `run.failed`, and may simply exit on
    its own — the adapter observes the real exit record at the OS
    boundary.
