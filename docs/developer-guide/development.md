@@ -56,6 +56,7 @@ src/termverify/       distributable library
  docs/knowledge/       durable OKF knowledge bundle
  docs/developer-guide/ contributor workflows
  docs/agent/design/    architectural decisions and reuse assessments
+ docs/agent/reviews/   adversarial and independent review reports
  skills/               proven reusable playbooks, added only when warranted
 ```
 
