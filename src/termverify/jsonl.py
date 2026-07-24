@@ -130,7 +130,6 @@ _HANDSHAKE_TIMEOUT: Final = "handshake-timeout"
 _PEER_MALFORMED: Final = "peer-malformed"
 _PEER_LIFECYCLE: Final = "peer-lifecycle"
 _EPOCH_TIMEOUT: Final = "epoch-timeout"
-_TEARDOWN_FORCED: Final = "teardown-forced"
 
 type _State = Literal[
     "created", "negotiating", "initializing", "idle", "active", "stopping", "terminal"
