@@ -221,8 +221,7 @@ never diagnostics:
 | `handshake-timeout` | The abort deadline expired before the child completed the handshake reply. |
 | `peer-malformed` | A child message is not a valid v1 message: malformed JSON, wrong protocol tag, unknown kind, missing or misspelled required member, non-`x-` extension violation, or a resource-limit breach. |
 | `peer-lifecycle` | A structurally valid message arrives out of lifecycle position: traffic before `session.hello` could only be a race on reused pipes, a second readiness, an observation with no epoch open, an input's closing message never arriving before the next input, or traffic after a terminal message. |
-| `epoch-timeout` | The abort deadline expired with an epoch open: no closing observation or terminal message arrived in time. The deadline is host abort policy, not evidence. |
-| `teardown-forced` | The adapter terminated the child tree (deadline expiry or forced stop); the exit record is the forced-termination record, disclosed as such. |
+| `epoch-timeout` | The abort deadline expired with an epoch open: no closing observation or terminal message arrived in time. The deadline is host abort policy, not evidence. When the deadline expiry forces the adapter to terminate the child tree, the forced-termination exit record is disclosed as such in the terminal result. |
 
 Subject-reported failures arrive as `session.failed` or `run.failed`
 messages and keep the subject's own error codes.

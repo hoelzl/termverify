@@ -265,11 +265,18 @@ direct runtime cannot have: `spawn-failed`, `handshake-timeout`,
 `peer-malformed` (non-JSON, wrong protocol tag, unknown kind, limit
 violation), `peer-lifecycle` (message out of state — an observation
 with no epoch open, a second readiness, body traffic after a terminal
-message), `epoch-timeout` (the abort deadline expired with an epoch
-open), and `teardown-forced` (the child tree was terminated; the exit
-record is the forced-termination code, disclosed as in the ConPTY
-adapter's forced-stop pattern). All are `run.failed`/`StartFailed`
+message), and `epoch-timeout` (the abort deadline expired with an epoch
+open). All are `run.failed`/`StartFailed`
 material, never diagnostics.
+
+> **Amendment (issue #178):** the originally-enumerated sixth code
+> `teardown-forced` was removed before `termverify.control/v1` froze
+> (first PyPI publication). It was defined but never emitted — the
+> deadline-abort path emits `epoch-timeout` and discloses the
+> forced-termination exit record in the terminal result, which is the
+> intended surface. The protocol text
+> (`docs/knowledge/control-protocol.md`) is authoritative; the
+> disclosure claim now lives on the `epoch-timeout` row.
 
 ## Constraint semantics across the process boundary
 

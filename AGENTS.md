@@ -40,6 +40,7 @@ TermVerify is a Python library and reference tooling for verifying autonomous te
 | Durable architecture, protocol, terminology, and verification knowledge | `docs/knowledge/` (OKF bundle) |
 | Agent design decisions, reuse assessments, and handovers | `docs/agent/design/` and `docs/agent/handovers/` |
 | Durable implementation plans for accepted initiatives | `docs/agent/plans/` |
+| Adversarial and independent review reports | `docs/agent/reviews/` |
 | Reusable agent playbooks | `skills/` only after their workflow is proven and stable |
 
 `docs/knowledge/` follows OKF: `index.md` files are navigation-only; every other Markdown document has YAML frontmatter with at least a `type` field.
