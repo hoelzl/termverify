@@ -31,6 +31,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -39,6 +40,7 @@ from pathlib import Path
 import pytest
 
 from termverify._jsonl_pipe import FORCED_TERMINATION_SIGNAL, PipeJsonlChild
+from termverify.control import _MAX_LINE_BYTES, ControlProtocolError, parse_message
 from termverify.jsonl import JsonlChildClosedError, JsonlEndOfStreamError
 
 _OS_WAIT_TIMEOUT_S = 30.0
@@ -295,3 +297,86 @@ def test_forced_close_unblocks_an_in_flight_read() -> None:
     assert len(outcome) == 1
     assert isinstance(outcome[0], JsonlChildClosedError)
     _wait_for_exit(pid)
+
+
+#: Flood child: streams newline-free bytes forever — a hostile subject
+#: probing the reader's memory bound (adversarial review 2026-07-24, R1).
+_FLOOD_CHILD = """\
+import sys
+
+chunk = b"a" * 65536
+while True:
+    sys.stdout.buffer.write(chunk)
+    sys.stdout.buffer.flush()
+"""
+
+
+#: Maximal-line child: one conforming line of exactly the framed ceiling
+#: (body of MAXBYTES bytes plus LF) and the next message, emitted as one
+#: single write so the tail bytes are adjacent in the pipe when the parent
+#: drains the LF — the coalescing the regression test exists to force is
+#: then deterministic, not an OS scheduling race (re-review finding).
+#: Then a hang so the pipe stays open.
+_MAXIMAL_LINE_CHILD = """\
+import sys
+import time
+
+sys.stdout.buffer.write(b"a" * MAXBYTES + b"\\nnext\\n")
+sys.stdout.buffer.flush()
+time.sleep(600)
+"""
+
+
+def test_read_line_bounds_a_newline_free_flood_at_the_protocol_line_ceiling() -> None:
+    """A subject streaming bytes without LF cannot grow the buffer unboundedly.
+
+    The binding must stop accumulating once the LF-free buffer exceeds
+    the ``termverify.control/v1`` framed-line ceiling and hand the
+    oversized buffer to the caller, whose ``parse_message`` rejects it —
+    the existing peer-malformed path. The deadline bounds time; this
+    bounds memory. The read runs on a joined helper thread so a
+    regression fails this test within the wait budget instead of hanging
+    the CI job with unbounded memory.
+    """
+    with _reaped(_spawn(_FLOOD_CHILD)) as child:
+        outcome: list[bytes | BaseException] = []
+
+        def _read() -> None:
+            try:
+                outcome.append(child.read_line())
+            except BaseException as error:  # noqa: BLE001 - diagnostic capture
+                outcome.append(error)
+
+        reader = threading.Thread(target=_read, daemon=True)
+        reader.start()
+        reader.join(timeout=_OS_WAIT_TIMEOUT_S)
+        assert not reader.is_alive(), (
+            "read_line did not bound the newline-free flood within the budget"
+        )
+        assert outcome and isinstance(outcome[0], bytes), (
+            f"read_line raised instead of returning the bounded line: {outcome!r}"
+        )
+        line = outcome[0]
+        assert len(line) > _MAX_LINE_BYTES
+        assert len(line) <= _MAX_LINE_BYTES + 1 + 65536
+        assert not line.endswith(b"\n")
+        with pytest.raises(ControlProtocolError) as excinfo:
+            parse_message(line)
+        assert "exceed the v1 limit" in str(excinfo.value)
+
+
+def test_read_line_frames_a_maximal_line_followed_by_more_data_exactly() -> None:
+    """Regression guard (adversarial re-review of this slice): the memory
+    bound must not fire while an LF is buffered.
+
+    A conforming subject may send a maximal framed line (body exactly at
+    the ceiling, then LF) with the next message coalescing into the same
+    buffered reads; the binding must frame both lines exactly rather
+    than merging them into a rejected pseudo-line.
+    """
+    script = _MAXIMAL_LINE_CHILD.replace("MAXBYTES", str(_MAX_LINE_BYTES))
+    with _reaped(_spawn(script)) as child:
+        first = child.read_line()
+        assert len(first) == _MAX_LINE_BYTES + 1
+        assert first == b"a" * _MAX_LINE_BYTES + b"\n"
+        assert child.read_line() == b"next\n"
