@@ -30,10 +30,15 @@ resource contract; the schema's `$id` resolves at
 [termverify.dev](https://termverify.dev/schemas/termverify.transcript/v1.schema.json)
 as a byte-identical mirror of the committed resource, and runtime validation
 remains authoritative. A strict no-regression coverage floor gates the full
-suite. Release governance is defined — changelog and pre-1.0 compatibility
-policy, private security disclosure, reviewed release checklist, and a
-tag-triggered attested draft-artifact workflow — although no release is
-authorized and nothing is published to a package index. A Windows ConPTY
+suite. Release governance is defined — changelog policy, private security
+disclosure, reviewed release checklist, and a tag-triggered attested release
+workflow — and termverify 0.1.0 was published to PyPI on 2026-07-19 through
+that CI-gated workflow. That publication was a distribution-pipeline
+exercise, not a stability promise: TermVerify is in its **prototyping
+stage**, no backward compatibility is guaranteed for any published artifact,
+and protocols and APIs may change incompatibly without notice until the
+owner declares readiness for external clients (recorded governance decision:
+[prototyping-stage protocol governance](docs/agent/design/prototyping-stage-protocol-governance.md)). A Windows ConPTY
 adapter with Windows-matrix evidence covers native pseudoconsole ownership
 and close, end-of-stream draining, process-tree teardown,
 cancellation/recovery, resize epochs, and replayable evidence normalization,
