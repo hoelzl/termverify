@@ -370,7 +370,15 @@ class PipeJsonlChild:
                 self._capture_exit_status_after_eos()
                 raise JsonlEndOfStreamError("the child's stdout reported end-of-stream")
             self._read_buffer.extend(chunk)
-            if len(self._read_buffer) > _MAX_LINE_BYTES + 1:
+            if (
+                len(self._read_buffer) > _MAX_LINE_BYTES + 1
+                and b"\n" not in self._read_buffer
+            ):
+                # Memory bound, not framing: only an LF-free over-ceiling
+                # buffer can never become a valid line. A buffered LF means
+                # complete lines exist — the loop top drains them, and an
+                # oversized *framed* line is still rejected by length in
+                # parse_message, never here.
                 line = bytes(self._read_buffer)
                 self._read_buffer.clear()
                 return line
