@@ -8,7 +8,8 @@
   (reviewed revision: `main` @ `8f33e6c`).
 - **Owner:** project maintainer
 - **Created:** 2026-07-24
-- **Updated:** 2026-07-24
+- **Updated:** 2026-07-25 (checkpoint: Phase 1 complete, Phase 2 two-thirds
+  complete, next item Slice 2.2 / #188)
 - **Review required:** yes — every slice that changes runtime behavior, the
   public API, protocol prose with normative force, or release/security claims
   requires TDD evidence, full validation, and an independent adversarial
@@ -154,7 +155,11 @@ Every review finding maps to an issue above or to a disposition already
 recorded in this handover (9.3 freeze suspension — #184; PR-177 root files —
 already resolved by PR #183).
 
-### Phase 1 — Status-truth documentation fixes (review recs 1, 4) [TODO]
+### Phase 1 — Status-truth documentation fixes (review recs 1, 4) [DONE 2026-07-25]
+
+Slice 1.1 merged as PR #206 (resolves #185); Slice 1.2 merged as PR #207
+(resolves #186). The protocol.md freeze statement had already landed with
+the governance PR #205. Original slice text follows for the record.
 
 Doc-only. One or two PRs. Findings: **C1**, **P3** (statement part), **P1**
 (doc side), plus the doc-hygiene minors that are pure prose.
@@ -204,12 +209,27 @@ and the transcript docstring no longer contradict runtime acceptance; each
 listed hygiene item done. Validation: `pre-commit run --all-files` plus the
 repo's docs validators.
 
-### Phase 2 — One-comparison runtime hardening (review rec 2, 3) [TODO]
+### Phase 2 — One-comparison runtime hardening (review rec 2, 3) [IN PROGRESS]
 
 Small, high-leverage behavioral fixes. Strict TDD each. Findings: **R1**,
-**R3**, **R5**.
+**R3**, **R5**. Status 2026-07-25: Slices 2.1 (PR #208) and 2.3 (PR #209)
+are merged with fresh-context adversarial reviews; **Slice 2.2 (#188) is
+the next work item** — its design is settled (mirror the ConPTY binding's
+checked `_assign_to_job`/`_terminate_job` wrappers in `_jsonl_pipe.py`;
+the spawn path's existing `except OSError` block already fails closed;
+tests monkeypatch the `_kernel32` function attributes to force the
+failure legs, Windows-only).
 
-- **Slice 2.1 — Bound the JSONL read buffer (R1).**
+- **Slice 2.1 — Bound the JSONL read buffer (R1). [DONE — PR #208]**
+  Merged 2026-07-25 after a three-round adversarial review whose round 1
+  correctly REJECTED the first implementation: the memory-bound guard
+  fired even when an LF was buffered, which would have misclassified a
+  conforming maximal framed line whose next message coalesced into the
+  same reads. Final shape: the bound applies only to LF-free
+  over-ceiling buffers; a real-child regression test (single-write
+  maximal line + tail, deterministic coalescing) guards the exact bug;
+  the flood test reads on a bounded joined thread. Review trail is on
+  the PR. Original slice text:
   `src/termverify/_jsonl_pipe.py:328-365` (`_read_line_tracked`): fail once
   the accumulated buffer exceeds `_MAX_LINE_BYTES + 1` (import/share the
   ceiling from `control.py`) instead of buffering an unbounded newline-free
@@ -225,7 +245,16 @@ Small, high-leverage behavioral fixes. Strict TDD each. Findings: **R1**,
   the ConPTY binding's correct pattern (`_conpty.py:214-216`). Also check
   `TerminateJobObject`'s return at `:516` (same-lines minor). Windows-only
   tests.
-- **Slice 2.3 — Reject unpaired surrogates in the control codec (R5).**
+- **Slice 2.3 — Reject unpaired surrogates in the control codec (R5).
+  [DONE — PR #209]** Merged 2026-07-25, adversarial review ACCEPT WITH
+  NITS (all nits applied: explicit unpaired-surrogate sentence in the
+  normative control-protocol.md framing rules, payload-positioned
+  rejection test, hoisted import). Reviewer-verified: ingress-complete
+  for the wire path; both codec directions now reject with the codec's
+  own error. **Recorded scope note for Slices 8.1/8.2:** host-injected
+  custom ConPTY/direct ports can still hand surrogate-bearing `str` to
+  the recorder (trusted-host defense-in-depth, deliberately out of this
+  slice). Original slice text:
   `src/termverify/control.py`: `_validate_json_value` must reject lone
   surrogates so `parse_message` never admits a string
   `serialize_transcript` will refuse — restoring codec symmetry and turning a
@@ -535,8 +564,25 @@ implementation gets its own future handover/boundary, not this one.
   9.4 → remove the timezone registry. The PR-177 root-file minor was
   already resolved by PR #183.
 - **Phase 0 complete (2026-07-24):** issues #184–#204 filed under the
-  `review-2026-07-24` label (mapping table in Phase 0 above). Next
-  implementation action: Slice 1.1 (#185).
+  `review-2026-07-24` label (mapping table in Phase 0 above).
+- **Checkpoint 2026-07-25 (autonomous session paused by owner request):**
+  - **Merged:** governance docs (PR #205, closes #184); Slice 1.1
+    (PR #206, closes #185); Slice 1.2 (PR #207, closes #186); Slice 2.1
+    (PR #208, closes #187 — three-round adversarial review, round 1
+    caught a real regression in the first implementation); Slice 2.3
+    (PR #209, closes #189 — review ACCEPT WITH NITS, nits applied).
+    Phase 1 is complete; Phase 2 is two-thirds complete.
+  - **Working state is clean:** primary checkout on `main`, no
+    outstanding worktrees or local branches, all merged branches
+    deleted and pruned.
+  - **Next work item when the loop resumes: Slice 2.2 (#188)** — design
+    settled (see Phase 2 note), then Phases 3–8 in handover order.
+  - Process note for future sessions: every PR must be up to date with
+    `main` before merge (branch-protection), so merge strictly
+    sequentially and rebase the next branch after each merge; run
+    fresh-context adversarial reviews for behavioral slices — round 1
+    of the Slice 2.1 review rejected a defect that all local tests had
+    missed, which is exactly the evidence the loop exists to produce.
 - **Remaining at-issue-time owner touchpoints (not up-front blockers):**
   - Slice 3.1: sign-off on the exact replacement wire vocabulary drafted in
     the issue.
@@ -550,16 +596,18 @@ implementation gets its own future handover/boundary, not this one.
 
 ## 5. Next steps
 
-1. ~~Phase 0: file the issues~~ **done 2026-07-24** — #184–#204, mapping
-   table in Phase 0.
-2. **Start Phase 1, Slice 1.1 (#185)** (release-status truth) — the
-   review's top recommendation, doc-only, hours-scale. Branch from fresh
-   `origin/main`; no worktree isolation strictly needed for a doc-only
-   sequenced slice, but follow the standard loop otherwise.
-3. **Then Phase 2 slices in parallel worktrees** (they touch
-   `_jsonl_pipe.py`, `control.py` — 2.1 (#187) and 2.2 (#188) share
-   `_jsonl_pipe.py`, so sequence those two behind each other; 2.3 (#189) is
-   independent).
+1. ~~Phase 0: file the issues~~ **done 2026-07-24** — #184–#204.
+2. ~~Phase 1 (Slices 1.1, 1.2)~~ **done 2026-07-25** — PRs #206, #207.
+3. ~~Slices 2.1 and 2.3~~ **done 2026-07-25** — PRs #208, #209.
+4. **Resume with Slice 2.2 (#188)** in a fresh sibling worktree from
+   `origin/main`: add checked `_assign_to_job`/`_terminate_job` wrappers
+   to `_jsonl_pipe.py` mirroring `_conpty.py:214-220`; call them from the
+   spawn containment block (its `except OSError` already fails closed:
+   kill, wait, close handles, raise) and `_terminate_tree`. Windows-only
+   TDD by monkeypatching the `_kernel32` function attributes to return 0.
+5. **Then Phase 3 onward in handover order** (3.1 #190 needs the
+   vocabulary draft posted to the issue for owner sign-off first;
+   timezone removal #192 and polarity docs #191 are unblocked).
 
 Gotchas:
 
