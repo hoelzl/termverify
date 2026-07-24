@@ -39,6 +39,7 @@ from pathlib import Path
 import pytest
 
 from termverify._jsonl_pipe import FORCED_TERMINATION_SIGNAL, PipeJsonlChild
+from termverify.control import _MAX_LINE_BYTES, ControlProtocolError, parse_message
 from termverify.jsonl import JsonlChildClosedError, JsonlEndOfStreamError
 
 _OS_WAIT_TIMEOUT_S = 30.0
@@ -295,3 +296,34 @@ def test_forced_close_unblocks_an_in_flight_read() -> None:
     assert len(outcome) == 1
     assert isinstance(outcome[0], JsonlChildClosedError)
     _wait_for_exit(pid)
+
+
+#: Flood child: streams newline-free bytes forever — a hostile subject
+#: probing the reader's memory bound (adversarial review 2026-07-24, R1).
+_FLOOD_CHILD = """\
+import sys
+
+chunk = b"a" * 65536
+while True:
+    sys.stdout.buffer.write(chunk)
+    sys.stdout.buffer.flush()
+"""
+
+
+def test_read_line_bounds_a_newline_free_flood_at_the_protocol_line_ceiling() -> None:
+    """A subject streaming bytes without LF cannot grow the buffer unboundedly.
+
+    The binding must stop accumulating once the buffered pseudo-line
+    exceeds the ``termverify.control/v1`` line ceiling and hand the
+    oversized buffer to the caller, whose ``parse_message`` rejects it —
+    the existing peer-malformed path. The deadline bounds time; this
+    bounds memory.
+    """
+    with _reaped(_spawn(_FLOOD_CHILD)) as child:
+        line = child.read_line()
+        assert len(line) > _MAX_LINE_BYTES
+        assert len(line) <= _MAX_LINE_BYTES + 1 + 65536
+        assert not line.endswith(b"\n")
+        with pytest.raises(ControlProtocolError) as excinfo:
+            parse_message(line)
+        assert "exceed the v1 limit" in str(excinfo.value)
