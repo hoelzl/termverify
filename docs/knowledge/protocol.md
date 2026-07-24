@@ -351,8 +351,11 @@ honoring, and nothing enforced.
 Compatibility (amendment of 2026-07-20, owner decision on issue #173): the
 pre-amendment bare form `{"env": ..., "cwd"?}` with no `channel` member
 remains accepted and is normalized to `{"channel": "spawn-env", ...}` at the
-ingest boundary; a form carrying both `env` and an explicit `channel` member
-is invalid. Emitters produce only the channel-tagged form. Normalization is
+ingest boundary; a form carrying `env` together with a `channel` other than
+`spawn-env` is invalid. (The canonical `spawn-env` form itself carries both
+`channel` and `env`, per the channel table above — it is the required
+emitter output, not an invalid combination.) Emitters produce only the
+channel-tagged form. Normalization is
 performed by the codec's compat rules — named, pure, total,
 normalize-toward-canonical functions applied between structural decode and
 validation (`_COMPAT_RULES` in the runtime); they never relax acceptance,
@@ -515,27 +518,41 @@ no terminal exit value to match.
 ## Compatibility and evolution
 
 `termverify.transcript/v1` readers must reject a different `protocol` value.
-During the repository's inception phase there are no external clients or
-supported transcript artifacts. Reviewed contract corrections, including the
-required replay subject above, therefore update v1 in place rather than creating
-fictional compatibility history. Existing repository fixtures are migrated in
-the same reviewed change. The first declared real client or supported external
-artifact freezes this inception policy: after that boundary, only optional `x-`
-extensions are additive within a version, and new generic semantics, member
-types or meanings, canonicalization, ordering rules, or stable error codes
-require a new protocol version.
 
-That freeze includes `termverify.key/v1` membership, spelling, component roles,
-modifier ordering, and chord validity. A post-freeze change to any of them
-requires a new transcript protocol and key-registry version; ambient toolkit or
-host registry growth never changes v1. (One owner-approved exception: the
-modified-only base set was widened once — see issue #155 and
-`docs/agent/design/key-v1-punctuation-bases.md` — to add the printable ASCII
-punctuation row. That amendment was designed, implemented, and adversarially
-reviewed before the freeze but merged after it; the owner approved landing it
-as a one-time in-place amendment because it is purely additive and leaves the
-wire-protocol version unchanged. It sets no precedent — all later registry
-changes require a new version.)
+**Governance status (owner decision 2026-07-24): prototyping stage — no
+protocol is frozen.** The inception freeze fired on 2026-07-19 when
+termverify 0.1.0 was published to PyPI, and the owner suspended it on
+2026-07-24: the publication created no external client, the freeze's first
+test required a recorded exception within days, and the only known users are
+early internal projects that exist to drive TermVerify's design. Rationale,
+scope, and exit criterion:
+[`docs/agent/design/prototyping-stage-protocol-governance.md`](../agent/design/prototyping-stage-protocol-governance.md).
+
+While the prototyping stage lasts, the inception policy applies to every
+TermVerify protocol and registry (`termverify.transcript/v1`,
+`termverify.key/v1`, `termverify.key-encoding/v1`, `termverify.timezone/v1`,
+and the JSONL control protocol): reviewed contract corrections — including
+incompatible ones — update the current version in place rather than creating
+fictional compatibility history. No version bump, compatibility shim, or
+per-change exception decision is required. Existing repository fixtures are
+migrated in the same reviewed change, and this document is updated in the
+same change. No backward compatibility is owed to any artifact, including
+the published 0.1.0; version identifiers such as `/v1` name the current
+shape so readers can reject foreign input, and are not stability promises.
+
+The prototyping stage ends only by an explicit recorded owner decision that
+TermVerify is usable by external clients — not by any release or publication
+event. After that boundary, only optional `x-` extensions are additive
+within a version, and new generic semantics, member types or meanings,
+canonicalization, ordering rules, or stable error codes require a new
+protocol version; the same applies to `termverify.key/v1` membership,
+spelling, component roles, modifier ordering, and chord validity, for which
+ambient toolkit or host registry growth never changes a published version.
+(Historical note: the printable-ASCII punctuation widening — issue #155,
+`docs/agent/design/key-v1-punctuation-bases.md` — was recorded as a
+"one-time post-freeze exception" during the 2026-07-19 – 2026-07-24 window
+in which the freeze was considered active; that framing is historical and
+carries no precedent force under the prototyping stage.)
 
 An inception transcript without `subject` is invalid and no tool may guess its
 identity from ambient or undocumented out-of-band context. A caller with the

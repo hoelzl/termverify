@@ -1,7 +1,11 @@
 # JSONL Subprocess Control Transport: `termverify.control/v1` and the Second Live Runtime
 
-- **Status:** proposed — drafted 2026-07-20 in response to the owner
-  decision recorded in
+- **Status:** accepted — both authorized implementation slices are merged
+  (slice 1: issue #173 / PR #175; slice 2: issue #173 / PR #177) with
+  adversarial-review verdicts; the JSONL transport and `termverify.control/v1`
+  exist in `src/termverify/`. Status corrected 2026-07-25 per adversarial
+  review 2026-07-24 (P8 drift finding). Originally drafted 2026-07-20 in
+  response to the owner decision recorded in
   [issue #114](https://github.com/hoelzl/termverify/issues/114#issuecomment-5021323593):
   proceed with ask 2, Option B (a TermVerify-owned, versioned wire
   protocol). Acceptance of this design authorizes the two implementation

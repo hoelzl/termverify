@@ -121,10 +121,13 @@ def _normalize_delivery_channel(records: list[Record]) -> None:
     records, owner decision on issue #173): a delivered-tier
     ``capability.result`` whose ``delivery`` object has no ``channel``
     member is the pre-amendment bare form and is rewritten to
-    ``{"channel": "spawn-env", ...}``. A form carrying both ``env`` and an
-    explicit ``channel`` member is rejected by validation (the tagged
-    ``hello-config``/``wire-message`` shapes admit no payload members, and
-    an unknown channel rejects), so this rule never relaxes acceptance.
+    ``{"channel": "spawn-env", ...}``. A form carrying ``env`` together
+    with a ``channel`` other than ``spawn-env`` is rejected by validation
+    (the tagged ``hello-config``/``wire-message`` shapes admit no payload
+    members, and an unknown channel rejects); the canonical ``spawn-env``
+    form carries both ``channel`` and ``env`` and this rule leaves it
+    untouched. The rule therefore never relaxes acceptance: it only
+    rewrites the bare form toward the canonical one.
     """
     for record in records:
         if record["kind"] != "capability.result":

@@ -39,7 +39,12 @@ adapter = JsonlAdapter(
 `JsonlBinding` spawns the child binary with:
 
 - **binary pipes** for stdin/stdout — the protocol is UTF-8 JSONL, so no
-  platform newline translation may interfere;
+  platform newline translation may interfere. The subject has the matching
+  obligation: **write protocol lines through a binary stream** (Python:
+  `sys.stdout.buffer.write(...)`), never text-mode `print`. Text-mode
+  stdout emits `\r\n` on Windows, and the codec rejects any line ending in
+  `\r` — such a subject works on POSIX and fails every message as
+  `peer-malformed` on Windows;
 - **tree containment**: on Windows the child is assigned to a kill-on-close
   job object; on POSIX it becomes a process-group leader, so a forced stop
   terminates the whole tree, never a leaked grandchild;
