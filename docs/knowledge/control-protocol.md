@@ -16,10 +16,17 @@ machinery, but the control protocol's lifecycle is the transcript
 lifecycle made interactive, member for member: negotiation → readiness →
 single-flight epochs → terminal.
 
-This document is the normative specification of the protocol. The
-authoritative runtime acceptance is the strict codec in
-`src/termverify/control.py`; on any disagreement the codec is wrong and
-this document wins — report the defect.
+This document is the normative specification of the protocol: it states
+the rules a subject must obey and is what an adapter author reads. The
+strict codec in `src/termverify/control.py` is the authoritative runtime
+acceptance, and on any disagreement **the codec wins** — per `AGENTS.md`,
+executable checks outrank prose. A disagreement is a defect either way,
+so report it: by default it is repaired on this document's side in the
+same change that finds it, and code-side through an ordinary test-first
+slice when the codec is the wrong one. This polarity is tied to the
+prototyping stage (owner decision 2026-07-24) and is revisited at the
+re-freeze boundary, where doc-as-contract becomes a defensible choice for
+a protocol that third-party subjects implement.
 
 The protocol is **unfrozen**: it may change in place, including
 incompatibly, under the repository's prototyping-stage governance (owner

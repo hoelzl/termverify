@@ -88,6 +88,17 @@ a third-party consumer is declared" — is input to that future design).
 - `docs/knowledge/protocol.md` "Compatibility and evolution" and the
   `AGENTS.md` protocol row state the prototyping status and link here, so
   future agents do not rediscover or re-impose the freeze.
+- Review finding **P9** (doc/code authority polarity) is resolved in the
+  same direction, by owner decision 2026-07-24: **code wins everywhere**
+  for the duration of the prototyping stage, including for the control
+  protocol, whose specification previously claimed the opposite. A
+  doc/codec disagreement is a defect repaired doc-side by default, and
+  code-side through an ordinary test-first slice when the codec is the
+  wrong one. The polarity is a consequence of this stage, not a permanent
+  stance: at the exit criterion above it is revisited together with freeze
+  and versioning, because doc-as-contract becomes defensible once
+  third-party subjects implement the control protocol against a
+  specification that has stopped moving.
 
 ## Rejected alternatives
 
