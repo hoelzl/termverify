@@ -57,8 +57,10 @@ src/termverify/       distributable library
  docs/developer-guide/ contributor workflows
  docs/agent/design/    architectural decisions and reuse assessments
  docs/agent/reviews/   adversarial and independent review reports
- skills/               proven reusable playbooks, added only when warranted
 ```
+
+(A `skills/` directory for proven reusable playbooks is reserved by the
+`AGENTS.md` placement table but does not exist yet.)
 
 ## Coverage ratchet
 

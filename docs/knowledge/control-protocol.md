@@ -1,5 +1,8 @@
 ---
-type: protocol
+type: Protocol Design
+title: TermVerify JSONL control protocol
+description: Live wire protocol a subject subprocess speaks over stdin/stdout pipes to a driving adapter.
+tags: [protocol, jsonl, control, subprocess, adapter]
 ---
 
 # TermVerify JSONL control protocol (`termverify.control/v1`)
@@ -18,10 +21,13 @@ authoritative runtime acceptance is the strict codec in
 `src/termverify/control.py`; on any disagreement the codec is wrong and
 this document wins — report the defect.
 
-The protocol is **unfrozen** as of its introduction: it may still change
-in place. It freezes at the first PyPI publication of a TermVerify
-release that contains it; after that, amendments require a new protocol
-version.
+The protocol is **unfrozen**: it may change in place, including
+incompatibly, under the repository's prototyping-stage governance (owner
+decision 2026-07-24,
+[`prototyping-stage-protocol-governance.md`](../agent/design/prototyping-stage-protocol-governance.md)).
+No publication event freezes it; the prototyping stage ends only by an
+explicit recorded owner decision, after which amendments require a new
+protocol version.
 
 ## Framing and canonical form
 
