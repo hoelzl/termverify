@@ -303,7 +303,6 @@ def test_forced_close_unblocks_an_in_flight_read() -> None:
 #: probing the reader's memory bound (adversarial review 2026-07-24, R1).
 _FLOOD_CHILD = """\
 import sys
-import threading
 
 chunk = b"a" * 65536
 while True:
@@ -313,15 +312,16 @@ while True:
 
 
 #: Maximal-line child: one conforming line of exactly the framed ceiling
-#: (body of MAXBYTES bytes plus LF), immediately followed by the next
-#: message, then a hang so the pipe stays open.
+#: (body of MAXBYTES bytes plus LF) and the next message, emitted as one
+#: single write so the tail bytes are adjacent in the pipe when the parent
+#: drains the LF — the coalescing the regression test exists to force is
+#: then deterministic, not an OS scheduling race (re-review finding).
+#: Then a hang so the pipe stays open.
 _MAXIMAL_LINE_CHILD = """\
 import sys
-import threading
 import time
 
-sys.stdout.buffer.write(b"a" * MAXBYTES + b"\\n")
-sys.stdout.buffer.write(b"next\\n")
+sys.stdout.buffer.write(b"a" * MAXBYTES + b"\\nnext\\n")
 sys.stdout.buffer.flush()
 time.sleep(600)
 """
@@ -339,16 +339,24 @@ def test_read_line_bounds_a_newline_free_flood_at_the_protocol_line_ceiling() ->
     the CI job with unbounded memory.
     """
     with _reaped(_spawn(_FLOOD_CHILD)) as child:
-        result: list[bytes] = []
-        reader = threading.Thread(
-            target=lambda: result.append(child.read_line()), daemon=True
-        )
+        outcome: list[bytes | BaseException] = []
+
+        def _read() -> None:
+            try:
+                outcome.append(child.read_line())
+            except BaseException as error:  # noqa: BLE001 - diagnostic capture
+                outcome.append(error)
+
+        reader = threading.Thread(target=_read, daemon=True)
         reader.start()
         reader.join(timeout=_OS_WAIT_TIMEOUT_S)
         assert not reader.is_alive(), (
             "read_line did not bound the newline-free flood within the budget"
         )
-        line = result[0]
+        assert outcome and isinstance(outcome[0], bytes), (
+            f"read_line raised instead of returning the bounded line: {outcome!r}"
+        )
+        line = outcome[0]
         assert len(line) > _MAX_LINE_BYTES
         assert len(line) <= _MAX_LINE_BYTES + 1 + 65536
         assert not line.endswith(b"\n")
