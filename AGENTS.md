@@ -16,7 +16,7 @@ TermVerify is a Python library and reference tooling for verifying autonomous te
 | Dependencies and supported Python versions | `pyproject.toml` and `uv.lock` |
 | Test, lint, format, and type-check commands | `pyproject.toml`, `.pre-commit-config.yaml`, and CI workflow |
 | Public API | `src/termverify/` plus tests |
-| Protocol conformance and compatibility | Runtime validation in `src/termverify/transcript.py` is authoritative for protocol acceptance; the packaged Draft 2020-12 schema (`termverify.transcript_schema_v1_bytes()`) is a non-exhaustive structural aid — schema acceptance is not conformance. Policy and rationale: `docs/knowledge/protocol.md` |
+| Protocol conformance and compatibility | Runtime validation in `src/termverify/transcript.py` is authoritative for protocol acceptance; the packaged Draft 2020-12 schema (`termverify.transcript_schema_v1_bytes()`) is a non-exhaustive structural aid — schema acceptance is not conformance. Policy and rationale: `docs/knowledge/protocol.md`. TermVerify is in the prototyping stage: no protocol or registry is frozen, and incompatible in-place changes need no version bump or compatibility shim (owner decision 2026-07-24, `docs/agent/design/prototyping-stage-protocol-governance.md`) |
 | Architecture decisions | `docs/knowledge/architecture.md` and ADRs under `docs/agent/design/` |
 | Current work state | GitHub issues/PRs and `git status`; do not encode volatile state in this file |
 
