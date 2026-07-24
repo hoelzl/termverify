@@ -273,11 +273,13 @@ integration, then real-child Windows-matrix evidence.
 
 The owner accepted slice 1 on 2026-07-19 (issue #141, PR #142, adversarial
 review ACCEPT): `src/termverify/_key_encoding_v1.py` implements the
-registry as committed data plus committed arithmetic, its full 934-chord
-enumeration is digest-bound in `tests/test_key_encoding_v1.py` (SHA-256
-`5df2113c9479ef68035ef74994d4502344a204a5f0b034633278e336137fcf3d`, 450
-encodable chords, the four disclosed legacy byte collisions proven to be
-the only ones), and `ConptyAdapter.dispatch` executes encodable `KeyInput`
+registry as committed data plus committed arithmetic, its full chord
+enumeration is digest-bound in `tests/test_key_encoding_v1.py` (934 chords
+at acceptance; 1,382 since the printable-ASCII punctuation amendment of
+issue #155, current SHA-256
+`72a17da549238053c88a925cf6bf2bbe93ed2b8564c7a09188075987fcdcda95`, with
+the four disclosed legacy byte collisions proven to be the only ones), and
+`ConptyAdapter.dispatch` executes encodable `KeyInput`
 chords by writing the registry bytes exactly once through the single-flight
 child write and running the standard quiescent epoch, while an unencodable
 chord is a structured runtime failure (`{"unsupported": "key-encoding",

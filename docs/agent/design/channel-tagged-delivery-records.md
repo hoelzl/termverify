@@ -165,8 +165,9 @@ is required and is exactly one of:
 Member-name and value rules for `spawn-env.env` are unchanged
 (non-empty names/values, no `=` or NUL in names, no NUL in values). The
 legacy bare form `{"env": ..., "cwd"?}` (no `channel` member) is
-accepted by normalization to `spawn-env`; a form carrying both `env`
-and an explicit `channel` member rejects.
+accepted by normalization to `spawn-env`; a form carrying `env` together
+with a `channel` other than `spawn-env` rejects (the canonical
+`spawn-env` form itself carries both `channel` and `env`).
 
 ### The `delivered` tier row (registry text, amended)
 
