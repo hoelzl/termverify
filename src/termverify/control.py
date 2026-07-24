@@ -526,7 +526,10 @@ def _validate_json_value(value: object) -> None:
         if value_count > _MAX_JSON_VALUES:
             _fail("message JSON value count exceeds the v1 limit")
         if type(current) is str:
-            encoded = len(current.encode("utf-8", errors="replace"))
+            try:
+                encoded = len(current.encode("utf-8"))
+            except UnicodeEncodeError:
+                _fail("message strings must not contain unpaired surrogates")
             if encoded > _MAX_STRING_BYTES:
                 _fail("message string bytes exceed the v1 limit")
             string_bytes += encoded
@@ -556,7 +559,10 @@ def _validate_json_value(value: object) -> None:
             for key, item in members.items():
                 if type(key) is not str:
                     _fail("message object keys must be strings")
-                encoded = len(key.encode("utf-8", errors="replace"))
+                try:
+                    encoded = len(key.encode("utf-8"))
+                except UnicodeEncodeError:
+                    _fail("message object keys must not contain unpaired surrogates")
                 if encoded > _MAX_STRING_BYTES:
                     _fail("message string bytes exceed the v1 limit")
                 string_bytes += encoded
