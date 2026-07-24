@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import cast
 
 import pytest
@@ -174,4 +175,64 @@ def test_round_trip_session_hello() -> None:
 def test_serialize_rejects_undeliverable_message() -> None:
     message = _envelope("session.hello", {"run_id": "x"})
     with pytest.raises(ControlProtocolError):
+        serialize_message(message)
+
+
+# --- unpaired surrogates (adversarial review 2026-07-24, R5) ------------------
+
+
+def _line_with_envelope_extension(value: object) -> bytes:
+    """Serialize by hand: json.dumps escapes lone surrogates without error,
+    so the resulting line is valid UTF-8 bytes carrying a uDxxx escape
+    sequence — exactly what a hostile subject can put on the wire."""
+    message = _envelope("session.hello", _hello_payload())
+    message["x-note"] = cast(JsonValue, value)
+    return (json.dumps(message) + "\n").encode("ascii")
+
+
+def test_parse_rejects_a_lone_surrogate_in_a_string_value() -> None:
+    """RFC 8785 canonicalization raises on lone surrogates, so admitting
+    one at parse time lets hostile input crash the recording pipeline
+    instead of failing peer-malformed."""
+    with pytest.raises(ControlProtocolError, match="unpaired surrogate"):
+        parse_message(_line_with_envelope_extension("\ud800"))
+
+
+def test_parse_rejects_a_lone_surrogate_in_an_object_key() -> None:
+    with pytest.raises(ControlProtocolError, match="unpaired surrogate"):
+        parse_message(_line_with_envelope_extension({"k\udfff": "v"}))
+
+
+def test_parse_still_accepts_paired_surrogates_as_astral_characters() -> None:
+    """A valid surrogate pair is an ordinary astral codepoint and must
+    round-trip — the rejection targets only unpaired halves."""
+    message = parse_message(_line_with_envelope_extension("\U0001f600"))
+    assert message["x-note"] == "\U0001f600"
+    assert parse_message(serialize_message(message))["x-note"] == "\U0001f600"
+
+
+def test_parse_rejects_a_lone_surrogate_inside_a_payload_string() -> None:
+    """Position-independence guard: the walk covers payload members too,
+    so a refactor moving the check into per-member validators cannot
+    silently miss a spot."""
+    line = (
+        json.dumps(
+            {
+                "protocol": CONTROL_PROTOCOL_V1,
+                "kind": "diagnostic",
+                "payload": {"code": "x-probe", "message": "\udbff"},
+            }
+        )
+        + "\n"
+    ).encode("ascii")
+    with pytest.raises(ControlProtocolError, match="unpaired surrogate"):
+        parse_message(line)
+
+
+def test_serialize_rejects_a_lone_surrogate_with_the_codec_error() -> None:
+    """Symmetry: the serialize direction fails with ControlProtocolError,
+    not a leaked rfc8785 exception."""
+    message = _envelope("session.hello", _hello_payload())
+    message["x-note"] = "\udc00"
+    with pytest.raises(ControlProtocolError, match="unpaired surrogate"):
         serialize_message(message)

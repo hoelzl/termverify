@@ -52,6 +52,7 @@ from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from typing import IO, Final, cast
 
+from termverify.control import _MAX_LINE_BYTES
 from termverify.jsonl import JsonlChildClosedError, JsonlEndOfStreamError
 
 __all__ = ["FORCED_TERMINATION_SIGNAL", "PipeJsonlChild"]
@@ -303,6 +304,12 @@ class PipeJsonlChild:
         :class:`JsonlChildClosedError` when the binding was closed before
         or while the read was in flight.
 
+        Memory is bounded: once the accumulating buffer exceeds the
+        ``termverify.control/v1`` line ceiling without an LF, the
+        oversized buffer is returned as-is; ``parse_message`` rejects it
+        by length, so a newline-free flood fails as peer-malformed
+        instead of growing the buffer without bound.
+
         Single-flight: one in-flight read at a time (the port contract);
         the binding tracks it so a forced close can interrupt the blocked
         syscall and then wait — bounded, without holding the lock — for
@@ -363,6 +370,18 @@ class PipeJsonlChild:
                 self._capture_exit_status_after_eos()
                 raise JsonlEndOfStreamError("the child's stdout reported end-of-stream")
             self._read_buffer.extend(chunk)
+            if (
+                len(self._read_buffer) > _MAX_LINE_BYTES + 1
+                and b"\n" not in self._read_buffer
+            ):
+                # Memory bound, not framing: only an LF-free over-ceiling
+                # buffer can never become a valid line. A buffered LF means
+                # complete lines exist — the loop top drains them, and an
+                # oversized *framed* line is still rejected by length in
+                # parse_message, never here.
+                line = bytes(self._read_buffer)
+                self._read_buffer.clear()
+                return line
 
     def close(self, *, force: bool) -> None:
         """Release ownership; with ``force``, terminate the child's tree.
