@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import cast
 
 import pytest
@@ -184,8 +185,6 @@ def _line_with_envelope_extension(value: object) -> bytes:
     """Serialize by hand: json.dumps escapes lone surrogates without error,
     so the resulting line is valid UTF-8 bytes carrying a uDxxx escape
     sequence — exactly what a hostile subject can put on the wire."""
-    import json
-
     message = _envelope("session.hello", _hello_payload())
     message["x-note"] = cast(JsonValue, value)
     return (json.dumps(message) + "\n").encode("ascii")
@@ -210,6 +209,24 @@ def test_parse_still_accepts_paired_surrogates_as_astral_characters() -> None:
     message = parse_message(_line_with_envelope_extension("\U0001f600"))
     assert message["x-note"] == "\U0001f600"
     assert parse_message(serialize_message(message))["x-note"] == "\U0001f600"
+
+
+def test_parse_rejects_a_lone_surrogate_inside_a_payload_string() -> None:
+    """Position-independence guard: the walk covers payload members too,
+    so a refactor moving the check into per-member validators cannot
+    silently miss a spot."""
+    line = (
+        json.dumps(
+            {
+                "protocol": CONTROL_PROTOCOL_V1,
+                "kind": "diagnostic",
+                "payload": {"code": "x-probe", "message": "\udbff"},
+            }
+        )
+        + "\n"
+    ).encode("ascii")
+    with pytest.raises(ControlProtocolError, match="unpaired surrogate"):
+        parse_message(line)
 
 
 def test_serialize_rejects_a_lone_surrogate_with_the_codec_error() -> None:

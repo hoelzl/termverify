@@ -38,7 +38,13 @@ stdin, the child writes to its stdout. Each message is exactly one line:
   (RFC 8785), encoded as UTF-8, terminated by exactly one LF (`\n`);
 - no byte-order mark, no blank lines, no embedded CR;
 - a reader rejects duplicate object member names and malformed JSON;
-  it never chooses an interpretation.
+  it never chooses an interpretation;
+- every string value and object key must be Unicode text with no
+  unpaired surrogate. A reader tolerates non-canonical escape choices,
+  member order, and whitespace, but an unpaired `\uD800`–`\uDFFF`
+  escape — although RFC 8259 tolerates it — is `peer-malformed`: RFC
+  8785 canonical form cannot represent it, so it could never round-trip
+  through this protocol or the transcript evidence it feeds.
 
 The child's stderr is not part of the protocol. An adapter may drain it
 as diagnostic evidence at its own discretion, but no protocol meaning
