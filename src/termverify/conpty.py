@@ -54,13 +54,14 @@ Readiness and quiescence are defined only by observable evidence:
   mandatory, explicitly configured abort deadline: a watchdog armed before
   each blocking read force-closes the binding when it expires, which always
   produces a structured failure disclosing the deadline policy and never a
-  successful epoch. Because that deadline is re-armed per read, an epoch is
-  additionally bounded by two deterministic per-epoch budgets — reads and
-  retained output bytes — so a subject trickling output just under the
-  deadline, or flooding it, cannot hold an epoch open or grow the retained
-  chunk list without end (finding R2). Exhausting either budget is a
-  structured failure like any other abort; neither adds a wall-clock input.
-  Hosts must budget the deadline above the disclosed
+  successful epoch. Because that watchdog is re-armed per read, the same
+  configured deadline additionally bounds the epoch *as a whole*, so a
+  subject trickling output just under it cannot hold an epoch open forever
+  (finding R2) — the worst case is the epoch deadline plus the read in
+  flight when it passes. That is the deadline the host already configured;
+  no second policy and no new evidence source. Retained output is bounded
+  separately, by what one observation record can carry, which bounds memory
+  rather than time. Hosts must budget the deadline above the disclosed
   DA-stall floor: conhost defers client output while its unanswered
   ``CSI c`` device-attributes query waits (measured ~3.1 s; see the
   DA-stall disclosure in the adapter design document), so a deadline at or
@@ -70,6 +71,7 @@ Readiness and quiescence are defined only by observable evidence:
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Callable, Mapping, Sequence
 from typing import Final, Literal, Protocol, cast, runtime_checkable
 
@@ -146,21 +148,21 @@ __all__ = [
 #: instead.
 READINESS_MARKER_DEFAULT: Final = "\x1b]7791;ready\x1b\\"
 
-#: Reads one epoch may make before it is abandoned. The abort deadline is
-#: re-armed per read, so a subject trickling output just under it never
-#: exceeds any single read's deadline and can hold an epoch open forever
-#: (adversarial review 2026-07-24, finding R2). This bounds an epoch at
-#: budget x deadline instead, mirroring the JSONL adapter's per-epoch
-#: diagnostic budget rather than introducing a second wall-clock input:
-#: wall-clock silence still decides nothing, and the bound is deterministic.
-_MAX_EPOCH_READS: Final = 1024
-
 #: Output bytes one epoch may retain before it is abandoned. Every chunk
 #: becomes one ``terminal.output`` event inside a single observation record,
-#: and `termverify.transcript/v1` caps one record's aggregate string bytes —
-#: so an epoch beyond this could never be recorded at all. Single-sourced
-#: from the protocol ceiling so the two cannot drift.
-_MAX_EPOCH_OUTPUT_BYTES: Final = _MAX_RECORD_STRING_BYTES
+#: and `termverify.transcript/v1` caps one record's aggregate decoded string
+#: bytes, so this is where an epoch's memory has to stop. The value is that
+#: ceiling less headroom for the rest of the record's strings — event keys
+#: and types, the frame lines, the run identifiers — which count against the
+#: same ceiling.
+#:
+#: This bounds memory; it is not a recordability guarantee. The codec owns
+#: recordability, and it enforces two further ceilings this cannot model: a
+#: per-string limit, and a canonical-line limit that ESC-dense output
+#: reaches far sooner because RFC 8785 escapes every control byte. An epoch
+#: inside this budget can still produce a record the codec rejects — which
+#: is the codec's job, and the recorder surfaces it.
+_MAX_EPOCH_OUTPUT_BYTES: Final = _MAX_RECORD_STRING_BYTES - 64 * 1024
 
 #: The `termverify.enforcement-tier/v1` authorization matrix row for the
 #: ConPTY architecture, in constraint order: the adapter's own terminal
@@ -475,6 +477,7 @@ class ConptyAdapter:
         normalizer_factory: NormalizerFactory | None = None,
         readiness_marker: str = READINESS_MARKER_DEFAULT,
         watchdog: ConptyWatchdogPort | None = None,
+        monotonic: Callable[[], float] | None = None,
     ) -> None:
         self._argv = _validate_argv(argv)
         self._binding = binding
@@ -488,6 +491,12 @@ class ConptyAdapter:
         self._marker = _validate_marker(readiness_marker)
         self._watchdog: ConptyWatchdogPort = (
             watchdog if watchdog is not None else TimerWatchdog()
+        )
+        # Injected so the per-epoch deadline is drivable without sleeping.
+        # It measures the deadline the host already configured; it is not a
+        # second wall-clock input, and it is never evidence.
+        self._monotonic: Callable[[], float] = (
+            monotonic if monotonic is not None else time.monotonic
         )
         self._state: _State = "created"
         self._state_lock = threading.Lock()
@@ -642,33 +651,40 @@ class ConptyAdapter:
         """
         if self._scan_for_marker():
             return
-        reads = 0
+        epoch_deadline_at = self._monotonic() + self._abort_deadline_ms / 1000
         output_bytes = 0
         while True:
             chunk = self._read_chunk(child, expired)
-            reads += 1
+            # Count before honoring the marker: the marker-bearing chunk is
+            # retained like any other, so excluding it would let the epoch
+            # exceed its own bound by a whole read.
             output_bytes += len(chunk.encode("utf-8", "surrogatepass"))
-            chunks.append(chunk)
-            self._feed(chunk)
-            self._pending += chunk
-            if self._scan_for_marker():
-                return
-            if reads >= _MAX_EPOCH_READS:
+            if output_bytes > _MAX_EPOCH_OUTPUT_BYTES:
                 raise _EpochFailure(
-                    "the epoch read budget was exhausted before readiness"
-                    " evidence was observed; the budget is host abort policy,"
-                    " not evidence",
-                    {"budget": "reads", "epoch-read-budget": _MAX_EPOCH_READS},
-                )
-            if output_bytes >= _MAX_EPOCH_OUTPUT_BYTES:
-                raise _EpochFailure(
-                    "the epoch output budget was exhausted before readiness"
-                    " evidence was observed; the budget is host abort policy,"
+                    "the epoch retained more output than one observation"
+                    " record may carry; the budget is adapter abort policy,"
                     " not evidence",
                     {
                         "budget": "bytes",
                         "epoch-output-byte-budget": _MAX_EPOCH_OUTPUT_BYTES,
                     },
+                )
+            chunks.append(chunk)
+            self._feed(chunk)
+            self._pending += chunk
+            if self._scan_for_marker():
+                return
+            if self._monotonic() >= epoch_deadline_at:
+                # The deadline is re-armed per read, so a subject trickling
+                # output just under it never exceeds any single read's
+                # deadline and could hold the epoch open forever (finding
+                # R2). The same configured deadline also bounds the epoch as
+                # a whole, which is what its name says; the abort is the
+                # ordinary deadline abort, classified by `expired` below.
+                expired.set()
+                raise _EpochFailure(
+                    "the abort deadline expired before readiness evidence was observed",
+                    {"during": "read", "bound": "epoch"},
                 )
 
     def _close_child(self) -> bool:

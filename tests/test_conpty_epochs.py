@@ -57,7 +57,6 @@ from termverify.adapter import (
 )
 from termverify.conpty import (
     _MAX_EPOCH_OUTPUT_BYTES,
-    _MAX_EPOCH_READS,
     READINESS_MARKER_DEFAULT,
     ConptyAdapter,
     ConptyChildPort,
@@ -326,10 +325,12 @@ def _adapter(
     watchdog: _FakeWatchdog | None = None,
     readiness_marker: str = _MARKER,
     abort_deadline_ms: int = _DEADLINE_MS,
+    monotonic: Callable[[], float] | None = None,
 ) -> ConptyAdapter:
     return ConptyAdapter(
         ("subject", "--flag"),
         binding=binding,
+        monotonic=monotonic,
         constraint_ports=_EnforcingPorts(),
         normalizer_factory=(
             normalizer_factory
@@ -554,47 +555,82 @@ def test_start_deadline_abort_is_start_failed_with_disclosed_policy() -> None:
     assert watchdog.disarms == 1
 
 
-def test_a_marker_less_trickle_exhausts_the_per_epoch_read_budget() -> None:
-    """A trickling subject must not keep an epoch open forever (finding R2).
+class _SteppingClock:
+    """Monotonic fake that advances a fixed step per reading.
 
-    The abort deadline is re-armed per read, so a subject emitting a byte
-    just under the deadline and never emitting the readiness marker never
-    exceeds any single read's deadline: the marker never arrives,
-    ``dispatch()`` neither completes nor aborts, and the retained chunk list
-    grows without bound. A per-epoch read budget bounds the epoch at
-    budget x deadline — the JSONL adapter's per-epoch diagnostic budget is
-    the in-repo precedent — without adding a second wall-clock input.
-
-    The script is deliberately one read longer than the budget, so a
-    regression reads past it and fails loudly instead of hanging CI.
+    Drives the per-epoch deadline exactly, with no sleeping and no
+    dependence on how fast the host runs the fake child.
     """
-    binding = _FakeBinding(_FakeChild(["."] * (_MAX_EPOCH_READS + 1)))
-    adapter = _adapter(binding, watchdog=_FakeWatchdog())
+
+    def __init__(self, step_s: float) -> None:
+        self._step = step_s
+        self._now = 0.0
+        self.readings = 0
+
+    def __call__(self) -> float:
+        now = self._now
+        self.readings += 1
+        self._now += self._step
+        return now
+
+
+def test_a_marker_less_trickle_cannot_outlive_the_epoch_deadline() -> None:
+    """A trickling subject must not hold an epoch open forever (finding R2).
+
+    The watchdog is re-armed per read, so a subject emitting output just
+    under the deadline never exceeds any single read's deadline: the marker
+    never arrives and the epoch never ends. The same configured deadline
+    therefore bounds the epoch as a whole.
+
+    Driven by an injected clock rather than by sleeping, and deliberately
+    *not* by a read count: real ConPTY barely coalesces, so a read budget
+    low enough to bound a trickle also aborts an ordinary few-thousand-line
+    scroll — falsely aborting a cooperative subject, which is worse than
+    the starvation it would prevent.
+    """
+    clock = _SteppingClock(_DEADLINE_MS / 1000 / 4)
+    binding = _FakeBinding(_FakeChild(["."] * 20))
+    adapter = _adapter(binding, watchdog=_FakeWatchdog(), monotonic=clock)
 
     result = adapter.start("run-conpty", _configuration())
 
     assert type(result) is StartFailed
-    assert result.failure.details == {
-        "budget": "reads",
-        "epoch-read-budget": _MAX_EPOCH_READS,
-    }
-    assert "readiness" in result.failure.message
-    # A budget abort ends the tree like any other abort.
+    assert result.failure.details == {"abort-deadline-ms": _DEADLINE_MS}
+    assert "deadline" in result.failure.message
     assert binding.child.closed
     assert all(binding.child.closes)
+    # Bounded, not exhaustive: it stopped before the script ran out.
+    assert binding.child.reads
+
+
+def test_a_chatty_epoch_within_the_deadline_still_succeeds() -> None:
+    """The bound must not abort a cooperative subject that simply talks a lot.
+
+    Real ConPTY hands back hundreds of small chunks for an ordinary scroll,
+    so this is the false-positive guard: thousands of reads, no marker until
+    the end, and a clock that never reaches the epoch deadline.
+    """
+    reads = ["line\r\n"] * 4000
+    reads.append(_MARKER)
+    binding = _FakeBinding(_FakeChild(reads))
+    adapter = _adapter(binding, watchdog=_FakeWatchdog())
+
+    result = adapter.start("run-conpty", _configuration())
+
+    assert type(result) is Started, result
+    assert binding.child.reads == []
 
 
 def test_an_output_flood_exhausts_the_per_epoch_byte_budget() -> None:
     """One epoch cannot retain more output than one record can carry.
 
     Every chunk becomes a `terminal.output` event in a single observation
-    record, and `termverify.transcript/v1` caps a record's aggregate string
-    bytes — so an epoch exceeding it could never be recorded at all.
-    Failing at the epoch is honest; building an observation the codec must
-    reject is not.
+    record, whose aggregate string bytes the protocol caps. This bounds
+    memory; the codec still owns recordability and enforces further
+    ceilings this budget cannot model.
     """
     chunk = "x" * 64 * 1024
-    reads = [chunk] * (_MAX_EPOCH_OUTPUT_BYTES // len(chunk) + 1)
+    reads = [chunk] * (_MAX_EPOCH_OUTPUT_BYTES // len(chunk) + 2)
     binding = _FakeBinding(_FakeChild(reads))
     adapter = _adapter(binding, watchdog=_FakeWatchdog())
 
@@ -605,7 +641,43 @@ def test_an_output_flood_exhausts_the_per_epoch_byte_budget() -> None:
         "budget": "bytes",
         "epoch-output-byte-budget": _MAX_EPOCH_OUTPUT_BYTES,
     }
-    assert "readiness" in result.failure.message
+    assert "one observation" in result.failure.message
+
+
+def test_the_byte_budget_counts_the_marker_bearing_chunk_too() -> None:
+    """The marker must not buy an epoch one extra unbounded read.
+
+    Honoring the marker before counting would let the retained output
+    exceed the budget by a whole chunk — as much as a single ConPTY read
+    may carry.
+    """
+    filler = "x" * 64 * 1024
+    reads = [filler] * (_MAX_EPOCH_OUTPUT_BYTES // len(filler))
+    reads.append("x" * 512 * 1024 + _MARKER)
+    binding = _FakeBinding(_FakeChild(reads))
+    adapter = _adapter(binding, watchdog=_FakeWatchdog())
+
+    result = adapter.start("run-conpty", _configuration())
+
+    assert type(result) is StartFailed
+    details = cast("Mapping[str, object]", result.failure.details)
+    assert details["budget"] == "bytes"
+
+
+def test_a_budget_abort_in_a_dispatch_epoch_is_a_runtime_failure() -> None:
+    """Every other budget test drives `start()`; dispatch must match."""
+    chunk = "x" * 64 * 1024
+    flood = [chunk] * (_MAX_EPOCH_OUTPUT_BYTES // len(chunk) + 2)
+    adapter, binding, _, _ = _started([_MARKER, *flood])
+
+    result = adapter.dispatch(TextInput(at_ms=ManualTime(0), text="go"))
+
+    assert type(result) is TerminalResult, result
+    outcome = result.outcome
+    assert isinstance(outcome, RunFailed)
+    assert outcome.failure.code == "adapter-runtime-failed"
+    details = cast("Mapping[str, object]", outcome.failure.details)
+    assert details["budget"] == "bytes"
 
 
 def test_start_native_read_failure_is_start_failed() -> None:

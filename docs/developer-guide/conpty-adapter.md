@@ -33,6 +33,23 @@ adapter = ConptyAdapter(
 above the disclosed DA-stall floor (~3.1 s on the verified matrix) plus spawn
 overhead, or every real start fails by policy.
 
+It bounds an epoch two ways, not one. The watchdog around each blocking read
+force-closes the child when a single read exceeds it — and because that
+watchdog is re-armed per read, the same value also bounds the epoch as a
+whole, so a subject that trickles output just under the deadline without ever
+emitting the readiness marker cannot hold an epoch open indefinitely. Budget
+it above the longest single epoch a real subject needs, output included: a
+few thousand lines of ordinary scrolling is normal and finishes in seconds,
+but a subject that legitimately works for longer between readiness markers
+needs a deadline that covers it.
+
+One further bound is not host policy and cannot be configured: an epoch may
+retain only as much output as one observation record can carry, since every
+chunk becomes a `terminal.output` event in that record. Exceeding it fails
+the epoch with `budget: "bytes"` rather than building evidence the transcript
+codec would reject. No real terminal session approaches it; a runaway
+producer can.
+
 ## What the delivered tier means
 
 A cooperation-port receipt claims exactly this: the recorded environment
