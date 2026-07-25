@@ -3,7 +3,7 @@
 The registry is a pure, total function from valid ``termverify.key/v1``
 chords to exactly one xterm-legacy normal-mode byte string or the explicit
 verdict unencodable (``None``). The full enumeration is digest-bound below,
-following the key/v1 and timezone/v1 registry precedent.
+following the key/v1 registry precedent.
 """
 
 from __future__ import annotations

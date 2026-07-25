@@ -24,7 +24,6 @@ import rfc8785
 
 from termverify._json import JsonValue
 from termverify._language_tag import is_well_formed_language_tag
-from termverify._timezone_v1 import is_timezone_name
 
 __all__ = [
     "CONTROL_PROTOCOL_V1",
@@ -358,8 +357,6 @@ def _validate_config(value: object) -> None:
     if not is_well_formed_language_tag(cast(str, config["locale"])):
         _fail("config.locale must be a well-formed BCP 47 language tag")
     _require_non_empty_string(config["timezone"], "config.timezone")
-    if not is_timezone_name(config["timezone"]):
-        _fail("config.timezone must name a termverify.timezone/v1 entry")
     terminal = config["terminal"]
     if type(terminal) is not dict:
         _fail("config.terminal must be an object")

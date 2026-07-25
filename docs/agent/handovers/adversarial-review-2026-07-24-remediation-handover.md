@@ -573,10 +573,19 @@ disposition implemented; no undisclosed fidelity gap remains.
 Finding: minor `__init__.py` bullet. Export the authoritative codec
 (`parse_transcript`, `serialize_transcript`, `TranscriptValidationError`) and
 the documented closed registries (`KEY_NAMES`, `is_key_chord`,
-`encode_key_chord`, `TIMEZONE_NAMES`) from the public `termverify` package so
-third-party adapter authors need no underscore imports. Public-API change:
-needs tests asserting the exports, doc updates (adapter-author guide, README
-API mentions), and a changelog fragment. Do it pre-0.2.0 while cheap.
+`encode_key_chord`) from the public `termverify` package so third-party
+adapter authors need no underscore imports. **`TIMEZONE_NAMES` is not on
+that list:** decision 9.4 removed the registry it named, so exporting it is
+impossible (issue #192, merged 2026-07-25). Public-API change: needs tests
+asserting the exports, doc updates (adapter-author guide, README API
+mentions), and a changelog fragment. Do it pre-0.2.0 while cheap.
+
+**Also in this phase's scope: #218** — the in-process API still calls its
+receipts `enforced` after the wire became `applied`
+(`EnforcedConstraints`, `AdapterResult.enforced`, `StartOk`/
+`StartUnsupported`/`StartFailed` `.enforced`, `UnenforcedConstraintPorts`).
+Renaming existing public names is not something this phase's original text
+covered, hence the issue.
 
 **Acceptance:** documented names importable from `termverify`; no doc tells
 users to import private paths.

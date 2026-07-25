@@ -1096,11 +1096,44 @@ def test_serialize_transcript_rejects_incomplete_private_use_locale() -> None:
         serialize_transcript(transcript)
 
 
+@pytest.mark.parametrize("timezone", ["", 1, None, [], {}])
+def test_transcript_rejects_a_timezone_request_that_is_not_a_non_empty_string(
+    timezone: JsonValue,
+) -> None:
+    """The whole surviving request rule, at the authoritative layer.
+
+    Removing the closed registry (finding P4) left exactly one structural
+    check on the request — a non-empty string — and the review of that
+    removal showed it was unreachable from any test: deleting the check
+    outright changed no result. Both entry points are asserted here,
+    because ``parse_transcript`` is what a third party's transcript meets.
+    """
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    started_payload = transcript[0]["payload"]
+    assert isinstance(started_payload, dict)
+    config = started_payload["config"]
+    assert isinstance(config, dict)
+    config["timezone"] = timezone
+
+    with pytest.raises(TranscriptValidationError, match="timezone"):
+        serialize_transcript(transcript)
+
+    encoded = b"".join(
+        json.dumps(
+            record, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        ).encode()
+        + b"\n"
+        for record in transcript
+    )
+    with pytest.raises(TranscriptValidationError, match="timezone"):
+        parse_transcript(encoded)
+
+
 @pytest.mark.parametrize(
     "timezone",
     ["US/Eastern", "Europe/Kiev", "Mars/Olympus", "../UTC", "europe/Berlin"],
 )
-def test_serialize_transcript_rejects_noncanonical_v1_timezone(
+def test_serialize_transcript_rejects_a_non_utc_applied_timezone(
     timezone: str,
 ) -> None:
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
@@ -1118,10 +1151,22 @@ def test_serialize_transcript_rejects_noncanonical_v1_timezone(
         serialize_transcript(transcript)
 
 
-@pytest.mark.parametrize("timezone", ["Etc/UTC", "Europe/Berlin"])
-def test_canonical_named_v1_timezone_request_round_trips_as_unsupported(
+@pytest.mark.parametrize(
+    "timezone",
+    ["Etc/UTC", "Europe/Berlin", "US/Eastern", "Mars/Olympus", "europe/Berlin"],
+)
+def test_any_named_timezone_request_round_trips_as_unsupported(
     timezone: str,
 ) -> None:
+    """A named-zone request is a plain string the adapter must refuse.
+
+    V1 can only ever apply literal ``UTC``, so the protocol no longer
+    carries a closed timezone registry whose entire purpose was to validate
+    requests that must then be refused anyway (adversarial review
+    2026-07-24, finding P4; owner decision 2026-07-24: remove it). Any
+    non-empty string is a structurally valid *request*, and the refusal —
+    not the vocabulary — is what keeps the evidence truthful.
+    """
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
     started_payload = transcript[0]["payload"]
     assert isinstance(started_payload, dict)
@@ -1196,7 +1241,7 @@ def test_parse_transcript_rejects_named_timezone_enforcement_receipt() -> None:
 
 
 @pytest.mark.parametrize("timezone", ["US/Eastern", "Mars/Olympus", "../UTC"])
-def test_parse_transcript_rejects_noncanonical_v1_timezone(timezone: str) -> None:
+def test_parse_transcript_rejects_a_non_utc_applied_timezone(timezone: str) -> None:
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
     started_payload = transcript[0]["payload"]
     assert isinstance(started_payload, dict)

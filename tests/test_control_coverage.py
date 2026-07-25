@@ -1049,8 +1049,23 @@ def test_config_rejects_malformed_locale() -> None:
     _rejects("session.hello", _hello_payload(locale="!!!"))
 
 
-def test_config_rejects_unknown_timezone() -> None:
-    _rejects("session.hello", _hello_payload(timezone="Not/AZone"))
+def test_config_accepts_any_non_empty_timezone_request() -> None:
+    """No timezone registry gates the wire (finding P4).
+
+    The control protocol carries the *request*; whether the adapter can
+    apply it is answered by the capability receipt, and only literal ``UTC``
+    can ever be applied. An unapplicable zone must therefore reach the
+    adapter as a well-formed message it refuses, not die as
+    ``peer-malformed``.
+    """
+    message = parse_message(
+        _wire("session.hello", _hello_payload(timezone="Not/AZone"))
+    )
+    payload = message["payload"]
+    assert isinstance(payload, dict)
+    config = payload["config"]
+    assert isinstance(config, dict)
+    assert config["timezone"] == "Not/AZone"
 
 
 def test_config_rejects_port_above_65535() -> None:
