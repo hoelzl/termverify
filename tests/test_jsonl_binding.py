@@ -19,6 +19,9 @@ helper-thread or wall-clock state:
   receipts record are exactly what the child observes.
 - **Failures:** a missing command fails closed at spawn; writes and reads
   after close raise the binding's closed error.
+- **Containment results (Windows):** a failed job-object call is checked and
+  reported — a failed assignment fails the spawn closed and kills the child,
+  and a failed termination is raised instead of read as a success.
 
 The fixture children are minimal ``python -c`` scripts in the ConPTY
 integration pattern: they read stdin as bytes, decode UTF-8, and split on
@@ -29,6 +32,7 @@ no console-input caveats (issue #169 does not apply to pipes).
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -380,3 +384,72 @@ def test_read_line_frames_a_maximal_line_followed_by_more_data_exactly() -> None
         assert len(first) == _MAX_LINE_BYTES + 1
         assert first == b"a" * _MAX_LINE_BYTES + b"\n"
         assert child.read_line() == b"next\n"
+
+
+#: Job-object containment is a Windows-only mechanism, so its result-check
+#: evidence (adversarial review 2026-07-24, R3) is Windows-only too. Both
+#: tests force the native failure leg by replacing the module's bound
+#: ``_kernel32`` function with one that returns the BOOL failure value;
+#: the patch target is written as an import path because the symbol does
+#: not exist — and would not type-check — on the POSIX legs.
+_windows_only = pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="job-object containment is a Windows-only mechanism",
+)
+
+
+@_windows_only
+def test_spawn_fails_closed_when_job_assignment_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed ``AssignProcessToJobObject`` must not hand out a session.
+
+    The BOOL return is the only signal Windows gives that assignment did
+    not happen. Discarding it would return a binding whose spawn
+    docstring promises containment while the child in fact runs outside
+    the job — a forced close would then terminate an empty job and leave
+    the tree alive. The spawn must instead fail closed: terminate the
+    child, release the handles, and raise.
+    """
+    monkeypatch.setattr(
+        "termverify._jsonl_pipe._kernel32.AssignProcessToJobObject",
+        lambda job, process_handle: 0,
+    )
+    with pytest.raises(OSError) as failure:
+        _spawn()
+    contained = re.search(
+        r"failed to contain pipe child (\d+) in a job object", str(failure.value)
+    )
+    assert contained is not None, f"unexpected spawn failure: {failure.value}"
+    cause = failure.value.__cause__
+    assert isinstance(cause, OSError)
+    assert "AssignProcessToJobObject failed" in str(cause)
+    # Fail-closed means the child is gone, not merely unreferenced.
+    _wait_for_exit(int(contained.group(1)))
+
+
+@_windows_only
+def test_forced_close_reports_a_failed_job_termination(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed ``TerminateJobObject`` must be reported, not swallowed.
+
+    Containment itself still holds — the job handle the teardown releases
+    in its ``finally`` carries kill-on-close, so the tree dies either
+    way. What the check adds is truthfulness: a caller learns the
+    graceful termination failed instead of reading a silent success from
+    a close that only worked by accident.
+    """
+    child = _spawn(_TREE_CHILD)
+    pid = int(child.read_line().split(b":", 1)[1])
+    grandchild_pid = int(child.read_line().split(b":", 1)[1])
+    assert _pid_alive(grandchild_pid)
+    monkeypatch.setattr(
+        "termverify._jsonl_pipe._kernel32.TerminateJobObject",
+        lambda job, exit_code: 0,
+    )
+    with pytest.raises(OSError, match="TerminateJobObject failed"):
+        child.close(force=True)
+    _wait_for_exit(pid)
+    _wait_for_exit(grandchild_pid)
+    assert not _pid_alive(grandchild_pid)

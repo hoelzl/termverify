@@ -172,6 +172,16 @@ if sys.platform == "win32":  # pragma: no cover - Windows-only containment
             raise OSError(f"OpenProcess({pid}) failed: {ctypes.get_last_error()}")
         return int(handle)
 
+    def _assign_to_job(job: int, process_handle: int) -> None:
+        """Contain the child; a failed BOOL means it is *not* contained."""
+        if not _kernel32.AssignProcessToJobObject(job, process_handle):
+            raise OSError(f"AssignProcessToJobObject failed: {ctypes.get_last_error()}")
+
+    def _terminate_job(job: int, exit_code: int) -> None:
+        """Terminate every job member; a failed BOOL is a real failure."""
+        if not _kernel32.TerminateJobObject(job, exit_code):
+            raise OSError(f"TerminateJobObject failed: {ctypes.get_last_error()}")
+
     def _wait_for_handle(handle: int, timeout_ms: int) -> bool:
         """OS wait on a real handle; True once it is signaled, never a sleep."""
         result = int(_kernel32.WaitForSingleObject(handle, timeout_ms))
@@ -232,11 +242,11 @@ class PipeJsonlChild:
         starts in this process's current directory.
 
         On Windows the child is assigned to a fresh kill-on-close job
-        object before the binding is returned; if containment cannot be
-        established, the child is terminated and the spawn fails closed —
-        no uncontained session is ever handed out. On POSIX the child
-        starts its own session so a forced close can kill its process
-        group.
+        object before the binding is returned; every containment call's
+        result is checked, so if containment cannot be established the
+        child is terminated and the spawn fails closed — no uncontained
+        session is ever handed out. On POSIX the child starts its own
+        session so a forced close can kill its process group.
         """
         arguments = [str(argument) for argument in argv]
         if not arguments:
@@ -264,7 +274,7 @@ class PipeJsonlChild:
             try:
                 job = _create_containment_job()
                 process_handle = _open_containment_handle(process.pid)
-                _kernel32.AssignProcessToJobObject(job, process_handle)
+                _assign_to_job(job, process_handle)
             except OSError as error:
                 process.kill()
                 process.wait()
@@ -389,7 +399,11 @@ class PipeJsonlChild:
         The forced path relies on containment — the Windows job object
         terminated with the uniform forced exit code, or the POSIX
         process-group ``SIGKILL`` — to end the whole tree, waits for the
-        real exit, and captures the observed exit record. A second close
+        real exit, and captures the observed exit record. A containment
+        call that fails is raised, not swallowed: releasing the job
+        handle still sweeps the tree through kill-on-close, so nothing
+        leaks, but the caller is told the termination failed rather than
+        reading a success the binding cannot vouch for. A second close
         arriving while another thread's close is in flight waits for that
         teardown to finish, so callers never observe a half-closed
         binding (the adapter consults ``exit_status`` right after
@@ -532,7 +546,7 @@ class PipeJsonlChild:
             if job is None:
                 # Defensive: unreachable on the only construction path.
                 raise OSError("no containment job to terminate")
-            _kernel32.TerminateJobObject(job, _FORCED_TERMINATION_EXIT_CODE)
+            _terminate_job(job, _FORCED_TERMINATION_EXIT_CODE)
         else:
             with suppress(ProcessLookupError):
                 os.killpg(process.pid, FORCED_TERMINATION_SIGNAL)  # type: ignore[attr-defined,unused-ignore]
