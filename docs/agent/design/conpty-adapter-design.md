@@ -225,6 +225,56 @@ level). The deadline is host abort *policy*, disclosed in the resulting
 structured failure's details; it is never evidence of quiescence and can
 never produce a successful epoch. The watchdog trigger is injectable so the
 classification path is fully testable against a fake binding.
+
+**Amendment (issue #194, adversarial review finding R2).** A per-read
+watchdog does not bound an epoch: because it is re-armed for every read, a
+subject trickling output just under the deadline never exceeds any single
+read's deadline, so the marker never arrives and the epoch never ends. The
+same configured deadline therefore also bounds the epoch **as a whole**,
+checked between reads against an injected monotonic clock. Worst case is up
+to twice the deadline — the epoch's own bound plus the read in flight when
+it passes. This adds no policy and no evidence source: the abort is the
+ordinary deadline abort, and its details name which bound fired (`read` for
+a stalled read, `epoch` for a subject that produces output but never reaches
+readiness) because the two need opposite remediations.
+
+A read-count budget was implemented first and **rejected on measurement**:
+real ConPTY barely coalesces (635 reads for a 2,000-line scroll), so a count
+low enough to bound a trickle also aborted an ordinary few-thousand-line run
+— a false abort of a cooperating subject, worse than the starvation it
+prevents.
+
+Retained evidence is bounded separately, because time bounds do not bound
+memory: an epoch may retain only as much output as one observation record can
+carry. The budget is derived from `termverify.transcript/v1` ceilings and
+takes the tighter of two, because an epoch's chunks reach the record as a
+**single** coalesced `terminal.output` string (issue #195): the per-string
+ceiling that merged string meets on its own, and the per-record string sum
+less what the rest of the record costs. Exceeding it fails the epoch rather
+than retaining evidence that would not fit. The frame reserve counts UTF-8
+bytes per cell, not cells: the codec measures bytes, and a non-ASCII screen
+costs up to four bytes per cell. This bound is not a recordability guarantee
+— the codec enforces further ceilings, notably the canonical-line limit
+ESC-dense output reaches far sooner. It is adapter policy, not host policy,
+and not configurable.
+
+A separate chunk-count budget was implemented and then **deleted when #195
+merged**. While each retained chunk became its own event, chunk count was a
+real axis that bytes could not express — a subject redrawing in place reached
+the per-collection ceiling with under 100 KB of payload — and the adapter had
+to abort a cooperative subject to stay honest. Recorder-side coalescing
+removes the axis rather than the symptom, so the bound went with it.
+
+Ordering note, worth keeping: #195 merged first and silently invalidated this
+byte budget in the *unsafe* direction. Deriving it from the per-record string
+sum admitted epochs at 1.98x the per-string ceiling the merged string
+actually meets, and the adapter's own test did not notice because it
+replicated the codec's counting rule over the adapter's pre-coalescing
+observation. Two lessons: a budget single-sourced from protocol ceilings
+still has to be re-derived when the *shape* of the record those ceilings
+apply to changes, and budget evidence should be pushed through the real
+recorder and codec rather than through a replica of their rules.
+
 **Write coverage, decided 2026-07-18 (issue #121):** the watchdog wraps
 blocking reads only. Binding evidence showed no conin write backpressure on
 the verified matrix (a 7.1 GiB flood against a never-reading child never

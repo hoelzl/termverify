@@ -54,7 +54,25 @@ Readiness and quiescence are defined only by observable evidence:
   mandatory, explicitly configured abort deadline: a watchdog armed before
   each blocking read force-closes the binding when it expires, which always
   produces a structured failure disclosing the deadline policy and never a
-  successful epoch. Hosts must budget the deadline above the disclosed
+  successful epoch. That watchdog alone is not enough: because it is
+  re-armed for every read, a subject trickling output just under the
+  deadline never exceeds any single read's deadline and could hold an epoch
+  open forever (finding R2). The same configured value therefore also bounds
+  the epoch *as a whole*, checked between reads — so the worst case is up to
+  **twice** the deadline, once for the epoch's own bound and once for the
+  read in flight when it passes. It remains one policy with one message and
+  no new evidence source; the recorded ``bound`` says which of the two
+  fired, because a stalled read and a subject that never reaches readiness
+  need opposite remediations. Retained output is bounded separately, which
+  bounds memory rather than time: an epoch may retain only what its chunks
+  can cost the one observation record they land in. They land there as a
+  *single* coalesced ``terminal.output`` string (issue #195), so the binding
+  ceiling at ordinary geometry is the per-string one, and only a terminal
+  at 261,121 *total cells* or above makes the per-record string sum bind
+  first.
+  Chunk *count* is not a separate axis: coalescing means no number of reads
+  can reach the protocol's collection ceiling. Hosts must budget the deadline
+  above the disclosed
   DA-stall floor: conhost defers client output while its unanswered
   ``CSI c`` device-attributes query waits (measured ~3.1 s; see the
   DA-stall disclosure in the adapter design document), so a deadline at or
@@ -64,6 +82,7 @@ Readiness and quiescence are defined only by observable evidence:
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Callable, Mapping, Sequence
 from typing import Final, Literal, Protocol, cast, runtime_checkable
 
@@ -117,6 +136,7 @@ from termverify.adapter import (
     UiObservation,
     _validate_run_id,
 )
+from termverify.transcript import _MAX_RECORD_STRING_BYTES, _MAX_STRING_BYTES
 from termverify.vt import ScreenSnapshot, TerminalOutputNormalizer, VtScreenNormalizer
 
 __all__ = [
@@ -138,6 +158,28 @@ __all__ = [
 #: backed by the CI matrix. Hosts can configure any exact non-empty string
 #: instead.
 READINESS_MARKER_DEFAULT: Final = "\x1b]7791;ready\x1b\\"
+
+#: UTF-8's worst case for one screen cell. The screen model stores any
+#: character at or above U+00A0 in a single cell, so a cell can cost up to
+#: four bytes in the frame lines the codec measures — counting cells as bytes
+#: under-reserves for any non-ASCII screen.
+_MAX_UTF8_BYTES_PER_CELL: Final = 4
+
+#: Reserve for an observation record's fixed strings: the envelope's
+#: protocol, kind, run and record identifiers, the cursor and mode values,
+#: the event's own member names, and the member names around them. Unlike
+#: the frame these do not scale with the geometry — the epoch's chunks reach
+#: the record as a *single* coalesced event, so their envelope cost is paid
+#: once rather than per chunk — and they measure ~216 bytes in practice.
+#:
+#: The margin is wide but not unconditional: `run_id` is host-supplied and
+#: `_validate_run_id` constrains its charset, not its length, so the real
+#: cost is ``206 + len(run_id)`` and a run identifier of 3,891 characters
+#: (~3.8 KiB) is the first that defeats this reserve, after which the codec
+#: rejects a record the adapter admitted. Callers are expected to use
+#: identifiers of ordinary length; this is a stated assumption, not an
+#: enforced invariant.
+_FIXED_RECORD_STRING_BYTES: Final = 4 * 1024
 
 #: The `termverify.enforcement-tier/v1` authorization matrix row for the
 #: ConPTY architecture, in constraint order: the adapter's own terminal
@@ -427,7 +469,7 @@ def _assemble_spawn_overlay(
 class _EpochFailure(Exception):
     """Internal classification carrier for one failed epoch step."""
 
-    def __init__(self, message: str, details: dict[str, str]) -> None:
+    def __init__(self, message: str, details: dict[str, JsonInput]) -> None:
         super().__init__(message)
         self.message = message
         self.details: dict[str, JsonInput] = dict(details)
@@ -452,6 +494,7 @@ class ConptyAdapter:
         normalizer_factory: NormalizerFactory | None = None,
         readiness_marker: str = READINESS_MARKER_DEFAULT,
         watchdog: ConptyWatchdogPort | None = None,
+        monotonic: Callable[[], float] | None = None,
     ) -> None:
         self._argv = _validate_argv(argv)
         self._binding = binding
@@ -466,6 +509,13 @@ class ConptyAdapter:
         self._watchdog: ConptyWatchdogPort = (
             watchdog if watchdog is not None else TimerWatchdog()
         )
+        # Injected so the per-epoch deadline is drivable without sleeping.
+        # It measures the deadline the host already configured; it is not a
+        # second wall-clock input, and it is never evidence.
+        self._monotonic: Callable[[], float] = (
+            monotonic if monotonic is not None else time.monotonic
+        )
+        self._deadline_bound: str = "read"
         self._state: _State = "created"
         self._state_lock = threading.Lock()
         self._manual_time: ManualTime | None = None
@@ -606,19 +656,140 @@ class ConptyAdapter:
             process=process,
         )
 
+    def _epoch_output_budget(self) -> int:
+        """Retained chunk bytes this epoch may cost its observation record.
+
+        The epoch's chunks reach the transcript as **one** string: the
+        recorder merges adjacent ``terminal.output`` events into a single
+        event (issue #195), because chunk boundaries are OS read scheduling,
+        not subject behavior. Two v1 ceilings therefore apply at once, and
+        the budget is whichever binds first:
+
+        - the **per-string** ceiling, which the merged chunk meets on its
+          own. At ordinary geometry this is the binding one, and at half the
+          per-record sum it is the reason a budget derived only from that
+          sum admitted epochs the codec rejected — measured at 1.98x the
+          ceiling for a plain 80x24 run.
+        - the **per-record string sum**, less what the rest of the record
+          costs. That is dominated by the frame, at a geometry the host
+          chooses and ``dispatch(Resize(...))`` can change mid-run, so it is
+          computed rather than reserved: a flat headroom was wrong in both
+          directions, too small for a wide terminal and too large for an
+          ordinary one.
+
+        The frame's cost is counted in **bytes, not cells**. The codec counts
+        UTF-8 bytes, and the screen model puts any character at or above
+        U+00A0 into a cell one-for-one, so box drawing costs three bytes per
+        cell and an emoji four. Reserving one byte per cell under-reserved by
+        up to 3x — enough for an ordinary box-drawn TUI at 100x30 to be
+        admitted and then rejected by the codec (adversarial review of this
+        PR, round 4). Four bytes per cell is UTF-8's worst case per code
+        point, so the reserve cannot be short.
+
+        Bounded here: the frame's *aggregate* cost against the per-record
+        sum. Not bounded here: a single frame **line**, which is one string
+        of ``columns`` code points and meets the per-string ceiling on its
+        own. Like the aggregate, that limit depends on what the screen
+        contains — 262,144 columns for a 4-byte-per-cell frame, 1,048,576
+        for an ASCII one. Unreachable through the real binding, whose
+        ``COORD`` dimensions are 16-bit, and at two rows or more the
+        geometry bound above fires first; disclosed rather than checked.
+        """
+        frame_bytes = _MAX_UTF8_BYTES_PER_CELL * self._rows * self._columns
+        record_budget = (
+            _MAX_RECORD_STRING_BYTES - frame_bytes - _FIXED_RECORD_STRING_BYTES
+        )
+        return min(_MAX_STRING_BYTES, record_budget)
+
     def _read_epoch_chunks(
         self, child: ConptyChildPort, chunks: list[str], expired: threading.Event
     ) -> None:
-        """Read until one readiness marker is observed in stream order."""
+        """Read until one readiness marker is observed in stream order.
+
+        Bounded on every axis an unbounded loop would otherwise leak, so a
+        subject that never emits the marker can neither hold the epoch open
+        nor outgrow what its own evidence can hold:
+
+        - **time**, by the configured abort deadline applied to the epoch as
+          a whole. The per-read watchdog cannot do this: because it is
+          re-armed for every read, a trickle just under it never exceeds any
+          single read's deadline (finding R2). The epoch therefore carries
+          its own deadline, checked between reads.
+        - **retained output bytes**, against what the single coalesced
+          ``terminal.output`` string those chunks become may cost its
+          observation record.
+
+        Retained memory follows from the byte bound only under a stated port
+        assumption: that a native read yields at least one byte, so bytes
+        also cap how many chunks the epoch can hold. ``ConptyChildPort.read``
+        does not forbid an empty string, and an empty-read loop would never
+        advance the byte counter — leaving the epoch deadline as its only
+        bound. Real ConPTY was measured not to do this (no empty read across
+        a 3 s idle), so this is an assumption about the port, not a claim
+        about the arithmetic.
+        The per-object cost of retention is not counted either: at the
+        ceiling a two-byte-per-read trickle retains ~27 MB of Python objects
+        (a one-byte trickle costs less, ~8 MB, because single-character ASCII
+        decodes are interned) before the deadline or this budget ends it.
+
+        Each bound is a structured failure, never a claimed epoch.
+        """
+        # Before the marker scan, not inside the read loop. The geometry is
+        # fixed for the whole epoch (only `dispatch(Resize(...))` moves it,
+        # between epochs), and an epoch whose marker is already buffered
+        # returns below without ever reading — which let a resize past this
+        # threshold complete an epoch that the codec then rejected, losing
+        # the run's evidence at the end (round 6, finding 1).
+        budget = self._epoch_output_budget()
+        if budget <= 0:
+            raise _EpochFailure(
+                "the requested terminal leaves an observation record no room"
+                " for output once its own frame is reserved, so no epoch can"
+                " be recorded at this geometry",
+                {
+                    "budget": "geometry",
+                    "terminal-cells": self._rows * self._columns,
+                },
+            )
         if self._scan_for_marker():
             return
+        epoch_deadline_at = self._monotonic() + self._abort_deadline_ms / 1000
+        output_bytes = 0
         while True:
             chunk = self._read_chunk(child, expired)
+            # Count before honoring the marker: the marker-bearing chunk is
+            # retained like any other, so excluding it would let the epoch
+            # exceed its own bound by a whole read.
+            output_bytes += len(chunk.encode("utf-8", "surrogatepass"))
+            if output_bytes > budget:
+                raise _EpochFailure(
+                    "the epoch retained more output than one observation"
+                    " record may carry; the budget is adapter abort policy,"
+                    " not evidence",
+                    {"budget": "bytes", "epoch-output-byte-budget": budget},
+                )
             chunks.append(chunk)
             self._feed(chunk)
             self._pending += chunk
             if self._scan_for_marker():
                 return
+            if self._monotonic() >= epoch_deadline_at:
+                # The per-read watchdog cannot end this: a trickle just under
+                # the deadline never exceeds any single read's deadline, which
+                # is exactly finding R2. The epoch's own deadline — the same
+                # configured value — is what ends it, and the abort is the
+                # ordinary deadline abort, classified by `expired` below.
+                if not expired.is_set():
+                    # Only when the watchdog did not already fire: a stalled
+                    # read that won the close race arrives here with the
+                    # deadline spent, and it is a stalled read, not a subject
+                    # that never reached readiness.
+                    self._deadline_bound = "epoch"
+                expired.set()
+                raise _EpochFailure(
+                    "the abort deadline expired before readiness evidence was observed",
+                    {"during": "read"},
+                )
 
     def _close_child(self) -> bool:
         child = self._child
@@ -642,11 +813,18 @@ class ConptyAdapter:
         )
 
     def _deadline_abort(self, at_ms: ManualTime) -> TerminalResult:
+        # ``bound`` is recorded because two aborts that look identical need
+        # opposite remediations: ``read`` means one read blocked for the whole
+        # deadline (a stalled subject), ``epoch`` means the subject kept
+        # producing output but never reached readiness (raise the deadline, or
+        # fix the marker). Without it the evidence cannot tell them apart.
+        bound = self._deadline_bound
+        self._deadline_bound = "read"
         return self._fail_runtime(
             at_ms,
             "the abort deadline expired before quiescence evidence was"
             " observed; the deadline is host abort policy, not evidence",
-            {"abort-deadline-ms": self._abort_deadline_ms},
+            {"abort-deadline-ms": self._abort_deadline_ms, "bound": bound},
         )
 
     def _finish_from_exit(

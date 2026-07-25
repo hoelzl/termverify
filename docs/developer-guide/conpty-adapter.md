@@ -33,6 +33,70 @@ adapter = ConptyAdapter(
 above the disclosed DA-stall floor (~3.1 s on the verified matrix) plus spawn
 overhead, or every real start fails by policy.
 
+It bounds an epoch two ways, not one. A watchdog around each blocking read
+force-closes the child when a *single read* exceeds the deadline. That alone
+would not bound the epoch — a subject trickling output just under the
+deadline never exceeds any single read's deadline — so the same value is
+**also** applied to the epoch as a whole, checked between reads. Worst case
+is therefore up to twice the configured deadline. The failure details name
+which bound fired: `bound: "read"` means one read stalled, `bound: "epoch"`
+means the subject kept producing output but never reached readiness.
+
+**This can abort runs that previously passed.** Budget the deadline above
+the longest single epoch a real subject needs, output included. An ordinary
+few-thousand-line scroll finishes in a couple of seconds, but a subject that
+legitimately works for a minute between readiness markers now needs a
+deadline that covers it — and because one value serves both bounds, a
+generous deadline also means slower hang detection.
+
+One further bound is adapter policy, not host policy, and is not
+configurable: an epoch may retain only as much output as one observation
+record can carry. Exceeding it fails the epoch (`budget: "bytes"`) instead of
+retaining evidence that would not fit.
+
+Chunk *count* is not a separate bound. The recorder merges an epoch's
+adjacent `terminal.output` chunks into a single event
+([issue #195](https://github.com/hoelzl/termverify/issues/195)), because
+chunk boundaries are OS read scheduling rather than subject behavior, so no
+number of native reads can exhaust the protocol's per-collection ceiling. A
+subject doing tight in-place updates — a spinner, a progress bar redrawing in
+place — is bounded by the bytes it writes and nothing else.
+
+The byte bound is **computed**, not fixed, and two ceilings feed it:
+
+- The epoch's chunks reach the transcript as one merged string, so that
+  string's own per-string ceiling applies. At ordinary geometry this is the
+  binding one, and the scale is roughly 1 MB of output in a single epoch.
+- The record's total string bytes, less what the rest of the record costs.
+  That is dominated by the frame's lines, so a large terminal leaves less
+  room for output than an 80×24 one — this binds at 261,121 total cells and
+  above. Cells, not columns: an 80×3,265 terminal crosses it and is not wide.
+
+The byte bound also depends on what the screen *contains*, not only its size:
+the codec counts UTF-8 bytes, so a box-drawn or CJK frame costs three to four
+bytes per cell. The adapter reserves the worst case, which is why a large
+terminal leaves less room for output — and at **523,264 cells** the reserve
+leaves no room for output at all, so no epoch can be recorded at that
+geometry and the run fails with `budget: "geometry"` as soon as an epoch
+begins, before any read.
+
+That threshold is where the *adapter* stops, not where the record does: a
+523,264-cell frame still fits one record with a few kilobytes to spare. The
+adapter refuses because an epoch that can record a frame but no output is
+not a useful epoch, and admitting it would mean discovering the problem
+only when the transcript is serialized.
+
+Do **not** try to fit inside the bound by emitting extra readiness markers
+inside one epoch: the contract is exactly one marker per processed input, and
+a surplus marker ends an epoch early and shifts every later epoch's output
+onto the wrong input. Produce less output between inputs instead.
+
+The bound covers the adapter's own retention; the codec still owns
+recordability and enforces further ceilings — notably a canonical-line limit
+that ESC-dense output reaches much sooner, since RFC 8785 escapes every
+control byte — so a transcript can still be rejected for size after an epoch
+the adapter accepted.
+
 ## What the delivered tier means
 
 A cooperation-port receipt claims exactly this: the recorded environment

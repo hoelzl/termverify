@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import threading
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from typing import cast
 
 import pytest
@@ -35,6 +36,7 @@ from termverify.adapter import (
     FilesystemConfiguration,
     FilesystemReceipt,
     Frame,
+    JsonInput,
     KeyInput,
     LocaleReceipt,
     ManualTime,
@@ -56,15 +58,34 @@ from termverify.adapter import (
     TimezoneReceipt,
 )
 from termverify.conpty import (
+    _FIXED_RECORD_STRING_BYTES,
+    _MAX_UTF8_BYTES_PER_CELL,
     READINESS_MARKER_DEFAULT,
     ConptyAdapter,
     ConptyChildPort,
     TimerWatchdog,
 )
+from termverify.recorder import TranscriptRecorder
+from termverify.transcript import (
+    _MAX_COLLECTION_ITEMS,
+    _MAX_RECORD_STRING_BYTES,
+    _MAX_STRING_BYTES,
+)
 from termverify.vt import ScreenSnapshot, VtNormalizationError
 
 _MARKER = READINESS_MARKER_DEFAULT
 _DEADLINE_MS = 60_000
+
+#: Minimal valid replay subject, so budget evidence can be pushed through the
+#: real recorder and codec rather than through a replica of their rules.
+_REPLAY_SUBJECT: dict[str, JsonInput] = {
+    "format": "termverify.replay-subject/v1",
+    "application": {"id": "fixture-app", "version": "1", "build": "b1"},
+    "fixture": {"id": "basic", "version": "1"},
+    "adapter": {"id": "termverify.conpty", "version": "1"},
+    "normalizer": {"id": "termverify.identity", "version": "1"},
+    "state_schema": {"id": "fixture-state", "version": "1"},
+}
 
 
 def _configuration() -> RunConfiguration:
@@ -234,9 +255,11 @@ class _FakeNormalizer:
         feed_error: Exception | None = None,
         snapshot_error: Exception | None = None,
         frame_dimensions: tuple[int, int] | None = None,
+        frame_cell: str = " ",
     ) -> None:
         self.rows = rows
         self.columns = columns
+        self.frame_cell = frame_cell
         self.feed_error = feed_error
         self.snapshot_error = snapshot_error
         self.frame_dimensions = frame_dimensions
@@ -258,7 +281,9 @@ class _FakeNormalizer:
             raise self.snapshot_error
         rows, columns = self.frame_dimensions or (self.rows, self.columns)
         return ScreenSnapshot(
-            frame=Frame(lines=(" " * columns,) * rows, columns=columns, rows=rows),
+            frame=Frame(
+                lines=(self.frame_cell * columns,) * rows, columns=columns, rows=rows
+            ),
             cursor=Cursor(column=0, row=0, visible=True),
             mode="normal",
         )
@@ -271,10 +296,12 @@ class _NormalizerFactory:
         feed_error: Exception | None = None,
         snapshot_error: Exception | None = None,
         frame_dimensions: tuple[int, int] | None = None,
+        frame_cell: str = " ",
     ) -> None:
         self._feed_error = feed_error
         self._snapshot_error = snapshot_error
         self._frame_dimensions = frame_dimensions
+        self._frame_cell = frame_cell
         self.created: list[_FakeNormalizer] = []
 
     def __call__(self, *, rows: int, columns: int) -> _FakeNormalizer:
@@ -284,6 +311,7 @@ class _NormalizerFactory:
             feed_error=self._feed_error,
             snapshot_error=self._snapshot_error,
             frame_dimensions=self._frame_dimensions,
+            frame_cell=self._frame_cell,
         )
         self.created.append(normalizer)
         return normalizer
@@ -324,10 +352,12 @@ def _adapter(
     watchdog: _FakeWatchdog | None = None,
     readiness_marker: str = _MARKER,
     abort_deadline_ms: int = _DEADLINE_MS,
+    monotonic: Callable[[], float] | None = None,
 ) -> ConptyAdapter:
     return ConptyAdapter(
         ("subject", "--flag"),
         binding=binding,
+        monotonic=monotonic,
         constraint_ports=_EnforcingPorts(),
         normalizer_factory=(
             normalizer_factory
@@ -545,11 +575,396 @@ def test_start_deadline_abort_is_start_failed_with_disclosed_policy() -> None:
     result = adapter.start("run-conpty", _configuration())
 
     assert type(result) is StartFailed
-    assert result.failure.details == {"abort-deadline-ms": _DEADLINE_MS}
+    assert result.failure.details == {
+        "abort-deadline-ms": _DEADLINE_MS,
+        "bound": "read",
+    }
     assert "deadline" in result.failure.message
     assert binding.child.closed
     assert all(binding.child.closes)
     assert watchdog.disarms == 1
+
+
+class _SteppingClock:
+    """Monotonic fake that advances on a schedule, not per reading.
+
+    Drives the per-epoch deadline with no sleeping, advancing every ``every``
+    readings so a trickle needs several reads per tick. It does **not** make
+    elapsed time independent of read count, and so does not by itself exclude
+    a read-count bound: the chatty-epoch guard is what does that, by failing
+    every read count low enough to bound a trickle.
+    """
+
+    def __init__(self, step_s: float, *, every: int = 3) -> None:
+        self._step = step_s
+        self._every = every
+        self._now = 0.0
+        self.readings = 0
+
+    def __call__(self) -> float:
+        now = self._now
+        self.readings += 1
+        if self.readings % self._every == 0:
+            self._now += self._step
+        return now
+
+
+def test_a_marker_less_trickle_cannot_outlive_the_epoch_deadline() -> None:
+    """A trickling subject must not hold an epoch open forever (finding R2).
+
+    The watchdog is re-armed per read, so a subject emitting output just
+    under the deadline never exceeds any single read's deadline: the marker
+    never arrives and the epoch never ends. The same configured deadline
+    therefore bounds the epoch as a whole.
+
+    Driven by an injected clock rather than by sleeping, and deliberately
+    *not* by a read count: real ConPTY barely coalesces, so a read budget
+    low enough to bound a trickle also aborts an ordinary few-thousand-line
+    scroll — falsely aborting a cooperative subject, which is worse than
+    the starvation it would prevent.
+    """
+    clock = _SteppingClock(_DEADLINE_MS / 1000 / 4)
+    binding = _FakeBinding(_FakeChild(["."] * 20))
+    adapter = _adapter(binding, watchdog=_FakeWatchdog(), monotonic=clock)
+
+    result = adapter.start("run-conpty", _configuration())
+
+    assert type(result) is StartFailed
+    # The ordinary deadline evidence, with the epoch bound named: a stalled
+    # read and a subject that never reaches readiness look identical
+    # otherwise, and they need opposite remediations.
+    assert result.failure.details == {
+        "abort-deadline-ms": _DEADLINE_MS,
+        "bound": "epoch",
+    }
+    assert "deadline" in result.failure.message
+    assert binding.child.closed
+    assert all(binding.child.closes)
+    # Bounded, not exhaustive: it stopped before the script ran out.
+    assert binding.child.reads
+
+
+def test_a_chatty_epoch_within_the_deadline_still_succeeds() -> None:
+    """The bound must not abort a cooperative subject that simply talks a lot.
+
+    Real ConPTY hands back hundreds of small chunks for an ordinary scroll,
+    so this is the false-positive guard: thousands of reads, no marker until
+    the end, and a clock that never reaches the epoch deadline.
+    """
+    reads = ["line\r\n"] * 4000
+    reads.append(_MARKER)
+    binding = _FakeBinding(_FakeChild(reads))
+    adapter = _adapter(binding, watchdog=_FakeWatchdog())
+
+    result = adapter.start("run-conpty", _configuration())
+
+    assert type(result) is Started, result
+    assert binding.child.reads == []
+
+
+def test_an_output_flood_exhausts_the_per_epoch_byte_budget() -> None:
+    """One epoch cannot retain more output than one record can carry.
+
+    Every chunk becomes a `terminal.output` event in a single observation
+    record, whose aggregate string bytes the protocol caps. This bounds
+    memory; the codec still owns recordability and enforces further
+    ceilings this budget cannot model.
+    """
+    chunk = "x" * 64 * 1024
+    reads = [chunk] * (_MAX_RECORD_STRING_BYTES // len(chunk) + 2)
+    binding = _FakeBinding(_FakeChild(reads))
+    adapter = _adapter(binding, watchdog=_FakeWatchdog())
+
+    result = adapter.start("run-conpty", _configuration())
+
+    assert type(result) is StartFailed
+    details = cast("Mapping[str, object]", result.failure.details)
+    assert details["budget"] == "bytes"
+    # The budget is computed from the terminal geometry, not a constant.
+    budget = details["epoch-output-byte-budget"]
+    assert isinstance(budget, int)
+    assert budget < _MAX_RECORD_STRING_BYTES
+    assert "one observation" in result.failure.message
+
+
+@pytest.mark.parametrize(
+    ("columns", "rows", "starts"),
+    [
+        (1000, 523, True),
+        # Exactly at the documented threshold, and exactly one cell below it.
+        # Straddling it from a distance is not enough: with only the 1000x523
+        # and 1000x524 cases, weakening the check to `budget < 0` stays green
+        # while making the documented number false (round 6, finding 7).
+        (32_704, 16, False),
+        (32_703, 16, True),
+        (1000, 524, False),
+        (1024, 512, False),
+    ],
+)
+def test_a_terminal_too_large_for_its_own_frame_fails_on_geometry(
+    columns: int, rows: int, starts: bool
+) -> None:
+    """Past a threshold no epoch can be recorded, and the threshold is real.
+
+    The frame is reserved at UTF-8's worst case per cell, so once the
+    terminal reaches `(2 MiB - fixed) / 4` cells the reserve leaves the
+    record no room for output at all. The guide and changelog quote this
+    cell count to hosts, and the previous revision quoted the *byte* figure
+    read as cells — off by 4x, the same cells-vs-bytes confusion round 4
+    rejected this PR for.
+    """
+    threshold = (_MAX_RECORD_STRING_BYTES - _FIXED_RECORD_STRING_BYTES) // (
+        _MAX_UTF8_BYTES_PER_CELL
+    )
+    assert threshold == 523_264, "the documented threshold moved"
+    assert (rows * columns < threshold) is starts, "case does not straddle it"
+
+    binding = _FakeBinding(_FakeChild([_MARKER]))
+    adapter = _adapter(
+        binding,
+        watchdog=_FakeWatchdog(),
+        normalizer_factory=_NormalizerFactory(frame_dimensions=(rows, columns)),
+    )
+    configuration = replace(
+        _configuration(),
+        terminal=TerminalConfiguration(columns=columns, rows=rows, capabilities=()),
+    )
+
+    result = adapter.start("run-conpty", configuration)
+
+    if starts:
+        assert type(result) is Started
+        return
+    assert type(result) is StartFailed
+    assert result.failure.details == {
+        "budget": "geometry",
+        "terminal-cells": rows * columns,
+    }
+    # The mechanism, stated truthfully: at this threshold the record *can*
+    # still hold the frame — measured, 523,264 emoji cells plus the record's
+    # real fixed strings fit with ~3.8 KB to spare. What it cannot do is hold
+    # the frame *and* any output once the reserve is taken (round 6, finding 2).
+    assert "no room for output" in result.failure.message
+
+
+def test_a_resize_past_the_threshold_cannot_slip_through_a_buffered_marker() -> None:
+    """An epoch that never reads must still honor the geometry bound.
+
+    `_read_epoch_chunks` returns early when the marker is already buffered,
+    so while the check lived inside the read loop a resize past the
+    threshold completed an epoch without consuming a read at all — and the
+    codec then rejected the record, losing the run's evidence at the very
+    end. That is the admit-then-reject failure this budget exists to
+    prevent, reached at a geometry the guide calls unrecordable (round 6,
+    finding 1).
+    """
+    # Two markers in one read: the second stays buffered in `_pending`, so
+    # the resize epoch finds readiness without reading.
+    binding = _FakeBinding(_FakeChild([_MARKER + _MARKER]))
+    adapter = _adapter(binding, watchdog=_FakeWatchdog())
+    started = adapter.start("run-conpty", _configuration())
+    assert type(started) is Started
+
+    result = adapter.dispatch(Resize(ManualTime(0), columns=32_767, rows=16))
+
+    assert type(result) is TerminalResult
+    outcome = result.outcome
+    assert type(outcome) is RunFailed
+    assert outcome.failure.details == {
+        "budget": "geometry",
+        "terminal-cells": 16 * 32_767,
+    }
+    # No read was consumed: the epoch never entered the loop.
+    assert binding.child.reads == []
+
+
+def test_a_stalled_read_that_wins_the_close_race_is_not_relabelled() -> None:
+    """A read the watchdog already killed stays `bound: "read"`.
+
+    Such a read can return normally and arrive at the epoch check with the
+    deadline spent, which looks exactly like a subject that produces output
+    but never reaches readiness. Only the latter is `bound: "epoch"`, since
+    the two need opposite remediations.
+    """
+    # Fires after the first read returns: the read won the race with expiry.
+    watchdog = _FakeWatchdog(fire_at_disarm=1)
+    clock = _SteppingClock(_DEADLINE_MS / 1000, every=1)
+    binding = _FakeBinding(_FakeChild(["." * 8, _MARKER]))
+    adapter = _adapter(binding, watchdog=watchdog, monotonic=clock)
+
+    result = adapter.start("run-conpty", _configuration())
+
+    assert type(result) is StartFailed
+    assert result.failure.details == {
+        "abort-deadline-ms": _DEADLINE_MS,
+        "bound": "read",
+    }
+
+
+def test_the_byte_budget_counts_the_marker_bearing_chunk_too() -> None:
+    """The marker must not buy an epoch one extra unbounded read.
+
+    Honoring the marker before counting would let the retained output
+    exceed the budget by a whole chunk — as much as a single ConPTY read
+    may carry.
+    """
+    filler = "x" * 64 * 1024
+    reads = [filler] * (_MAX_RECORD_STRING_BYTES // len(filler) - 1)
+    reads.append("x" * 512 * 1024 + _MARKER)
+    binding = _FakeBinding(_FakeChild(reads))
+    adapter = _adapter(binding, watchdog=_FakeWatchdog())
+
+    result = adapter.start("run-conpty", _configuration())
+
+    assert type(result) is StartFailed
+    details = cast("Mapping[str, object]", result.failure.details)
+    assert details["budget"] == "bytes"
+
+
+def _recorded_transcript(started: Started, configuration: RunConfiguration) -> bytes:
+    """Record and serialize a start observation with the real codec.
+
+    Nothing here replicates `termverify.transcript`'s counting rule. An
+    earlier revision of this slice did, and the replica was the defect: it
+    measured the adapter's *pre-coalescing* observation, one event per
+    native read, while the recorder merges adjacent `terminal.output`
+    chunks into a single event (issue #195, merged as PR #224). The replica
+    therefore checked the epoch against the per-record string sum and never
+    against the per-string ceiling the merged chunk actually meets.
+    """
+    recorder = TranscriptRecorder("run-conpty", configuration, _REPLAY_SUBJECT)
+    recorder.record_start(started)
+    recorder.record_epoch(
+        Stop(ManualTime(0)), TerminalResult(None, RunFinished.code(0))
+    )
+    return recorder.transcript()
+
+
+@pytest.mark.parametrize(
+    ("columns", "rows"), [(80, 24), (200, 400), (400, 200), (800, 400)]
+)
+@pytest.mark.parametrize("cell", ["x", "─", "🙂"])
+def test_the_largest_admitted_epoch_records_as_a_valid_transcript(
+    columns: int, rows: int, cell: str
+) -> None:
+    """The bound must admit only epochs the codec actually accepts.
+
+    The epoch grows until the adapter refuses, and the largest one it
+    *accepted* is then recorded and serialized by the real recorder and the
+    real codec. A budget derived from the wrong ceiling shows up as a
+    `TranscriptValidationError` here rather than as a passing assertion,
+    which is how three successive revisions of this budget hid: each was
+    checked against a replica of the counting rule that shared the
+    revision's own mistake.
+
+    The geometries straddle the crossover deliberately. Below ~261,000 cells
+    the per-string ceiling binds and the frame reserve is slack; 800x400
+    puts the per-record string sum in front of it, which is the only regime
+    where an under-sized per-cell reserve can be observed at all.
+    """
+    step = 8192
+    configuration = replace(
+        _configuration(),
+        terminal=TerminalConfiguration(columns=columns, rows=rows, capabilities=()),
+    )
+
+    def attempt(payload_bytes: int) -> Started | None:
+        """Start one epoch carrying `payload_bytes` across several chunks."""
+        whole, tail = divmod(payload_bytes, step)
+        chunks = ["y" * step] * whole + (["y" * tail] if tail else [])
+        binding = _FakeBinding(_FakeChild([*chunks, _MARKER]))
+        adapter = _adapter(
+            binding,
+            watchdog=_FakeWatchdog(),
+            normalizer_factory=_NormalizerFactory(
+                frame_dimensions=(rows, columns), frame_cell=cell
+            ),
+        )
+        result = adapter.start("run-conpty", configuration)
+        return result if type(result) is Started else None
+
+    # Coarse sweep to bracket the bound, then a binary search to land on it
+    # exactly. Byte granularity is not pedantry: at the 8 KiB step the search
+    # stops up to a whole step short, and terms worth a few hundred bytes —
+    # the record's fixed strings — sit inside that slack unobserved, which is
+    # how an earlier revision left one pinned by nothing at all.
+    low = 0
+    high = step
+    while attempt(high) is not None:
+        low = high
+        high += step
+        if high > 4 * _MAX_STRING_BYTES:  # pragma: no cover - bound must exist
+            raise AssertionError("the byte bound was never reached")
+    while high - low > 1:
+        middle = (low + high) // 2
+        if attempt(middle) is None:
+            high = middle
+        else:
+            low = middle
+    assert low > 0, "no epoch was admitted at all"
+
+    accepted = attempt(low)
+    assert accepted is not None
+    # Raises if the largest admitted epoch exceeds any v1 ceiling.
+    _recorded_transcript(accepted, configuration)
+
+
+def test_a_chunk_flood_is_bounded_by_bytes_alone() -> None:
+    """Chunk count is no longer an axis, because chunks no longer are events.
+
+    Before #195 every retained chunk became one item in the observation's
+    `events` array, so a subject redrawing in place reached the protocol's
+    collection ceiling with well under 100 KB of payload and the adapter
+    needed a separate chunk bound. The recorder now merges adjacent chunks
+    into a single event, so that ceiling is unreachable by chunk count and
+    the same subject records fine. Deleting the chunk bound without this
+    test would leave the deletion pinned by nothing.
+    """
+    flood = ["W"] * (_MAX_COLLECTION_ITEMS + 1)
+    binding = _FakeBinding(_FakeChild([*flood, _MARKER]))
+    adapter = _adapter(binding, watchdog=_FakeWatchdog())
+
+    result = adapter.start("run-conpty", _configuration())
+
+    assert type(result) is Started
+    assert len(result.observation.events) == len(flood) + 1
+    transcript = _recorded_transcript(result, _configuration())
+    # The codec accepted it, and the chunks arrive as one coalesced event.
+    assert transcript.count(b'"terminal.output"') == 1
+
+
+def test_the_epoch_deadline_also_bounds_a_dispatch_epoch() -> None:
+    """The epoch bound is not a start-only guard."""
+    clock = _SteppingClock(_DEADLINE_MS / 1000 / 4)
+    binding = _FakeBinding(_FakeChild([_MARKER, *(["."] * 40)]))
+    adapter = _adapter(binding, watchdog=_FakeWatchdog(), monotonic=clock)
+    assert type(adapter.start("run-conpty", _configuration())) is Started
+
+    result = adapter.dispatch(TextInput(at_ms=ManualTime(0), text="go"))
+
+    assert type(result) is TerminalResult, result
+    outcome = result.outcome
+    assert isinstance(outcome, RunFailed)
+    assert outcome.failure.details == {
+        "abort-deadline-ms": _DEADLINE_MS,
+        "bound": "epoch",
+    }
+
+
+def test_a_budget_abort_in_a_dispatch_epoch_is_a_runtime_failure() -> None:
+    """Every other budget test drives `start()`; dispatch must match."""
+    chunk = "x" * 64 * 1024
+    flood = [chunk] * (_MAX_RECORD_STRING_BYTES // len(chunk) + 2)
+    adapter, binding, _, _ = _started([_MARKER, *flood])
+
+    result = adapter.dispatch(TextInput(at_ms=ManualTime(0), text="go"))
+
+    assert type(result) is TerminalResult, result
+    outcome = result.outcome
+    assert isinstance(outcome, RunFailed)
+    assert outcome.failure.code == "adapter-runtime-failed"
+    details = cast("Mapping[str, object]", outcome.failure.details)
+    assert details["budget"] == "bytes"
 
 
 def test_start_native_read_failure_is_start_failed() -> None:
@@ -783,7 +1198,10 @@ def test_dispatch_deadline_abort_has_no_observation() -> None:
     assert type(result) is TerminalResult
     assert type(result.outcome) is RunFailed
     assert result.observation is None
-    assert result.outcome.failure.details == {"abort-deadline-ms": _DEADLINE_MS}
+    assert result.outcome.failure.details == {
+        "abort-deadline-ms": _DEADLINE_MS,
+        "bound": "read",
+    }
     assert binding.child.closed
 
 
@@ -801,7 +1219,11 @@ def test_expire_close_failure_still_classifies_the_deadline_abort() -> None:
     assert type(result) is TerminalResult
     assert type(result.outcome) is RunFailed
     details = dict(cast("dict[str, object]", result.outcome.failure.details))
-    assert details == {"abort-deadline-ms": _DEADLINE_MS, "close": "failed"}
+    assert details == {
+        "abort-deadline-ms": _DEADLINE_MS,
+        "bound": "read",
+        "close": "failed",
+    }
 
 
 def test_deadline_expiry_racing_a_successful_read_still_aborts() -> None:
@@ -815,7 +1237,10 @@ def test_deadline_expiry_racing_a_successful_read_still_aborts() -> None:
 
     assert type(result) is TerminalResult
     assert type(result.outcome) is RunFailed
-    assert result.outcome.failure.details == {"abort-deadline-ms": _DEADLINE_MS}
+    assert result.outcome.failure.details == {
+        "abort-deadline-ms": _DEADLINE_MS,
+        "bound": "read",
+    }
     assert binding.child.closed
 
 
@@ -833,6 +1258,7 @@ def test_deadline_expiry_with_failed_close_never_yields_success() -> None:
     assert type(result.outcome) is RunFailed
     assert result.outcome.failure.details == {
         "abort-deadline-ms": _DEADLINE_MS,
+        "bound": "read",
         "close": "failed",
     }
     assert "deadline" in result.outcome.failure.message
