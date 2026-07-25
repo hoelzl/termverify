@@ -2054,7 +2054,7 @@ def test_serialize_transcript_preserves_application_defined_finite_float() -> No
     assert parse_transcript(serialize_transcript(transcript)) == transcript
 
 
-@pytest.mark.parametrize("status", [[], {}, "pending"])
+@pytest.mark.parametrize("status", [[], {}, "pending", "enforced"])
 def test_transcript_rejects_invalid_capability_status(status: JsonValue) -> None:
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
     payload = transcript[1]["payload"]

@@ -3,9 +3,11 @@
 GlyphWright's hand-written spike recorder (issue #114) produced the
 committed fixture against ``DirectAdapter``. ``TranscriptRecorder`` must
 reproduce a semantically identical transcript from the equivalent adapter
-result sequence. The spike predates the mandatory enforcement-tier member,
-so the only tolerated difference is the recorder's ``"tier"`` on enforced
-capability payloads; see the fixture's ``PROVENANCE.md``.
+result sequence. The spike predates both the mandatory enforcement-tier
+member and the tier-truthful status vocabulary, so exactly two differences
+are tolerated on its capability payloads: the recorder's added ``"tier"``,
+and ``"status"`` read as ``applied`` where the spike wrote ``enforced``.
+See the fixture's ``PROVENANCE.md``.
 """
 
 from __future__ import annotations
