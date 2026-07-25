@@ -63,13 +63,14 @@ Readiness and quiescence are defined only by observable evidence:
   read in flight when it passes. It remains one policy with one message and
   no new evidence source; the recorded ``bound`` says which of the two
   fired, because a stalled read and a subject that never reaches readiness
-  need opposite remediations. Retained output and retained chunks are bounded
-  separately, which bounds memory rather than time: output against what one
-  record can carry at the current geometry, and chunks against one record's
-  collection ceiling. The chunk bound can abort a *cooperative* subject that
-  redraws in place, because it counts native reads — a consequence of one
-  event per read that recorder-side coalescing (issue #195) removes, not a
-  protocol requirement. Hosts must budget the deadline above the disclosed
+  need opposite remediations. Retained output is bounded separately, which
+  bounds memory rather than time: an epoch may retain only what its chunks
+  can cost the one observation record they land in. They land there as a
+  *single* coalesced ``terminal.output`` string (issue #195), so the binding
+  ceiling at ordinary geometry is the per-string one, and only a very wide
+  terminal makes the per-record string sum bind first. Chunk *count* is not
+  a separate axis: coalescing means no number of reads can reach the
+  protocol's collection ceiling. Hosts must budget the deadline above the disclosed
   DA-stall floor: conhost defers client output while its unanswered
   ``CSI c`` device-attributes query waits (measured ~3.1 s; see the
   DA-stall disclosure in the adapter design document), so a deadline at or
@@ -133,7 +134,7 @@ from termverify.adapter import (
     UiObservation,
     _validate_run_id,
 )
-from termverify.transcript import _MAX_COLLECTION_ITEMS, _MAX_RECORD_STRING_BYTES
+from termverify.transcript import _MAX_RECORD_STRING_BYTES, _MAX_STRING_BYTES
 from termverify.vt import ScreenSnapshot, TerminalOutputNormalizer, VtScreenNormalizer
 
 __all__ = [
@@ -156,15 +157,6 @@ __all__ = [
 #: instead.
 READINESS_MARKER_DEFAULT: Final = "\x1b]7791;ready\x1b\\"
 
-#: Decoded string bytes each retained chunk costs its observation record
-#: beyond its own payload: the ``type``/``data``/``chunk`` member names plus
-#: the ``terminal.output`` type value, all of which count against the same
-#: per-record ceiling as the chunk itself. Counted per chunk because the
-#: cost scales with chunk count, which is what made a flat headroom wrong:
-#: an ordinary 41,000-line scroll arrives as ~9,200 chunks, whose overhead
-#: alone is ~258 KB.
-_EVENT_STRING_OVERHEAD_BYTES: Final = 28
-
 #: UTF-8's worst case for one screen cell. The screen model stores any
 #: character at or above U+00A0 in a single cell, so a cell can cost up to
 #: four bytes in the frame lines the codec measures — counting cells as bytes
@@ -173,25 +165,11 @@ _MAX_UTF8_BYTES_PER_CELL: Final = 4
 
 #: Reserve for an observation record's fixed strings: the envelope's
 #: protocol, kind, run and record identifiers, the cursor and mode values,
-#: and the member names around them. Generous by a wide margin, and unlike
-#: the frame it does not scale with anything.
+#: the event's own member names, and the member names around them. Generous
+#: by a wide margin, and unlike the frame it does not scale with anything —
+#: the epoch's chunks reach the record as a *single* coalesced event, so
+#: their envelope cost is paid once rather than per chunk.
 _FIXED_RECORD_STRING_BYTES: Final = 4 * 1024
-
-#: Chunks one epoch may retain. Every chunk becomes one item in the
-#: observation's ``events`` array, and the protocol caps the items in one
-#: JSON collection — a bound a byte budget cannot express, because a subject
-#: doing tight in-place updates reaches it with well under 100 KB of payload
-#: (~40,000 two-byte updates in under three seconds, measured; the exact
-#: count is host-dependent, as ConPTY's coalescing is). Single-sourced from
-#: the same protocol ceiling.
-#:
-#: Disclosed: this can abort a *cooperative* subject, and the cause is one
-#: event per native read rather than anything the protocol requires — chunk
-#: boundaries are OS scheduling noise, and every consumer joins them. Slice
-#: 5.1 (issue #195) coalesces adjacent chunks at record time, which removes
-#: the cause; until then the bound is the honest alternative to building an
-#: observation the codec must reject.
-_MAX_EPOCH_CHUNKS: Final = _MAX_COLLECTION_ITEMS
 
 #: The `termverify.enforcement-tier/v1` authorization matrix row for the
 #: ConPTY architecture, in constraint order: the adapter's own terminal
@@ -671,13 +649,23 @@ class ConptyAdapter:
     def _epoch_output_budget(self) -> int:
         """Retained chunk bytes this epoch may cost its observation record.
 
-        Computed rather than reserved, because the record's other strings are
-        dominated by the frame, at a geometry the host chooses and
-        ``dispatch(Resize(...))`` can change mid-run. A flat headroom was
-        wrong in both directions: too small for a wide terminal, so the
-        adapter admitted an epoch the codec then rejected for size, and too
-        large for an ordinary one, so it aborted epochs that would have
-        recorded fine.
+        The epoch's chunks reach the transcript as **one** string: the
+        recorder merges adjacent ``terminal.output`` events into a single
+        event (issue #195), because chunk boundaries are OS read scheduling,
+        not subject behavior. Two v1 ceilings therefore apply at once, and
+        the budget is whichever binds first:
+
+        - the **per-string** ceiling, which the merged chunk meets on its
+          own. At ordinary geometry this is the binding one, and at half the
+          per-record sum it is the reason a budget derived only from that
+          sum admitted epochs the codec rejected — measured at 1.98x the
+          ceiling for a plain 80x24 run.
+        - the **per-record string sum**, less what the rest of the record
+          costs. That is dominated by the frame, at a geometry the host
+          chooses and ``dispatch(Resize(...))`` can change mid-run, so it is
+          computed rather than reserved: a flat headroom was wrong in both
+          directions, too small for a wide terminal and too large for an
+          ordinary one.
 
         The frame's cost is counted in **bytes, not cells**. The codec counts
         UTF-8 bytes, and the screen model puts any character at or above
@@ -689,7 +677,10 @@ class ConptyAdapter:
         point, so the reserve cannot be short.
         """
         frame_bytes = _MAX_UTF8_BYTES_PER_CELL * self._rows * self._columns
-        return _MAX_RECORD_STRING_BYTES - frame_bytes - _FIXED_RECORD_STRING_BYTES
+        record_budget = (
+            _MAX_RECORD_STRING_BYTES - frame_bytes - _FIXED_RECORD_STRING_BYTES
+        )
+        return min(_MAX_STRING_BYTES, record_budget)
 
     def _read_epoch_chunks(
         self, child: ConptyChildPort, chunks: list[str], expired: threading.Event
@@ -705,10 +696,14 @@ class ConptyAdapter:
           re-armed for every read, a trickle just under it never exceeds any
           single read's deadline (finding R2). The epoch therefore carries
           its own deadline, checked between reads.
-        - **retained output bytes**, counting each chunk plus the per-event
-          overhead it costs the one observation record they all land in.
-        - **retained chunks**, because each is one item in that record's
-          ``events`` array and the protocol caps a collection's items.
+        - **retained output bytes**, against what the single coalesced
+          ``terminal.output`` string those chunks become may cost its
+          observation record. This bounds retained memory too: a chunk costs
+          at least one byte, so the byte budget also caps how many the epoch
+          can hold — though the per-object cost of holding them is not itself
+          counted, and at the ceiling a one-byte-per-read trickle retains on
+          the order of tens of megabytes of Python string objects before the
+          epoch deadline or this budget ends it.
 
         Each is a structured failure, never a claimed epoch.
         """
@@ -721,10 +716,7 @@ class ConptyAdapter:
             # Count before honoring the marker: the marker-bearing chunk is
             # retained like any other, so excluding it would let the epoch
             # exceed its own bound by a whole read.
-            output_bytes += (
-                len(chunk.encode("utf-8", "surrogatepass"))
-                + _EVENT_STRING_OVERHEAD_BYTES
-            )
+            output_bytes += len(chunk.encode("utf-8", "surrogatepass"))
             budget = self._epoch_output_budget()
             if budget <= 0:
                 raise _EpochFailure(
@@ -742,13 +734,6 @@ class ConptyAdapter:
                     " record may carry; the budget is adapter abort policy,"
                     " not evidence",
                     {"budget": "bytes", "epoch-output-byte-budget": budget},
-                )
-            if len(chunks) >= _MAX_EPOCH_CHUNKS:
-                raise _EpochFailure(
-                    "the epoch retained more chunks than one observation"
-                    " record may carry as events; the budget is adapter abort"
-                    " policy, not evidence",
-                    {"budget": "chunks", "epoch-chunk-budget": _MAX_EPOCH_CHUNKS},
                 )
             chunks.append(chunk)
             self._feed(chunk)

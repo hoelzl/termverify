@@ -49,35 +49,27 @@ legitimately works for a minute between readiness markers now needs a
 deadline that covers it — and because one value serves both bounds, a
 generous deadline also means slower hang detection.
 
-Two further bounds are adapter policy, not host policy, and are not
-configurable: an epoch may retain only as much output, and only as many
-chunks, as one observation record can carry, because every chunk becomes a
-`terminal.output` event in that record. Exceeding either fails the epoch
-(`budget: "bytes"` or `budget: "chunks"`) instead of retaining evidence that
-would not fit.
+One further bound is adapter policy, not host policy, and is not
+configurable: an epoch may retain only as much output as one observation
+record can carry. Exceeding it fails the epoch (`budget: "bytes"`) instead of
+retaining evidence that would not fit.
 
-The byte bound is **computed from the terminal geometry**, not fixed: the
-frame's lines are the record's other large strings, so a 400×200 terminal
-leaves less room for output than an 80×24 one. Roughly 2 MB of output in a
-single epoch is the scale at ordinary geometry.
+Chunk *count* is not a separate bound. The recorder merges an epoch's
+adjacent `terminal.output` chunks into a single event
+([issue #195](https://github.com/hoelzl/termverify/issues/195)), because
+chunk boundaries are OS read scheduling rather than subject behavior, so no
+number of native reads can exhaust the protocol's per-collection ceiling. A
+subject doing tight in-place updates — a spinner, a progress bar redrawing in
+place — is bounded by the bytes it writes and nothing else.
 
-Exceeding it fails the epoch, which is the honest outcome — but it is not a
-guarantee that every accepted epoch records: the codec enforces ceilings no
-adapter-side budget can model, notably a canonical-line limit that ESC-dense
-output reaches at a few hundred kilobytes because RFC 8785 escapes every
-control byte.
+The byte bound is **computed**, not fixed, and two ceilings feed it:
 
-The chunk bound is 16,384 chunks, and it is the one that can surprise you: it
-counts *native reads*, not bytes, so a subject doing tight in-place updates —
-a spinner, a progress bar redrawing in place — can reach it with under 100 KB
-of output in a few seconds. Do **not** try to fix it by emitting extra
-readiness markers inside one epoch: the contract is exactly one marker per
-processed input, and a surplus marker ends an epoch early and shifts every
-later epoch's output onto the wrong input. The honest options are to produce
-fewer redraws between inputs, or to wait for recorder-side coalescing
-([issue #195](https://github.com/hoelzl/termverify/issues/195)) — chunk
-boundaries are OS scheduling noise rather than evidence, and coalescing them
-removes the cause.
+- The epoch's chunks reach the transcript as one merged string, so that
+  string's own per-string ceiling applies. At ordinary geometry this is the
+  binding one, and the scale is roughly 1 MB of output in a single epoch.
+- The record's total string bytes, less what the rest of the record costs.
+  That is dominated by the frame's lines, so a very wide terminal leaves less
+  room for output than an 80×24 one — this binds above roughly 261,000 cells.
 
 The byte bound also depends on what the screen *contains*, not only its size:
 the codec counts UTF-8 bytes, so a box-drawn or CJK frame costs three to four
@@ -86,11 +78,16 @@ terminal leaves less room for output — and above roughly 2.09 million cells a
 record cannot hold even its own frame, so no epoch can be recorded at all and
 `start()` fails with `budget: "geometry"`.
 
-Both bound the adapter's own retention; the codec still owns recordability
-and enforces further ceilings — notably a canonical-line limit that ESC-dense
-output reaches much sooner, since RFC 8785 escapes every control byte — so a
-transcript can still be rejected for size after an epoch the adapter
-accepted.
+Do **not** try to fit inside the bound by emitting extra readiness markers
+inside one epoch: the contract is exactly one marker per processed input, and
+a surplus marker ends an epoch early and shifts every later epoch's output
+onto the wrong input. Produce less output between inputs instead.
+
+The bound covers the adapter's own retention; the codec still owns
+recordability and enforces further ceilings — notably a canonical-line limit
+that ESC-dense output reaches much sooner, since RFC 8785 escapes every
+control byte — so a transcript can still be rejected for size after an epoch
+the adapter accepted.
 
 ## What the delivered tier means
 

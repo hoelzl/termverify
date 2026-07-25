@@ -245,18 +245,36 @@ low enough to bound a trickle also aborted an ordinary few-thousand-line run
 prevents.
 
 Retained evidence is bounded separately, because time bounds do not bound
-memory: an epoch may retain only as much output, and as many chunks, as one
-observation record can carry. Both budgets are derived from
-`termverify.transcript/v1` ceilings — aggregate record string bytes
-(counting each chunk's per-event overhead, which scales with chunk count)
-and collection items — because every chunk becomes a `terminal.output` event
-in a single record. Exceeding either fails the epoch rather than retaining
-evidence that would not fit. The frame reserve counts UTF-8 bytes per cell,
-not cells: the codec measures bytes, and a non-ASCII screen costs up to four
-bytes per cell. These bounds are not a recordability guarantee — the codec
-enforces further ceilings, notably the canonical-line limit ESC-dense output
-reaches far sooner. These are adapter
-policy, not host policy, and not configurable.
+memory: an epoch may retain only as much output as one observation record can
+carry. The budget is derived from `termverify.transcript/v1` ceilings and
+takes the tighter of two, because an epoch's chunks reach the record as a
+**single** coalesced `terminal.output` string (issue #195): the per-string
+ceiling that merged string meets on its own, and the per-record string sum
+less what the rest of the record costs. Exceeding it fails the epoch rather
+than retaining evidence that would not fit. The frame reserve counts UTF-8
+bytes per cell, not cells: the codec measures bytes, and a non-ASCII screen
+costs up to four bytes per cell. This bound is not a recordability guarantee
+— the codec enforces further ceilings, notably the canonical-line limit
+ESC-dense output reaches far sooner. It is adapter policy, not host policy,
+and not configurable.
+
+A separate chunk-count budget was implemented and then **deleted when #195
+merged**. While each retained chunk became its own event, chunk count was a
+real axis that bytes could not express — a subject redrawing in place reached
+the per-collection ceiling with under 100 KB of payload — and the adapter had
+to abort a cooperative subject to stay honest. Recorder-side coalescing
+removes the axis rather than the symptom, so the bound went with it.
+
+Ordering note, worth keeping: #195 merged first and silently invalidated this
+byte budget in the *unsafe* direction. Deriving it from the per-record string
+sum admitted epochs at 1.98x the per-string ceiling the merged string
+actually meets, and the adapter's own test did not notice because it
+replicated the codec's counting rule over the adapter's pre-coalescing
+observation. Two lessons: a budget single-sourced from protocol ceilings
+still has to be re-derived when the *shape* of the record those ceilings
+apply to changes, and budget evidence should be pushed through the real
+recorder and codec rather than through a replica of their rules.
+
 **Write coverage, decided 2026-07-18 (issue #121):** the watchdog wraps
 blocking reads only. Binding evidence showed no conin write backpressure on
 the verified matrix (a 7.1 GiB flood against a never-reading child never

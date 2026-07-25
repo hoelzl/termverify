@@ -36,12 +36,12 @@ from termverify.adapter import (
     FilesystemConfiguration,
     FilesystemReceipt,
     Frame,
+    JsonInput,
     KeyInput,
     LocaleReceipt,
     ManualTime,
     NetworkConfiguration,
     NetworkReceipt,
-    Observation,
     Resize,
     RunConfiguration,
     RunFailed,
@@ -58,20 +58,32 @@ from termverify.adapter import (
     TimezoneReceipt,
 )
 from termverify.conpty import (
-    _MAX_EPOCH_CHUNKS,
     READINESS_MARKER_DEFAULT,
     ConptyAdapter,
     ConptyChildPort,
     TimerWatchdog,
 )
+from termverify.recorder import TranscriptRecorder
 from termverify.transcript import (
     _MAX_COLLECTION_ITEMS,
     _MAX_RECORD_STRING_BYTES,
+    _MAX_STRING_BYTES,
 )
 from termverify.vt import ScreenSnapshot, VtNormalizationError
 
 _MARKER = READINESS_MARKER_DEFAULT
 _DEADLINE_MS = 60_000
+
+#: Minimal valid replay subject, so budget evidence can be pushed through the
+#: real recorder and codec rather than through a replica of their rules.
+_REPLAY_SUBJECT: dict[str, JsonInput] = {
+    "format": "termverify.replay-subject/v1",
+    "application": {"id": "fixture-app", "version": "1", "build": "b1"},
+    "fixture": {"id": "basic", "version": "1"},
+    "adapter": {"id": "termverify.conpty", "version": "1"},
+    "normalizer": {"id": "termverify.identity", "version": "1"},
+    "state_schema": {"id": "fixture-state", "version": "1"},
+}
 
 
 def _configuration() -> RunConfiguration:
@@ -693,82 +705,58 @@ def test_the_byte_budget_counts_the_marker_bearing_chunk_too() -> None:
     assert details["budget"] == "bytes"
 
 
-def _record_string_bytes(observation: Observation) -> int:
-    """Decoded string bytes one observation record costs, the codec's way.
+def _recorded_transcript(started: Started, configuration: RunConfiguration) -> bytes:
+    """Record and serialize a start observation with the real codec.
 
-    Mirrors `termverify.transcript`'s counting rule — every string value and
-    every member name in the record — over exactly what the recorder emits
-    for an observation: the chunk events, the frame lines, and the fixed
-    envelope and UI strings.
+    Nothing here replicates `termverify.transcript`'s counting rule. An
+    earlier revision of this slice did, and the replica was the defect: it
+    measured the adapter's *pre-coalescing* observation, one event per
+    native read, while the recorder merges adjacent `terminal.output`
+    chunks into a single event (issue #195, merged as PR #224). The replica
+    therefore checked the epoch against the per-record string sum and never
+    against the per-string ceiling the merged chunk actually meets.
     """
-    total = 0
-    for event in observation.events:
-        total += len("type") + len(event.type)
-        data = cast("Mapping[str, object]", event.data)
-        for key, value in data.items():
-            total += len(key)
-            if isinstance(value, str):
-                total += len(value.encode("utf-8", "surrogatepass"))
-        total += len("data")
-    if observation.frame is not None:
-        for line in observation.frame.lines:
-            total += len(line.encode("utf-8", "surrogatepass"))
-        total += sum(len(name) for name in ("frame", "lines", "columns", "rows"))
-    # The record's fixed strings count against the same ceiling, and omitting
-    # them is why a zeroed reserve went undetected (round 4, finding 2).
-    total += sum(
-        len(name)
-        for name in (
-            "protocol",
-            "run_id",
-            "seq",
-            "id",
-            "kind",
-            "payload",
-            "at_ms",
-            "state",
-            "ui",
-            "cursor",
-            "column",
-            "row",
-            "visible",
-            "mode",
-            "focus",
-            "regions",
-            "events",
-        )
+    recorder = TranscriptRecorder("run-conpty", configuration, _REPLAY_SUBJECT)
+    recorder.record_start(started)
+    recorder.record_epoch(
+        Stop(ManualTime(0)), TerminalResult(None, RunFinished.code(0))
     )
-    total += len("termverify.transcript/v1") + len("observation")
-    total += len("run-conpty") + len("record-000") + len("normal")
-    return total
+    return recorder.transcript()
 
 
-@pytest.mark.parametrize(("columns", "rows"), [(80, 24), (200, 400), (400, 200)])
+@pytest.mark.parametrize(
+    ("columns", "rows"), [(80, 24), (200, 400), (400, 200), (800, 400)]
+)
 @pytest.mark.parametrize("cell", ["x", "─", "🙂"])
-def test_the_largest_admitted_epoch_fits_one_record_at_any_geometry(
+def test_the_largest_admitted_epoch_records_as_a_valid_transcript(
     columns: int, rows: int, cell: str
 ) -> None:
-    """The bound must admit only epochs a record can actually hold.
+    """The bound must admit only epochs the codec actually accepts.
 
-    Nothing here feeds the adapter's constants back to it: the epoch grows
-    until the adapter refuses, and the largest one it *accepted* is then
-    measured against the protocol ceiling by the codec's own counting rule.
-    A wrong per-event overhead, or a headroom that ignores the frame, shows
-    up as a measured overflow instead of a passing assertion — which is how
-    the previous revision's flat headroom hid: it admitted epochs the codec
-    rejected for size at 200x328 and larger (adversarial review of this PR,
-    rounds 2 and 3).
+    The epoch grows until the adapter refuses, and the largest one it
+    *accepted* is then recorded and serialized by the real recorder and the
+    real codec. A budget derived from the wrong ceiling shows up as a
+    `TranscriptValidationError` here rather than as a passing assertion,
+    which is how three successive revisions of this budget hid: each was
+    checked against a replica of the counting rule that shared the
+    revision's own mistake.
+
+    The geometries straddle the crossover deliberately. Below ~261,000 cells
+    the per-string ceiling binds and the frame reserve is slack; 800x400
+    puts the per-record string sum in front of it, which is the only regime
+    where an under-sized per-cell reserve can be observed at all.
     """
-    chunk = "y" * 8192
+    step = 8192
     configuration = replace(
         _configuration(),
         terminal=TerminalConfiguration(columns=columns, rows=rows, capabilities=()),
     )
 
-    accepted: Observation | None = None
-    count = 1
-    while count < 2_000:
-        binding = _FakeBinding(_FakeChild([chunk] * count + [_MARKER]))
+    def attempt(payload_bytes: int) -> Started | None:
+        """Start one epoch carrying `payload_bytes` across several chunks."""
+        whole, tail = divmod(payload_bytes, step)
+        chunks = ["y" * step] * whole + (["y" * tail] if tail else [])
+        binding = _FakeBinding(_FakeChild([*chunks, _MARKER]))
         adapter = _adapter(
             binding,
             watchdog=_FakeWatchdog(),
@@ -777,42 +765,56 @@ def test_the_largest_admitted_epoch_fits_one_record_at_any_geometry(
             ),
         )
         result = adapter.start("run-conpty", configuration)
-        if type(result) is not Started:
-            break
-        accepted = result.observation
-        count += 1
-    else:  # pragma: no cover - the bound must be reachable within the sweep
-        raise AssertionError("the byte bound was never reached")
-    assert accepted is not None, "no epoch was admitted at all"
+        return result if type(result) is Started else None
 
-    assert _record_string_bytes(accepted) <= _MAX_RECORD_STRING_BYTES, (
-        "the adapter admitted an epoch whose record exceeds the v1 ceiling"
-    )
+    # Coarse sweep to bracket the bound, then a binary search to land on it
+    # exactly. Byte granularity is not pedantry: at the 8 KiB step the search
+    # stops up to a whole step short, and terms worth a few hundred bytes —
+    # the record's fixed strings — sit inside that slack unobserved, which is
+    # how an earlier revision left one pinned by nothing at all.
+    low = 0
+    high = step
+    while attempt(high) is not None:
+        low = high
+        high += step
+        if high > 4 * _MAX_STRING_BYTES:  # pragma: no cover - bound must exist
+            raise AssertionError("the byte bound was never reached")
+    while high - low > 1:
+        middle = (low + high) // 2
+        if attempt(middle) is None:
+            high = middle
+        else:
+            low = middle
+    assert low > 0, "no epoch was admitted at all"
+
+    accepted = attempt(low)
+    assert accepted is not None
+    # Raises if the largest admitted epoch exceeds any v1 ceiling.
+    _recorded_transcript(accepted, configuration)
 
 
-def test_a_chunk_flood_exhausts_the_per_epoch_chunk_budget() -> None:
-    """Bytes cannot bound chunk count, and the protocol bounds both.
+def test_a_chunk_flood_is_bounded_by_bytes_alone() -> None:
+    """Chunk count is no longer an axis, because chunks no longer are events.
 
-    Each chunk is one item in the observation's ``events`` array, and the
-    protocol caps a collection's items. A subject redrawing in place reaches
-    that cap with well under 100 KB — roughly 40,000 two-byte updates,
-    measured, though the exact count is host-dependent because ConPTY's
-    coalescing is — which is far inside any byte budget, so the byte bound
-    alone would admit an epoch whose record the codec must reject.
+    Before #195 every retained chunk became one item in the observation's
+    `events` array, so a subject redrawing in place reached the protocol's
+    collection ceiling with well under 100 KB of payload and the adapter
+    needed a separate chunk bound. The recorder now merges adjacent chunks
+    into a single event, so that ceiling is unreachable by chunk count and
+    the same subject records fine. Deleting the chunk bound without this
+    test would leave the deletion pinned by nothing.
     """
-    # Pinned to its single source: a test that only fed the constant back
-    # would pass with the bound raised to any value (round 3, finding 2).
-    assert _MAX_EPOCH_CHUNKS == _MAX_COLLECTION_ITEMS
-    binding = _FakeBinding(_FakeChild(["W"] * (_MAX_EPOCH_CHUNKS + 1)))
+    flood = ["W"] * (_MAX_COLLECTION_ITEMS + 1)
+    binding = _FakeBinding(_FakeChild([*flood, _MARKER]))
     adapter = _adapter(binding, watchdog=_FakeWatchdog())
 
     result = adapter.start("run-conpty", _configuration())
 
-    assert type(result) is StartFailed
-    assert result.failure.details == {
-        "budget": "chunks",
-        "epoch-chunk-budget": _MAX_EPOCH_CHUNKS,
-    }
+    assert type(result) is Started
+    assert len(result.observation.events) == len(flood) + 1
+    transcript = _recorded_transcript(result, _configuration())
+    # The codec accepted it, and the chunks arrive as one coalesced event.
+    assert transcript.count(b'"terminal.output"') == 1
 
 
 def test_the_epoch_deadline_also_bounds_a_dispatch_epoch() -> None:
