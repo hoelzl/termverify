@@ -54,14 +54,19 @@ Readiness and quiescence are defined only by observable evidence:
   mandatory, explicitly configured abort deadline: a watchdog armed before
   each blocking read force-closes the binding when it expires, which always
   produces a structured failure disclosing the deadline policy and never a
-  successful epoch. Because that watchdog is re-armed per read, the same
-  configured deadline additionally bounds the epoch *as a whole*, so a
-  subject trickling output just under it cannot hold an epoch open forever
-  (finding R2) — the worst case is the epoch deadline plus the read in
-  flight when it passes. That is the deadline the host already configured;
-  no second policy and no new evidence source. Retained output is bounded
-  separately, by what one observation record can carry, which bounds memory
-  rather than time. Hosts must budget the deadline above the disclosed
+  successful epoch. That watchdog alone is not enough: because it is
+  re-armed for every read, a subject trickling output just under the
+  deadline never exceeds any single read's deadline and could hold an epoch
+  open forever (finding R2). The same configured value therefore also bounds
+  the epoch *as a whole*, checked between reads — so the worst case is up to
+  **twice** the deadline, once for the epoch's own bound and once for the
+  read in flight when it passes. It remains one policy with one message and
+  no new evidence source; the recorded ``bound`` says which of the two
+  fired, because a stalled read and a subject that never reaches readiness
+  need opposite remediations. Retained output and retained chunks are
+  bounded separately, by what one observation record can carry, which bounds
+  memory rather than time. Hosts must budget the deadline above the
+  disclosed
   DA-stall floor: conhost defers client output while its unanswered
   ``CSI c`` device-attributes query waits (measured ~3.1 s; see the
   DA-stall disclosure in the adapter design document), so a deadline at or
@@ -125,7 +130,7 @@ from termverify.adapter import (
     UiObservation,
     _validate_run_id,
 )
-from termverify.transcript import _MAX_RECORD_STRING_BYTES
+from termverify.transcript import _MAX_COLLECTION_ITEMS, _MAX_RECORD_STRING_BYTES
 from termverify.vt import ScreenSnapshot, TerminalOutputNormalizer, VtScreenNormalizer
 
 __all__ = [
@@ -148,21 +153,36 @@ __all__ = [
 #: instead.
 READINESS_MARKER_DEFAULT: Final = "\x1b]7791;ready\x1b\\"
 
-#: Output bytes one epoch may retain before it is abandoned. Every chunk
-#: becomes one ``terminal.output`` event inside a single observation record,
-#: and `termverify.transcript/v1` caps one record's aggregate decoded string
-#: bytes, so this is where an epoch's memory has to stop. The value is that
-#: ceiling less headroom for the rest of the record's strings — event keys
-#: and types, the frame lines, the run identifiers — which count against the
-#: same ceiling.
-#:
-#: This bounds memory; it is not a recordability guarantee. The codec owns
-#: recordability, and it enforces two further ceilings this cannot model: a
-#: per-string limit, and a canonical-line limit that ESC-dense output
-#: reaches far sooner because RFC 8785 escapes every control byte. An epoch
-#: inside this budget can still produce a record the codec rejects — which
-#: is the codec's job, and the recorder surfaces it.
-_MAX_EPOCH_OUTPUT_BYTES: Final = _MAX_RECORD_STRING_BYTES - 64 * 1024
+#: Decoded string bytes each retained chunk costs its observation record
+#: beyond its own payload: the ``type``/``data``/``chunk`` member names plus
+#: the ``terminal.output`` type value, all of which count against the same
+#: per-record ceiling as the chunk itself. Counted per chunk because the
+#: cost scales with chunk count, which is what made a flat headroom wrong:
+#: an ordinary 41,000-line scroll arrives as ~9,200 chunks, whose overhead
+#: alone is ~258 KB.
+_EVENT_STRING_OVERHEAD_BYTES: Final = 28
+
+#: Headroom reserved for the strings in an observation record that are not
+#: chunk events: the frame's lines, the cursor and mode values, and the
+#: envelope's run and record identifiers.
+_RECORD_STRING_HEADROOM_BYTES: Final = 64 * 1024
+
+#: Retained output bytes one epoch may cost its observation record, chunks
+#: plus their per-event overhead. `termverify.transcript/v1` caps a record's
+#: aggregate decoded string bytes, so this is where an epoch's memory has to
+#: stop — and, with the overhead counted, it tracks the ceiling it is derived
+#: from rather than approximating it.
+_MAX_EPOCH_OUTPUT_BYTES: Final = (
+    _MAX_RECORD_STRING_BYTES - _RECORD_STRING_HEADROOM_BYTES
+)
+
+#: Chunks one epoch may retain. Every chunk becomes one item in the
+#: observation's ``events`` array, and the protocol caps the items in one
+#: JSON collection — a bound a byte budget cannot express, because a
+#: cooperative spinner reaches it with ~50 KB of payload (25,000 one-byte
+#: updates measured on the verified matrix). Single-sourced from the same
+#: protocol ceiling.
+_MAX_EPOCH_CHUNKS: Final = _MAX_COLLECTION_ITEMS
 
 #: The `termverify.enforcement-tier/v1` authorization matrix row for the
 #: ConPTY architecture, in constraint order: the adapter's own terminal
@@ -498,6 +518,7 @@ class ConptyAdapter:
         self._monotonic: Callable[[], float] = (
             monotonic if monotonic is not None else time.monotonic
         )
+        self._deadline_bound: str = "read"
         self._state: _State = "created"
         self._state_lock = threading.Lock()
         self._manual_time: ManualTime | None = None
@@ -643,11 +664,21 @@ class ConptyAdapter:
     ) -> None:
         """Read until one readiness marker is observed in stream order.
 
-        Bounded on both axes an unbounded loop would otherwise leak: the
-        number of reads (time, because each one re-arms the deadline) and
-        the retained output bytes (memory, and what one record can carry).
-        Either budget exhausted is a structured failure, never a claimed
-        epoch.
+        Bounded on every axis an unbounded loop would otherwise leak, so a
+        subject that never emits the marker can neither hold the epoch open
+        nor outgrow what its own evidence can hold:
+
+        - **time**, by the configured abort deadline applied to the epoch as
+          a whole. The per-read watchdog cannot do this: because it is
+          re-armed for every read, a trickle just under it never exceeds any
+          single read's deadline (finding R2). The epoch therefore carries
+          its own deadline, checked between reads.
+        - **retained output bytes**, counting each chunk plus the per-event
+          overhead it costs the one observation record they all land in.
+        - **retained chunks**, because each is one item in that record's
+          ``events`` array and the protocol caps a collection's items.
+
+        Each is a structured failure, never a claimed epoch.
         """
         if self._scan_for_marker():
             return
@@ -658,7 +689,10 @@ class ConptyAdapter:
             # Count before honoring the marker: the marker-bearing chunk is
             # retained like any other, so excluding it would let the epoch
             # exceed its own bound by a whole read.
-            output_bytes += len(chunk.encode("utf-8", "surrogatepass"))
+            output_bytes += (
+                len(chunk.encode("utf-8", "surrogatepass"))
+                + _EVENT_STRING_OVERHEAD_BYTES
+            )
             if output_bytes > _MAX_EPOCH_OUTPUT_BYTES:
                 raise _EpochFailure(
                     "the epoch retained more output than one observation"
@@ -669,22 +703,29 @@ class ConptyAdapter:
                         "epoch-output-byte-budget": _MAX_EPOCH_OUTPUT_BYTES,
                     },
                 )
+            if len(chunks) >= _MAX_EPOCH_CHUNKS:
+                raise _EpochFailure(
+                    "the epoch retained more chunks than one observation"
+                    " record may carry as events; the budget is adapter abort"
+                    " policy, not evidence",
+                    {"budget": "chunks", "epoch-chunk-budget": _MAX_EPOCH_CHUNKS},
+                )
             chunks.append(chunk)
             self._feed(chunk)
             self._pending += chunk
             if self._scan_for_marker():
                 return
             if self._monotonic() >= epoch_deadline_at:
-                # The deadline is re-armed per read, so a subject trickling
-                # output just under it never exceeds any single read's
-                # deadline and could hold the epoch open forever (finding
-                # R2). The same configured deadline also bounds the epoch as
-                # a whole, which is what its name says; the abort is the
+                # The per-read watchdog cannot end this: a trickle just under
+                # the deadline never exceeds any single read's deadline, which
+                # is exactly finding R2. The epoch's own deadline — the same
+                # configured value — is what ends it, and the abort is the
                 # ordinary deadline abort, classified by `expired` below.
                 expired.set()
+                self._deadline_bound = "epoch"
                 raise _EpochFailure(
                     "the abort deadline expired before readiness evidence was observed",
-                    {"during": "read", "bound": "epoch"},
+                    {"during": "read"},
                 )
 
     def _close_child(self) -> bool:
@@ -709,11 +750,18 @@ class ConptyAdapter:
         )
 
     def _deadline_abort(self, at_ms: ManualTime) -> TerminalResult:
+        # ``bound`` is recorded because two aborts that look identical need
+        # opposite remediations: ``read`` means one read blocked for the whole
+        # deadline (a stalled subject), ``epoch`` means the subject kept
+        # producing output but never reached readiness (raise the deadline, or
+        # fix the marker). Without it the evidence cannot tell them apart.
+        bound = self._deadline_bound
+        self._deadline_bound = "read"
         return self._fail_runtime(
             at_ms,
             "the abort deadline expired before quiescence evidence was"
             " observed; the deadline is host abort policy, not evidence",
-            {"abort-deadline-ms": self._abort_deadline_ms},
+            {"abort-deadline-ms": self._abort_deadline_ms, "bound": bound},
         )
 
     def _finish_from_exit(

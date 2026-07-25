@@ -225,6 +225,34 @@ level). The deadline is host abort *policy*, disclosed in the resulting
 structured failure's details; it is never evidence of quiescence and can
 never produce a successful epoch. The watchdog trigger is injectable so the
 classification path is fully testable against a fake binding.
+
+**Amendment (issue #194, adversarial review finding R2).** A per-read
+watchdog does not bound an epoch: because it is re-armed for every read, a
+subject trickling output just under the deadline never exceeds any single
+read's deadline, so the marker never arrives and the epoch never ends. The
+same configured deadline therefore also bounds the epoch **as a whole**,
+checked between reads against an injected monotonic clock. Worst case is up
+to twice the deadline — the epoch's own bound plus the read in flight when
+it passes. This adds no policy and no evidence source: the abort is the
+ordinary deadline abort, and its details name which bound fired (`read` for
+a stalled read, `epoch` for a subject that produces output but never reaches
+readiness) because the two need opposite remediations.
+
+A read-count budget was implemented first and **rejected on measurement**:
+real ConPTY barely coalesces (635 reads for a 2,000-line scroll), so a count
+low enough to bound a trickle also aborted an ordinary few-thousand-line run
+— a false abort of a cooperating subject, worse than the starvation it
+prevents.
+
+Retained evidence is bounded separately, because time bounds do not bound
+memory: an epoch may retain only as much output, and as many chunks, as one
+observation record can carry. Both budgets are derived from
+`termverify.transcript/v1` ceilings — aggregate record string bytes
+(counting each chunk's per-event overhead, which scales with chunk count)
+and collection items — because every chunk becomes a `terminal.output` event
+in a single record. Exceeding either fails the epoch rather than building
+evidence the codec must reject at the end of the run. These are adapter
+policy, not host policy, and not configurable.
 **Write coverage, decided 2026-07-18 (issue #121):** the watchdog wraps
 blocking reads only. Binding evidence showed no conin write backpressure on
 the verified matrix (a 7.1 GiB flood against a never-reading child never

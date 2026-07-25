@@ -33,22 +33,33 @@ adapter = ConptyAdapter(
 above the disclosed DA-stall floor (~3.1 s on the verified matrix) plus spawn
 overhead, or every real start fails by policy.
 
-It bounds an epoch two ways, not one. The watchdog around each blocking read
-force-closes the child when a single read exceeds it — and because that
-watchdog is re-armed per read, the same value also bounds the epoch as a
-whole, so a subject that trickles output just under the deadline without ever
-emitting the readiness marker cannot hold an epoch open indefinitely. Budget
-it above the longest single epoch a real subject needs, output included: a
-few thousand lines of ordinary scrolling is normal and finishes in seconds,
-but a subject that legitimately works for longer between readiness markers
-needs a deadline that covers it.
+It bounds an epoch two ways, not one. A watchdog around each blocking read
+force-closes the child when a *single read* exceeds the deadline. That alone
+would not bound the epoch — a subject trickling output just under the
+deadline never exceeds any single read's deadline — so the same value is
+**also** applied to the epoch as a whole, checked between reads. Worst case
+is therefore up to twice the configured deadline. The failure details name
+which bound fired: `bound: "read"` means one read stalled, `bound: "epoch"`
+means the subject kept producing output but never reached readiness.
 
-One further bound is not host policy and cannot be configured: an epoch may
-retain only as much output as one observation record can carry, since every
-chunk becomes a `terminal.output` event in that record. Exceeding it fails
-the epoch with `budget: "bytes"` rather than building evidence the transcript
-codec would reject. No real terminal session approaches it; a runaway
-producer can.
+**This can abort runs that previously passed.** Budget the deadline above
+the longest single epoch a real subject needs, output included. An ordinary
+few-thousand-line scroll finishes in a couple of seconds, but a subject that
+legitimately works for a minute between readiness markers now needs a
+deadline that covers it — and because one value serves both bounds, a
+generous deadline also means slower hang detection.
+
+Two further bounds are adapter policy, not host policy, and are not
+configurable: an epoch may retain only as much output, and only as many
+chunks, as one observation record can carry, because every chunk becomes a
+`terminal.output` event in that record. Exceeding either fails the epoch
+(`budget: "bytes"` or `budget: "chunks"`) rather than building evidence the
+transcript codec would reject only at the end of the run. These bound the
+adapter's own retention; the codec still owns recordability and enforces
+further ceilings — notably a canonical-line limit that ESC-dense output
+reaches much sooner, since RFC 8785 escapes every control byte — so a
+transcript can still be rejected for size after an epoch the adapter
+accepted.
 
 ## What the delivered tier means
 

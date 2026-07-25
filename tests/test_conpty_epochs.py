@@ -56,6 +56,7 @@ from termverify.adapter import (
     TimezoneReceipt,
 )
 from termverify.conpty import (
+    _MAX_EPOCH_CHUNKS,
     _MAX_EPOCH_OUTPUT_BYTES,
     READINESS_MARKER_DEFAULT,
     ConptyAdapter,
@@ -548,7 +549,10 @@ def test_start_deadline_abort_is_start_failed_with_disclosed_policy() -> None:
     result = adapter.start("run-conpty", _configuration())
 
     assert type(result) is StartFailed
-    assert result.failure.details == {"abort-deadline-ms": _DEADLINE_MS}
+    assert result.failure.details == {
+        "abort-deadline-ms": _DEADLINE_MS,
+        "bound": "read",
+    }
     assert "deadline" in result.failure.message
     assert binding.child.closed
     assert all(binding.child.closes)
@@ -556,21 +560,25 @@ def test_start_deadline_abort_is_start_failed_with_disclosed_policy() -> None:
 
 
 class _SteppingClock:
-    """Monotonic fake that advances a fixed step per reading.
+    """Monotonic fake that advances on a schedule, not per reading.
 
-    Drives the per-epoch deadline exactly, with no sleeping and no
-    dependence on how fast the host runs the fake child.
+    Drives the per-epoch deadline with no sleeping. It advances only every
+    ``every`` readings so elapsed time and read count deliberately diverge:
+    a clock that ticked once per read would let a read-count bound pass this
+    test, which is the design that was rejected.
     """
 
-    def __init__(self, step_s: float) -> None:
+    def __init__(self, step_s: float, *, every: int = 3) -> None:
         self._step = step_s
+        self._every = every
         self._now = 0.0
         self.readings = 0
 
     def __call__(self) -> float:
         now = self._now
         self.readings += 1
-        self._now += self._step
+        if self.readings % self._every == 0:
+            self._now += self._step
         return now
 
 
@@ -595,7 +603,13 @@ def test_a_marker_less_trickle_cannot_outlive_the_epoch_deadline() -> None:
     result = adapter.start("run-conpty", _configuration())
 
     assert type(result) is StartFailed
-    assert result.failure.details == {"abort-deadline-ms": _DEADLINE_MS}
+    # The ordinary deadline evidence, with the epoch bound named: a stalled
+    # read and a subject that never reaches readiness look identical
+    # otherwise, and they need opposite remediations.
+    assert result.failure.details == {
+        "abort-deadline-ms": _DEADLINE_MS,
+        "bound": "epoch",
+    }
     assert "deadline" in result.failure.message
     assert binding.child.closed
     assert all(binding.child.closes)
@@ -662,6 +676,45 @@ def test_the_byte_budget_counts_the_marker_bearing_chunk_too() -> None:
     assert type(result) is StartFailed
     details = cast("Mapping[str, object]", result.failure.details)
     assert details["budget"] == "bytes"
+
+
+def test_a_chunk_flood_exhausts_the_per_epoch_chunk_budget() -> None:
+    """Bytes cannot bound chunk count, and the protocol bounds both.
+
+    Each chunk is one item in the observation's ``events`` array, and the
+    protocol caps a collection's items. A cooperative spinner reaches that
+    cap with tens of kilobytes — 25,000 one-byte updates measured on the
+    verified matrix — which is far inside any byte budget, so the byte bound
+    alone would admit an epoch whose record the codec must reject.
+    """
+    binding = _FakeBinding(_FakeChild(["W"] * (_MAX_EPOCH_CHUNKS + 1)))
+    adapter = _adapter(binding, watchdog=_FakeWatchdog())
+
+    result = adapter.start("run-conpty", _configuration())
+
+    assert type(result) is StartFailed
+    assert result.failure.details == {
+        "budget": "chunks",
+        "epoch-chunk-budget": _MAX_EPOCH_CHUNKS,
+    }
+
+
+def test_the_epoch_deadline_also_bounds_a_dispatch_epoch() -> None:
+    """The epoch bound is not a start-only guard."""
+    clock = _SteppingClock(_DEADLINE_MS / 1000 / 4)
+    binding = _FakeBinding(_FakeChild([_MARKER, *(["."] * 40)]))
+    adapter = _adapter(binding, watchdog=_FakeWatchdog(), monotonic=clock)
+    assert type(adapter.start("run-conpty", _configuration())) is Started
+
+    result = adapter.dispatch(TextInput(at_ms=ManualTime(0), text="go"))
+
+    assert type(result) is TerminalResult, result
+    outcome = result.outcome
+    assert isinstance(outcome, RunFailed)
+    assert outcome.failure.details == {
+        "abort-deadline-ms": _DEADLINE_MS,
+        "bound": "epoch",
+    }
 
 
 def test_a_budget_abort_in_a_dispatch_epoch_is_a_runtime_failure() -> None:
@@ -911,7 +964,10 @@ def test_dispatch_deadline_abort_has_no_observation() -> None:
     assert type(result) is TerminalResult
     assert type(result.outcome) is RunFailed
     assert result.observation is None
-    assert result.outcome.failure.details == {"abort-deadline-ms": _DEADLINE_MS}
+    assert result.outcome.failure.details == {
+        "abort-deadline-ms": _DEADLINE_MS,
+        "bound": "read",
+    }
     assert binding.child.closed
 
 
@@ -929,7 +985,11 @@ def test_expire_close_failure_still_classifies_the_deadline_abort() -> None:
     assert type(result) is TerminalResult
     assert type(result.outcome) is RunFailed
     details = dict(cast("dict[str, object]", result.outcome.failure.details))
-    assert details == {"abort-deadline-ms": _DEADLINE_MS, "close": "failed"}
+    assert details == {
+        "abort-deadline-ms": _DEADLINE_MS,
+        "bound": "read",
+        "close": "failed",
+    }
 
 
 def test_deadline_expiry_racing_a_successful_read_still_aborts() -> None:
@@ -943,7 +1003,10 @@ def test_deadline_expiry_racing_a_successful_read_still_aborts() -> None:
 
     assert type(result) is TerminalResult
     assert type(result.outcome) is RunFailed
-    assert result.outcome.failure.details == {"abort-deadline-ms": _DEADLINE_MS}
+    assert result.outcome.failure.details == {
+        "abort-deadline-ms": _DEADLINE_MS,
+        "bound": "read",
+    }
     assert binding.child.closed
 
 
@@ -961,6 +1024,7 @@ def test_deadline_expiry_with_failed_close_never_yields_success() -> None:
     assert type(result.outcome) is RunFailed
     assert result.outcome.failure.details == {
         "abort-deadline-ms": _DEADLINE_MS,
+        "bound": "read",
         "close": "failed",
     }
     assert "deadline" in result.outcome.failure.message
