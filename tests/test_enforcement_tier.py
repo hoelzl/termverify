@@ -570,7 +570,7 @@ def test_committed_fixture_capability_results_state_the_constructive_tier() -> N
         assert _capability_payload(records, index)["tier"] == "constructive"
 
 
-def test_enforced_capability_result_requires_a_tier() -> None:
+def test_applied_capability_result_requires_a_tier() -> None:
     records = _basic_records()
     del _capability_payload(records, 1)["tier"]
 
@@ -579,7 +579,7 @@ def test_enforced_capability_result_requires_a_tier() -> None:
 
 
 @pytest.mark.parametrize("tier", ["OS", "enforced", "", 1, None, ["os"]])
-def test_enforced_capability_result_rejects_non_vocabulary_tiers(
+def test_applied_capability_result_rejects_non_vocabulary_tiers(
     tier: object,
 ) -> None:
     records = _basic_records()

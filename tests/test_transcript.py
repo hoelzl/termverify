@@ -869,7 +869,7 @@ def test_parse_transcript_rejects_unsupported_constraint_without_terminal_match(
 ):
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
     invalid = fixture.replace(
-        b'"constraint":"network","effective":{"mode":"deny"},"status":"enforced",'
+        b'"constraint":"network","effective":{"mode":"deny"},"status":"applied",'
         b'"tier":"constructive"',
         (
             b'"constraint":"network","reason":"network isolation unavailable",'
@@ -884,8 +884,7 @@ def test_parse_transcript_rejects_unsupported_constraint_without_terminal_match(
 def test_parse_transcript_accepts_early_unsupported_constraint() -> None:
     lines = (FIXTURES / "valid" / "basic.jsonl").read_bytes().splitlines()
     unsupported = lines[1].replace(
-        b'"constraint":"seed","effective":"0","status":"enforced",'
-        b'"tier":"constructive"',
+        b'"constraint":"seed","effective":"0","status":"applied","tier":"constructive"',
         (
             b'"constraint":"seed","reason":"seed injection unavailable",'
             b'"status":"unsupported"'
@@ -910,8 +909,7 @@ def test_parse_transcript_accepts_early_unsupported_constraint() -> None:
 def test_parse_transcript_rejects_unsupported_terminal_for_wrong_constraint() -> None:
     lines = (FIXTURES / "valid" / "basic.jsonl").read_bytes().splitlines()
     unsupported = lines[1].replace(
-        b'"constraint":"seed","effective":"0","status":"enforced",'
-        b'"tier":"constructive"',
+        b'"constraint":"seed","effective":"0","status":"applied","tier":"constructive"',
         (
             b'"constraint":"seed","reason":"seed injection unavailable",'
             b'"status":"unsupported"'
@@ -1904,7 +1902,7 @@ def test_serialize_transcript_uses_rfc_8785_number_rendering() -> None:
     assert parse_transcript(serialized) == transcript
 
 
-def test_serialize_transcript_rejects_mismatched_enforced_effective_value() -> None:
+def test_serialize_transcript_rejects_mismatched_applied_effective_value() -> None:
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
     transcript = parse_transcript(fixture)
     payload = transcript[1]["payload"]
@@ -2056,7 +2054,7 @@ def test_serialize_transcript_preserves_application_defined_finite_float() -> No
     assert parse_transcript(serialize_transcript(transcript)) == transcript
 
 
-@pytest.mark.parametrize("status", [[], {}, "pending"])
+@pytest.mark.parametrize("status", [[], {}, "pending", "enforced"])
 def test_transcript_rejects_invalid_capability_status(status: JsonValue) -> None:
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
     payload = transcript[1]["payload"]
@@ -2914,9 +2912,31 @@ def test_serialize_transcript_rejects_unknown_nested_generic_member(
         serialize_transcript(transcript)
 
 
+def test_capability_status_is_tier_truthful() -> None:
+    """The status word must not claim more than the tier allows (P2).
+
+    `capability.result.payload.status` is `applied`: the adapter applied
+    the constraint and recorded the effective value, and the mandatory
+    `tier` states how strongly — down to `delivered`, whose own
+    definition says nothing is enforced. The pre-amendment `enforced`
+    made every delivered-tier constraint claim enforcement on the wire,
+    so it is not a v1 value at all: an in-place vocabulary correction
+    under prototyping-stage governance, not an additional alias.
+    """
+    transcript, _ = _transcript_with_payload_kind("capability.result")
+    capability = transcript[1]["payload"]
+    assert isinstance(capability, dict)
+    assert capability["status"] == "applied"
+    serialize_transcript(transcript)
+
+    capability["status"] = "enforced"
+    with pytest.raises(TranscriptValidationError, match="capability result status"):
+        serialize_transcript(transcript)
+
+
 @pytest.mark.parametrize(
     ("status", "extra_member"),
-    [("enforced", "reason"), ("unsupported", "effective")],
+    [("applied", "reason"), ("unsupported", "effective")],
 )
 def test_serialize_transcript_rejects_capability_member_for_wrong_status(
     status: str, extra_member: str
@@ -2924,7 +2944,7 @@ def test_serialize_transcript_rejects_capability_member_for_wrong_status(
     transcript, _ = _transcript_with_payload_kind("run.unsupported")
     capability = transcript[7]["payload"]
     assert isinstance(capability, dict)
-    if status == "enforced":
+    if status == "applied":
         transcript, _ = _transcript_with_payload_kind("capability.result")
         capability = transcript[1]["payload"]
         assert isinstance(capability, dict)

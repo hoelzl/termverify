@@ -171,7 +171,7 @@ def _capability_payload(
         effective = {"mode": network.mode}  # type: ignore[union-attr]
     payload: dict[str, JsonValue] = {
         "constraint": constraint,
-        "status": "enforced",
+        "status": "applied",
         "effective": effective,
         "tier": receipt.tier,
     }

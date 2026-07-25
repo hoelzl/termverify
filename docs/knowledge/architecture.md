@@ -80,10 +80,13 @@ direct and terminal vertical slices prove that a shared abstraction is needed.
 - No required model provider, agent harness, web service, or GUI toolkit.
 - Run configuration makes seed, clock, terminal dimensions, locale, timezone, filesystem root, and network policy explicit.
 - The library owns generic protocols and comparison; applications own domain semantics through adapters and normalizers.
-- An adapter either enforces each requested deterministic constraint and reports
-  its effective value, or returns a structured unsupported result before input
-  dispatch; it never silently falls back to ambient state.
-- Requested/effective equality does not prove enforcement. Each enforced result
+- An adapter either applies each requested deterministic constraint — at the
+  strongest tier its mechanism supports, down to `delivered`, where honoring the
+  value is subject cooperation — and reports the effective value with that tier,
+  or returns a structured unsupported result before input dispatch; it never
+  silently falls back to ambient state, and never records a tier stronger than
+  the mechanism it used.
+- Requested/effective equality does not prove enforcement. Each applied result
   is backed by a constraint-specific receipt from the path that applied the
   constraint; direct adapters can produce those receipts only through explicit
   application ports.

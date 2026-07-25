@@ -130,7 +130,7 @@ A valid transcript contains exactly this lifecycle shape:
 
 1. `run.started` at `seq: 0`;
 2. `capability.result` records in configuration-table order until all requested
-   constraints are enforced, the first is unsupported, or an adapter failure
+   constraints are applied, the first is unsupported, or an adapter failure
    terminates negotiation;
 3. if initialization completes, exactly one initial readiness observation;
 4. zero or more single-flight input epochs;
@@ -138,7 +138,7 @@ A valid transcript contains exactly this lifecycle shape:
    `run.unsupported`.
 
 An adapter failure may terminate negotiation before any capability result or
-after any enforced prefix. The transcript then contains only `run.started`, that
+after any applied prefix. The transcript then contains only `run.started`, that
 prefix, and `run.failed`. A subject that exits or an adapter that fails after
 negotiation but before readiness may likewise terminate without an initial
 observation. `run.unsupported` remains negotiation-only and has no body records.
@@ -220,7 +220,7 @@ Terminal record payloads are:
 Every defined record payload and nested generic protocol object is closed to
 its listed members plus uninterpreted `x-` extensions. In particular,
 `capability.result` permits `effective`, `tier`, and `delivery` only with
-`enforced` and `reason` only with `unsupported`; `delivery` additionally
+`applied` and `reason` only with `unsupported`; `delivery` additionally
 requires the `delivered` tier. Application-defined JSON values such as
 observation `state`, event `data`, diagnostic `details`, and error `details`
 remain open semantic values rather than generic protocol objects. The
@@ -290,27 +290,47 @@ request terminates through structured `unsupported` rather than fabricating an
 effective value.
 
 The configuration requests a constraint; it does not itself prove enforcement.
-The adapter-facing contract is:
+What an adapter owes is a truthful receipt per constraint, never containment it
+does not have. The adapter-facing contract is:
 
-- It injects the requested seed and manual clock through an application-facing
-  port. Advancing time is an explicit `input.clock_advanced` record, never a
-  wall-clock wait.
-- It starts subprocesses with the requested locale and timezone, configures the
-  requested terminal dimensions/capabilities before the process can observe
-  them, and reports the effective values it actually applied.
-- It gives filesystem access only through the named sandbox root and denies
-  network access by default. An adapter that cannot enforce a requested
-  constraint must not claim a verified run.
+- It applies each requested constraint through an explicit mechanism and
+  records which one. A constructive in-process runtime injects the requested
+  seed and manual clock through application-facing ports; a cooperation port
+  instead delivers the requested value to the subject through the channel named
+  in the delivery record, and does nothing further. Advancing manual time is
+  always an explicit `input.clock_advanced` record, never a wall-clock wait.
+- It reports the effective value it actually applied, and configures the
+  requested terminal dimensions and capabilities before the subject can observe
+  them.
+- It never records a stronger mechanism than it used. The filesystem and
+  network constraints in particular are applied at whatever tier the adapter
+  can support — an `os`-tier sandbox root or socket denial where a mechanism
+  exists, otherwise `delivered`, where the requested policy is handed to the
+  subject and honoring it is subject cooperation. A `delivered`-tier receipt is
+  not containment: no receipt, claim, or document may imply that it is (owner
+  decision 2026-07-18,
+  [`cooperation-tier-constraint-ports.md`](../agent/design/cooperation-tier-constraint-ports.md)).
+- An adapter that cannot apply a requested constraint at any tier must record
+  it `unsupported` and terminate through `run.unsupported`. A verified run may
+  include `delivered`-tier constraints, and its constraint claims are no
+  stronger than its weakest tier — which is why the tier is recorded per
+  constraint rather than summarized per run.
 - It emits one `capability.result` for each attempted constraint through the
   first unsupported constraint, with `constraint`, `status`, and
   status-dependent `effective`/`tier`/`delivery`/`reason` members. `status` is
-  exactly `enforced` or `unsupported`; a `supported-but-not-enforced` state is
-  invalid. The first unsupported result terminates the transcript with
-  `run.unsupported` and no input dispatch.
+  exactly `applied` or `unsupported`. `applied` states that the adapter carried
+  out the constraint's application step and recorded the value it applied; the
+  mandatory `tier` states what that step was worth — at `os` and
+  `constructive` the constraint itself is in force, while at `delivered` what
+  was applied is the delivery, and whether the subject honors the delivered
+  value is not observable. There is no third status: the status word never
+  claims enforcement the tier disclaims, and a constraint the adapter can
+  neither enforce nor deliver is `unsupported`. The first unsupported result
+  terminates the transcript with `run.unsupported` and no input dispatch.
 
 `capability.result.payload.constraint` is one of `seed`, `clock`, `locale`,
 `timezone`, `terminal`, `filesystem`, or `network`; it follows the table order
-above. For `enforced`, `effective` is required and is the applied configuration
+above. For `applied`, `effective` is required and is the applied configuration
 value, and `tier` is required and states the enforcement tier (below). For
 `unsupported`, `reason` is required and the next record is the matching
 `run.unsupported` terminal record.
@@ -329,7 +349,7 @@ Its members, in decreasing claim strength:
 | `constructive` | The constraint is applied by construction of the controlled in-process runtime: the emitting port asserts that the subject reaches the constrained resource only through it. Stating it truthfully is part of the injected application's port contract. |
 | `delivered` | The requested value was delivered to the subject, exactly as recorded, through the channel named in the delivery record; honoring it is subject cooperation. Nothing is enforced. |
 
-Every `enforced` capability result carries a mandatory `tier`. A
+Every `applied` capability result carries a mandatory `tier`. A
 `delivered`-tier result additionally carries a mandatory `delivery` object
 naming the channel through which delivery flowed; no other tier may carry a
 `delivery`. The `channel` member is a closed set fixed by this protocol

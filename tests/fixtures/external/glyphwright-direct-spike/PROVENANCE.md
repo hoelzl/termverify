@@ -23,11 +23,15 @@ semantically identical transcript from the equivalent adapter result
 sequence (`tests/test_recorder_conformance.py`).
 
 Disclosed delta: the spike predates the 2026-07-18 enforcement-tier
-protocol amendment that made `tier` mandatory on enforced
+protocol amendment that made `tier` mandatory on applied
 `capability.result` payloads, so this fixture alone no longer passes the
-strict v1 codec. The conformance test asserts semantic member-level
-agreement — every envelope member and every parsed payload value — on
-everything except exactly that delta: the recorder's enforced capability
-payloads equal the spike's plus `"tier": "constructive"`. The fixture is
-deliberately kept unmodified; it is not a golden master and no test
+strict v1 codec. It also predates the tier-truthful status vocabulary
+(issue #190), which replaced the `enforced` status with `applied` so that
+no status word claims enforcement a `delivered` tier disclaims. The
+conformance test asserts semantic member-level agreement — every envelope
+member and every parsed payload value — on everything except exactly
+those two deltas: the recorder's applied capability payloads equal the
+spike's with `"status"` read as `applied` and `"tier": "constructive"`
+added. The fixture is deliberately kept unmodified — its recorded
+SHA-256 above still verifies — it is not a golden master, and no test
 asserts it as current-protocol truth.
