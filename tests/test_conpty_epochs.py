@@ -56,6 +56,8 @@ from termverify.adapter import (
     TimezoneReceipt,
 )
 from termverify.conpty import (
+    _MAX_EPOCH_OUTPUT_BYTES,
+    _MAX_EPOCH_READS,
     READINESS_MARKER_DEFAULT,
     ConptyAdapter,
     ConptyChildPort,
@@ -550,6 +552,60 @@ def test_start_deadline_abort_is_start_failed_with_disclosed_policy() -> None:
     assert binding.child.closed
     assert all(binding.child.closes)
     assert watchdog.disarms == 1
+
+
+def test_a_marker_less_trickle_exhausts_the_per_epoch_read_budget() -> None:
+    """A trickling subject must not keep an epoch open forever (finding R2).
+
+    The abort deadline is re-armed per read, so a subject emitting a byte
+    just under the deadline and never emitting the readiness marker never
+    exceeds any single read's deadline: the marker never arrives,
+    ``dispatch()`` neither completes nor aborts, and the retained chunk list
+    grows without bound. A per-epoch read budget bounds the epoch at
+    budget x deadline — the JSONL adapter's per-epoch diagnostic budget is
+    the in-repo precedent — without adding a second wall-clock input.
+
+    The script is deliberately one read longer than the budget, so a
+    regression reads past it and fails loudly instead of hanging CI.
+    """
+    binding = _FakeBinding(_FakeChild(["."] * (_MAX_EPOCH_READS + 1)))
+    adapter = _adapter(binding, watchdog=_FakeWatchdog())
+
+    result = adapter.start("run-conpty", _configuration())
+
+    assert type(result) is StartFailed
+    assert result.failure.details == {
+        "budget": "reads",
+        "epoch-read-budget": _MAX_EPOCH_READS,
+    }
+    assert "readiness" in result.failure.message
+    # A budget abort ends the tree like any other abort.
+    assert binding.child.closed
+    assert all(binding.child.closes)
+
+
+def test_an_output_flood_exhausts_the_per_epoch_byte_budget() -> None:
+    """One epoch cannot retain more output than one record can carry.
+
+    Every chunk becomes a `terminal.output` event in a single observation
+    record, and `termverify.transcript/v1` caps a record's aggregate string
+    bytes — so an epoch exceeding it could never be recorded at all.
+    Failing at the epoch is honest; building an observation the codec must
+    reject is not.
+    """
+    chunk = "x" * 64 * 1024
+    reads = [chunk] * (_MAX_EPOCH_OUTPUT_BYTES // len(chunk) + 1)
+    binding = _FakeBinding(_FakeChild(reads))
+    adapter = _adapter(binding, watchdog=_FakeWatchdog())
+
+    result = adapter.start("run-conpty", _configuration())
+
+    assert type(result) is StartFailed
+    assert result.failure.details == {
+        "budget": "bytes",
+        "epoch-output-byte-budget": _MAX_EPOCH_OUTPUT_BYTES,
+    }
+    assert "readiness" in result.failure.message
 
 
 def test_start_native_read_failure_is_start_failed() -> None:

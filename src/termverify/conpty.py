@@ -54,7 +54,13 @@ Readiness and quiescence are defined only by observable evidence:
   mandatory, explicitly configured abort deadline: a watchdog armed before
   each blocking read force-closes the binding when it expires, which always
   produces a structured failure disclosing the deadline policy and never a
-  successful epoch. Hosts must budget the deadline above the disclosed
+  successful epoch. Because that deadline is re-armed per read, an epoch is
+  additionally bounded by two deterministic per-epoch budgets — reads and
+  retained output bytes — so a subject trickling output just under the
+  deadline, or flooding it, cannot hold an epoch open or grow the retained
+  chunk list without end (finding R2). Exhausting either budget is a
+  structured failure like any other abort; neither adds a wall-clock input.
+  Hosts must budget the deadline above the disclosed
   DA-stall floor: conhost defers client output while its unanswered
   ``CSI c`` device-attributes query waits (measured ~3.1 s; see the
   DA-stall disclosure in the adapter design document), so a deadline at or
@@ -117,6 +123,7 @@ from termverify.adapter import (
     UiObservation,
     _validate_run_id,
 )
+from termverify.transcript import _MAX_RECORD_STRING_BYTES
 from termverify.vt import ScreenSnapshot, TerminalOutputNormalizer, VtScreenNormalizer
 
 __all__ = [
@@ -138,6 +145,22 @@ __all__ = [
 #: backed by the CI matrix. Hosts can configure any exact non-empty string
 #: instead.
 READINESS_MARKER_DEFAULT: Final = "\x1b]7791;ready\x1b\\"
+
+#: Reads one epoch may make before it is abandoned. The abort deadline is
+#: re-armed per read, so a subject trickling output just under it never
+#: exceeds any single read's deadline and can hold an epoch open forever
+#: (adversarial review 2026-07-24, finding R2). This bounds an epoch at
+#: budget x deadline instead, mirroring the JSONL adapter's per-epoch
+#: diagnostic budget rather than introducing a second wall-clock input:
+#: wall-clock silence still decides nothing, and the bound is deterministic.
+_MAX_EPOCH_READS: Final = 1024
+
+#: Output bytes one epoch may retain before it is abandoned. Every chunk
+#: becomes one ``terminal.output`` event inside a single observation record,
+#: and `termverify.transcript/v1` caps one record's aggregate string bytes —
+#: so an epoch beyond this could never be recorded at all. Single-sourced
+#: from the protocol ceiling so the two cannot drift.
+_MAX_EPOCH_OUTPUT_BYTES: Final = _MAX_RECORD_STRING_BYTES
 
 #: The `termverify.enforcement-tier/v1` authorization matrix row for the
 #: ConPTY architecture, in constraint order: the adapter's own terminal
@@ -427,7 +450,7 @@ def _assemble_spawn_overlay(
 class _EpochFailure(Exception):
     """Internal classification carrier for one failed epoch step."""
 
-    def __init__(self, message: str, details: dict[str, str]) -> None:
+    def __init__(self, message: str, details: dict[str, JsonInput]) -> None:
         super().__init__(message)
         self.message = message
         self.details: dict[str, JsonInput] = dict(details)
@@ -609,16 +632,44 @@ class ConptyAdapter:
     def _read_epoch_chunks(
         self, child: ConptyChildPort, chunks: list[str], expired: threading.Event
     ) -> None:
-        """Read until one readiness marker is observed in stream order."""
+        """Read until one readiness marker is observed in stream order.
+
+        Bounded on both axes an unbounded loop would otherwise leak: the
+        number of reads (time, because each one re-arms the deadline) and
+        the retained output bytes (memory, and what one record can carry).
+        Either budget exhausted is a structured failure, never a claimed
+        epoch.
+        """
         if self._scan_for_marker():
             return
+        reads = 0
+        output_bytes = 0
         while True:
             chunk = self._read_chunk(child, expired)
+            reads += 1
+            output_bytes += len(chunk.encode("utf-8", "surrogatepass"))
             chunks.append(chunk)
             self._feed(chunk)
             self._pending += chunk
             if self._scan_for_marker():
                 return
+            if reads >= _MAX_EPOCH_READS:
+                raise _EpochFailure(
+                    "the epoch read budget was exhausted before readiness"
+                    " evidence was observed; the budget is host abort policy,"
+                    " not evidence",
+                    {"budget": "reads", "epoch-read-budget": _MAX_EPOCH_READS},
+                )
+            if output_bytes >= _MAX_EPOCH_OUTPUT_BYTES:
+                raise _EpochFailure(
+                    "the epoch output budget was exhausted before readiness"
+                    " evidence was observed; the budget is host abort policy,"
+                    " not evidence",
+                    {
+                        "budget": "bytes",
+                        "epoch-output-byte-budget": _MAX_EPOCH_OUTPUT_BYTES,
+                    },
+                )
 
     def _close_child(self) -> bool:
         child = self._child
