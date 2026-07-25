@@ -63,10 +63,13 @@ Readiness and quiescence are defined only by observable evidence:
   read in flight when it passes. It remains one policy with one message and
   no new evidence source; the recorded ``bound`` says which of the two
   fired, because a stalled read and a subject that never reaches readiness
-  need opposite remediations. Retained output and retained chunks are
-  bounded separately, by what one observation record can carry, which bounds
-  memory rather than time. Hosts must budget the deadline above the
-  disclosed
+  need opposite remediations. Retained output and retained chunks are bounded
+  separately, which bounds memory rather than time: output against what one
+  record can carry at the current geometry, and chunks against one record's
+  collection ceiling. The chunk bound can abort a *cooperative* subject that
+  redraws in place, because it counts native reads — a consequence of one
+  event per read that recorder-side coalescing (issue #195) removes, not a
+  protocol requirement. Hosts must budget the deadline above the disclosed
   DA-stall floor: conhost defers client output while its unanswered
   ``CSI c`` device-attributes query waits (measured ~3.1 s; see the
   DA-stall disclosure in the adapter design document), so a deadline at or
@@ -161,6 +164,12 @@ READINESS_MARKER_DEFAULT: Final = "\x1b]7791;ready\x1b\\"
 #: an ordinary 41,000-line scroll arrives as ~9,200 chunks, whose overhead
 #: alone is ~258 KB.
 _EVENT_STRING_OVERHEAD_BYTES: Final = 28
+
+#: UTF-8's worst case for one screen cell. The screen model stores any
+#: character at or above U+00A0 in a single cell, so a cell can cost up to
+#: four bytes in the frame lines the codec measures — counting cells as bytes
+#: under-reserves for any non-ASCII screen.
+_MAX_UTF8_BYTES_PER_CELL: Final = 4
 
 #: Reserve for an observation record's fixed strings: the envelope's
 #: protocol, kind, run and record identifiers, the cursor and mode values,
@@ -662,15 +671,24 @@ class ConptyAdapter:
     def _epoch_output_budget(self) -> int:
         """Retained chunk bytes this epoch may cost its observation record.
 
-        Computed rather than reserved, because the record's other strings
-        are dominated by the frame — ``rows x columns`` bytes of lines, at a
-        geometry the host chooses and ``dispatch(Resize(...))`` can change
-        mid-run. A flat headroom is wrong in both directions: too small for a
-        wide terminal, so the adapter admits an epoch the codec then rejects
-        for size, and too large for an ordinary one, so it aborts epochs that
-        would have recorded fine.
+        Computed rather than reserved, because the record's other strings are
+        dominated by the frame, at a geometry the host chooses and
+        ``dispatch(Resize(...))`` can change mid-run. A flat headroom was
+        wrong in both directions: too small for a wide terminal, so the
+        adapter admitted an epoch the codec then rejected for size, and too
+        large for an ordinary one, so it aborted epochs that would have
+        recorded fine.
+
+        The frame's cost is counted in **bytes, not cells**. The codec counts
+        UTF-8 bytes, and the screen model puts any character at or above
+        U+00A0 into a cell one-for-one, so box drawing costs three bytes per
+        cell and an emoji four. Reserving one byte per cell under-reserved by
+        up to 3x — enough for an ordinary box-drawn TUI at 100x30 to be
+        admitted and then rejected by the codec (adversarial review of this
+        PR, round 4). Four bytes per cell is UTF-8's worst case per code
+        point, so the reserve cannot be short.
         """
-        frame_bytes = self._rows * self._columns
+        frame_bytes = _MAX_UTF8_BYTES_PER_CELL * self._rows * self._columns
         return _MAX_RECORD_STRING_BYTES - frame_bytes - _FIXED_RECORD_STRING_BYTES
 
     def _read_epoch_chunks(
@@ -708,6 +726,16 @@ class ConptyAdapter:
                 + _EVENT_STRING_OVERHEAD_BYTES
             )
             budget = self._epoch_output_budget()
+            if budget <= 0:
+                raise _EpochFailure(
+                    "the requested terminal is too large for one observation"
+                    " record to hold its own frame, so no epoch can be"
+                    " recorded at this geometry",
+                    {
+                        "budget": "geometry",
+                        "terminal-cells": self._rows * self._columns,
+                    },
+                )
             if output_bytes > budget:
                 raise _EpochFailure(
                     "the epoch retained more output than one observation"

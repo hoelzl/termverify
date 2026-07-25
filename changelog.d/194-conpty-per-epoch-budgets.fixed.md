@@ -23,7 +23,13 @@
   because the frame's lines are the record's other large strings: a flat
   reserve was measurably wrong in both directions — too small at 200x328 and
   above, where the adapter admitted epochs the codec then rejected for size,
-  and too large at 80x24, where it aborted epochs that recorded fine.
+  and too large at 80x24, where it aborted epochs that recorded fine. The
+  frame reserve counts **UTF-8 bytes per cell, not cells**: the codec measures
+  bytes, and a box-drawn or CJK screen costs three to four bytes per cell, so
+  counting cells under-reserved by up to 3x and a box-drawn TUI at 100x30 was
+  admitted and then rejected. A terminal above ~2.09 million cells cannot hold
+  even its own frame in one record, and now fails at `start()` with
+  `budget: "geometry"` rather than as a phantom output flood.
   Disclosed limits: the codec still owns recordability and enforces ceilings no
   budget can model, notably a canonical-line limit ESC-dense output reaches far
   sooner; and the chunk bound counts native reads, so a subject redrawing in

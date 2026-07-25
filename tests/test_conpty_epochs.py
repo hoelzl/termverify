@@ -241,9 +241,11 @@ class _FakeNormalizer:
         feed_error: Exception | None = None,
         snapshot_error: Exception | None = None,
         frame_dimensions: tuple[int, int] | None = None,
+        frame_cell: str = " ",
     ) -> None:
         self.rows = rows
         self.columns = columns
+        self.frame_cell = frame_cell
         self.feed_error = feed_error
         self.snapshot_error = snapshot_error
         self.frame_dimensions = frame_dimensions
@@ -265,7 +267,9 @@ class _FakeNormalizer:
             raise self.snapshot_error
         rows, columns = self.frame_dimensions or (self.rows, self.columns)
         return ScreenSnapshot(
-            frame=Frame(lines=(" " * columns,) * rows, columns=columns, rows=rows),
+            frame=Frame(
+                lines=(self.frame_cell * columns,) * rows, columns=columns, rows=rows
+            ),
             cursor=Cursor(column=0, row=0, visible=True),
             mode="normal",
         )
@@ -278,10 +282,12 @@ class _NormalizerFactory:
         feed_error: Exception | None = None,
         snapshot_error: Exception | None = None,
         frame_dimensions: tuple[int, int] | None = None,
+        frame_cell: str = " ",
     ) -> None:
         self._feed_error = feed_error
         self._snapshot_error = snapshot_error
         self._frame_dimensions = frame_dimensions
+        self._frame_cell = frame_cell
         self.created: list[_FakeNormalizer] = []
 
     def __call__(self, *, rows: int, columns: int) -> _FakeNormalizer:
@@ -291,6 +297,7 @@ class _NormalizerFactory:
             feed_error=self._feed_error,
             snapshot_error=self._snapshot_error,
             frame_dimensions=self._frame_dimensions,
+            frame_cell=self._frame_cell,
         )
         self.created.append(normalizer)
         return normalizer
@@ -567,10 +574,11 @@ def test_start_deadline_abort_is_start_failed_with_disclosed_policy() -> None:
 class _SteppingClock:
     """Monotonic fake that advances on a schedule, not per reading.
 
-    Drives the per-epoch deadline with no sleeping. It advances only every
-    ``every`` readings so elapsed time and read count deliberately diverge:
-    a clock that ticked once per read would let a read-count bound pass this
-    test, which is the design that was rejected.
+    Drives the per-epoch deadline with no sleeping, advancing every ``every``
+    readings so a trickle needs several reads per tick. It does **not** make
+    elapsed time independent of read count, and so does not by itself exclude
+    a read-count bound: the chatty-epoch guard is what does that, by failing
+    every read count low enough to bound a trickle.
     """
 
     def __init__(self, step_s: float, *, every: int = 3) -> None:
@@ -705,12 +713,40 @@ def _record_string_bytes(observation: Observation) -> int:
     if observation.frame is not None:
         for line in observation.frame.lines:
             total += len(line.encode("utf-8", "surrogatepass"))
+        total += sum(len(name) for name in ("frame", "lines", "columns", "rows"))
+    # The record's fixed strings count against the same ceiling, and omitting
+    # them is why a zeroed reserve went undetected (round 4, finding 2).
+    total += sum(
+        len(name)
+        for name in (
+            "protocol",
+            "run_id",
+            "seq",
+            "id",
+            "kind",
+            "payload",
+            "at_ms",
+            "state",
+            "ui",
+            "cursor",
+            "column",
+            "row",
+            "visible",
+            "mode",
+            "focus",
+            "regions",
+            "events",
+        )
+    )
+    total += len("termverify.transcript/v1") + len("observation")
+    total += len("run-conpty") + len("record-000") + len("normal")
     return total
 
 
 @pytest.mark.parametrize(("columns", "rows"), [(80, 24), (200, 400), (400, 200)])
+@pytest.mark.parametrize("cell", ["x", "─", "🙂"])
 def test_the_largest_admitted_epoch_fits_one_record_at_any_geometry(
-    columns: int, rows: int
+    columns: int, rows: int, cell: str
 ) -> None:
     """The bound must admit only epochs a record can actually hold.
 
@@ -736,7 +772,9 @@ def test_the_largest_admitted_epoch_fits_one_record_at_any_geometry(
         adapter = _adapter(
             binding,
             watchdog=_FakeWatchdog(),
-            normalizer_factory=_NormalizerFactory(frame_dimensions=(rows, columns)),
+            normalizer_factory=_NormalizerFactory(
+                frame_dimensions=(rows, columns), frame_cell=cell
+            ),
         )
         result = adapter.start("run-conpty", configuration)
         if type(result) is not Started:
@@ -756,9 +794,10 @@ def test_a_chunk_flood_exhausts_the_per_epoch_chunk_budget() -> None:
     """Bytes cannot bound chunk count, and the protocol bounds both.
 
     Each chunk is one item in the observation's ``events`` array, and the
-    protocol caps a collection's items. A cooperative spinner reaches that
-    cap with tens of kilobytes — 25,000 one-byte updates measured on the
-    verified matrix — which is far inside any byte budget, so the byte bound
+    protocol caps a collection's items. A subject redrawing in place reaches
+    that cap with well under 100 KB — roughly 40,000 two-byte updates,
+    measured, though the exact count is host-dependent because ConPTY's
+    coalescing is — which is far inside any byte budget, so the byte bound
     alone would admit an epoch whose record the codec must reject.
     """
     # Pinned to its single source: a test that only fed the constant back

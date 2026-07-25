@@ -250,8 +250,12 @@ observation record can carry. Both budgets are derived from
 `termverify.transcript/v1` ceilings — aggregate record string bytes
 (counting each chunk's per-event overhead, which scales with chunk count)
 and collection items — because every chunk becomes a `terminal.output` event
-in a single record. Exceeding either fails the epoch rather than building
-evidence the codec must reject at the end of the run. These are adapter
+in a single record. Exceeding either fails the epoch rather than retaining
+evidence that would not fit. The frame reserve counts UTF-8 bytes per cell,
+not cells: the codec measures bytes, and a non-ASCII screen costs up to four
+bytes per cell. These bounds are not a recordability guarantee — the codec
+enforces further ceilings, notably the canonical-line limit ESC-dense output
+reaches far sooner. These are adapter
 policy, not host policy, and not configurable.
 **Write coverage, decided 2026-07-18 (issue #121):** the watchdog wraps
 blocking reads only. Binding evidence showed no conin write backpressure on
