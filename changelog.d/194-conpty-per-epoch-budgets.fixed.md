@@ -31,9 +31,12 @@
   frame reserve counts **UTF-8 bytes per cell, not cells**: the codec measures
   bytes, and a box-drawn or CJK screen costs three to four bytes per cell, so
   counting cells under-reserved by up to 3x and a box-drawn TUI at 100x30 was
-  admitted and then rejected. A terminal at 523,264 cells or more cannot hold
-  even its own frame in one record, and now fails on its first read with
-  `budget: "geometry"` rather than as a phantom output flood.
+  admitted and then rejected. At 523,264 cells or more the frame reserve
+  leaves an observation record no room for output at all, and the run now
+  fails with `budget: "geometry"` as soon as an epoch begins — before any
+  read, so a resize past the threshold cannot slip through an epoch whose
+  readiness marker was already buffered — rather than as a phantom output
+  flood.
   Disclosed limit: the codec still owns recordability and enforces ceilings no
   budget can model, notably a canonical-line limit ESC-dense output reaches far
   sooner.

@@ -68,7 +68,8 @@ Readiness and quiescence are defined only by observable evidence:
   can cost the one observation record they land in. They land there as a
   *single* coalesced ``terminal.output`` string (issue #195), so the binding
   ceiling at ordinary geometry is the per-string one, and only a terminal
-  above 261,121 *total cells* makes the per-record string sum bind first.
+  at 261,121 *total cells* or above makes the per-record string sum bind
+  first.
   Chunk *count* is not a separate axis: coalescing means no number of reads
   can reach the protocol's collection ceiling. Hosts must budget the deadline
   above the disclosed
@@ -172,10 +173,12 @@ _MAX_UTF8_BYTES_PER_CELL: Final = 4
 #: once rather than per chunk — and they measure ~216 bytes in practice.
 #:
 #: The margin is wide but not unconditional: `run_id` is host-supplied and
-#: `_validate_run_id` constrains its charset, not its length, so a run
-#: identifier above ~3.9 KiB defeats this reserve and the codec rejects a
-#: record the adapter admitted. Callers are expected to use identifiers of
-#: ordinary length; this is a stated assumption, not an enforced invariant.
+#: `_validate_run_id` constrains its charset, not its length, so the real
+#: cost is ``206 + len(run_id)`` and a run identifier of 3,891 characters
+#: (~3.8 KiB) is the first that defeats this reserve, after which the codec
+#: rejects a record the adapter admitted. Callers are expected to use
+#: identifiers of ordinary length; this is a stated assumption, not an
+#: enforced invariant.
 _FIXED_RECORD_STRING_BYTES: Final = 4 * 1024
 
 #: The `termverify.enforcement-tier/v1` authorization matrix row for the
@@ -686,10 +689,11 @@ class ConptyAdapter:
         Bounded here: the frame's *aggregate* cost against the per-record
         sum. Not bounded here: a single frame **line**, which is one string
         of ``columns`` code points and meets the per-string ceiling on its
-        own. Above 262,144 columns the codec rejects the record whatever the
-        output budget says — unreachable through the real binding, whose
-        ``COORD`` dimensions are 16-bit, and so disclosed rather than
-        checked.
+        own. Like the aggregate, that limit depends on what the screen
+        contains — 262,144 columns for a 4-byte-per-cell frame, 1,048,576
+        for an ASCII one. Unreachable through the real binding, whose
+        ``COORD`` dimensions are 16-bit, and at two rows or more the
+        geometry bound above fires first; disclosed rather than checked.
         """
         frame_bytes = _MAX_UTF8_BYTES_PER_CELL * self._rows * self._columns
         record_budget = (
@@ -718,10 +722,11 @@ class ConptyAdapter:
         Retained memory follows from the byte bound only under a stated port
         assumption: that a native read yields at least one byte, so bytes
         also cap how many chunks the epoch can hold. ``ConptyChildPort.read``
-        does not forbid an empty string, and an empty-read loop would advance
-        neither bound — only the epoch deadline would end it. Real ConPTY was
-        measured not to do this (no empty read across a 3 s idle), so this is
-        an assumption about the port, not a claim about the arithmetic.
+        does not forbid an empty string, and an empty-read loop would never
+        advance the byte counter — leaving the epoch deadline as its only
+        bound. Real ConPTY was measured not to do this (no empty read across
+        a 3 s idle), so this is an assumption about the port, not a claim
+        about the arithmetic.
         The per-object cost of retention is not counted either: at the
         ceiling a two-byte-per-read trickle retains ~27 MB of Python objects
         (a one-byte trickle costs less, ~8 MB, because single-character ASCII
@@ -729,6 +734,23 @@ class ConptyAdapter:
 
         Each bound is a structured failure, never a claimed epoch.
         """
+        # Before the marker scan, not inside the read loop. The geometry is
+        # fixed for the whole epoch (only `dispatch(Resize(...))` moves it,
+        # between epochs), and an epoch whose marker is already buffered
+        # returns below without ever reading — which let a resize past this
+        # threshold complete an epoch that the codec then rejected, losing
+        # the run's evidence at the end (round 6, finding 1).
+        budget = self._epoch_output_budget()
+        if budget <= 0:
+            raise _EpochFailure(
+                "the requested terminal leaves an observation record no room"
+                " for output once its own frame is reserved, so no epoch can"
+                " be recorded at this geometry",
+                {
+                    "budget": "geometry",
+                    "terminal-cells": self._rows * self._columns,
+                },
+            )
         if self._scan_for_marker():
             return
         epoch_deadline_at = self._monotonic() + self._abort_deadline_ms / 1000
@@ -739,17 +761,6 @@ class ConptyAdapter:
             # retained like any other, so excluding it would let the epoch
             # exceed its own bound by a whole read.
             output_bytes += len(chunk.encode("utf-8", "surrogatepass"))
-            budget = self._epoch_output_budget()
-            if budget <= 0:
-                raise _EpochFailure(
-                    "the requested terminal is too large for one observation"
-                    " record to hold its own frame, so no epoch can be"
-                    " recorded at this geometry",
-                    {
-                        "budget": "geometry",
-                        "terminal-cells": self._rows * self._columns,
-                    },
-                )
             if output_bytes > budget:
                 raise _EpochFailure(
                     "the epoch retained more output than one observation"

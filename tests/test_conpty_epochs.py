@@ -689,19 +689,29 @@ def test_an_output_flood_exhausts_the_per_epoch_byte_budget() -> None:
 
 @pytest.mark.parametrize(
     ("columns", "rows", "starts"),
-    [(1000, 523, True), (1000, 524, False), (1024, 512, False)],
+    [
+        (1000, 523, True),
+        # Exactly at the documented threshold, and exactly one cell below it.
+        # Straddling it from a distance is not enough: with only the 1000x523
+        # and 1000x524 cases, weakening the check to `budget < 0` stays green
+        # while making the documented number false (round 6, finding 7).
+        (32_704, 16, False),
+        (32_703, 16, True),
+        (1000, 524, False),
+        (1024, 512, False),
+    ],
 )
 def test_a_terminal_too_large_for_its_own_frame_fails_on_geometry(
     columns: int, rows: int, starts: bool
 ) -> None:
     """Past a threshold no epoch can be recorded, and the threshold is real.
 
-    The frame is reserved at UTF-8's worst case per cell, so the record has
-    no room left for it once the terminal passes `(2 MiB - fixed) / 4` cells.
-    The cases straddle that threshold rather than merely reaching it, because
-    the guide and changelog quote a cell count to hosts, and the previous
-    revision quoted the *byte* figure read as cells — off by 4x, the same
-    cells-vs-bytes confusion round 4 rejected this PR for.
+    The frame is reserved at UTF-8's worst case per cell, so once the
+    terminal reaches `(2 MiB - fixed) / 4` cells the reserve leaves the
+    record no room for output at all. The guide and changelog quote this
+    cell count to hosts, and the previous revision quoted the *byte* figure
+    read as cells — off by 4x, the same cells-vs-bytes confusion round 4
+    rejected this PR for.
     """
     threshold = (_MAX_RECORD_STRING_BYTES - _FIXED_RECORD_STRING_BYTES) // (
         _MAX_UTF8_BYTES_PER_CELL
@@ -730,7 +740,42 @@ def test_a_terminal_too_large_for_its_own_frame_fails_on_geometry(
         "budget": "geometry",
         "terminal-cells": rows * columns,
     }
-    assert "too large" in result.failure.message
+    # The mechanism, stated truthfully: at this threshold the record *can*
+    # still hold the frame — measured, 523,264 emoji cells plus the record's
+    # real fixed strings fit with ~3.8 KB to spare. What it cannot do is hold
+    # the frame *and* any output once the reserve is taken (round 6, finding 2).
+    assert "no room for output" in result.failure.message
+
+
+def test_a_resize_past_the_threshold_cannot_slip_through_a_buffered_marker() -> None:
+    """An epoch that never reads must still honor the geometry bound.
+
+    `_read_epoch_chunks` returns early when the marker is already buffered,
+    so while the check lived inside the read loop a resize past the
+    threshold completed an epoch without consuming a read at all — and the
+    codec then rejected the record, losing the run's evidence at the very
+    end. That is the admit-then-reject failure this budget exists to
+    prevent, reached at a geometry the guide calls unrecordable (round 6,
+    finding 1).
+    """
+    # Two markers in one read: the second stays buffered in `_pending`, so
+    # the resize epoch finds readiness without reading.
+    binding = _FakeBinding(_FakeChild([_MARKER + _MARKER]))
+    adapter = _adapter(binding, watchdog=_FakeWatchdog())
+    started = adapter.start("run-conpty", _configuration())
+    assert type(started) is Started
+
+    result = adapter.dispatch(Resize(ManualTime(0), columns=32_767, rows=16))
+
+    assert type(result) is TerminalResult
+    outcome = result.outcome
+    assert type(outcome) is RunFailed
+    assert outcome.failure.details == {
+        "budget": "geometry",
+        "terminal-cells": 16 * 32_767,
+    }
+    # No read was consumed: the epoch never entered the loop.
+    assert binding.child.reads == []
 
 
 def test_a_stalled_read_that_wins_the_close_race_is_not_relabelled() -> None:
