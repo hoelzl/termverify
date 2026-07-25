@@ -244,9 +244,27 @@ class PipeJsonlChild:
         On Windows the child is assigned to a fresh kill-on-close job
         object before the binding is returned; every containment call's
         result is checked, so if containment cannot be established the
-        child is terminated and the spawn fails closed — no uncontained
-        session is ever handed out. On POSIX the child starts its own
-        session so a forced close can kill its process group.
+        child is terminated, its handles and pipes are released, and the
+        spawn fails closed — no uncontained live child is handed out.
+
+        One case is not a failure, and it is a disclosed boundary rather
+        than a guarantee: a child that has already exited cannot be
+        assigned at all (Windows answers ERROR_ACCESS_DENIED for an exited
+        process), so a subject that wins the race against its own
+        containment is handed out with its real exit record instead of
+        being blamed for a containment failure. Such a binding's job is
+        **permanently empty** — job membership comes only from assignment
+        or from inheritance through a member — so it contains nothing, and
+        no later close can terminate a descendant the exited child left
+        behind. This is the same window already disclosed above for
+        descendants started before assignment; it is not widened by
+        handing the binding out, because failing the spawn would not
+        contain that descendant either, only misreport the cause. A
+        descendant that inherits the child's stdout write end can also
+        block the teardown's pipe release indefinitely (issue #213).
+
+        On POSIX the child starts its own session so a forced close can
+        kill its process group.
         """
         arguments = [str(argument) for argument in argv]
         if not arguments:
@@ -276,12 +294,36 @@ class PipeJsonlChild:
                 process_handle = _open_containment_handle(process.pid)
                 _assign_to_job(job, process_handle)
             except OSError as error:
-                process.kill()
-                process.wait()
-                if process_handle is not None:
-                    _kernel32.CloseHandle(process_handle)
-                if job is not None:
-                    _kernel32.CloseHandle(job)
+                if (
+                    job is not None
+                    and process_handle is not None
+                    and process.poll() is not None
+                ):
+                    # The child already exited, so assignment was refused
+                    # on a corpse (ERROR_ACCESS_DENIED) and there is no
+                    # live session to protect: a fast subject is
+                    # legitimate, and failing its spawn would blame
+                    # containment for a race the child simply won. The
+                    # binding reports the real exit record. Disclosed, not
+                    # guaranteed: this job stays empty forever — nothing
+                    # can join a job its member was never assigned to —
+                    # so a descendant the child left behind is
+                    # uncontained, exactly as in the assignment window
+                    # this leg sits inside. See the spawn docstring.
+                    return cls(process, job=job, process_handle=process_handle)
+                try:
+                    process.kill()
+                    process.wait(timeout=_CHILD_EXIT_WAIT_S)
+                finally:
+                    # Release every resource even if the child cannot be
+                    # reaped: a TimeoutExpired is not an OSError and would
+                    # otherwise escape unclassified, leaking two kernel
+                    # handles and both pipes on the way out.
+                    _release_pipes(process)
+                    if process_handle is not None:
+                        _kernel32.CloseHandle(process_handle)
+                    if job is not None:
+                        _kernel32.CloseHandle(job)
                 raise OSError(
                     f"failed to contain pipe child {process.pid} in a job object"
                 ) from error
@@ -398,12 +440,21 @@ class PipeJsonlChild:
 
         The forced path relies on containment — the Windows job object
         terminated with the uniform forced exit code, or the POSIX
-        process-group ``SIGKILL`` — to end the whole tree, waits for the
-        real exit, and captures the observed exit record. A containment
-        call that fails is raised, not swallowed: releasing the job
-        handle still sweeps the tree through kill-on-close, so nothing
-        leaks, but the caller is told the termination failed rather than
-        reading a success the binding cannot vouch for. A second close
+        process-group ``SIGKILL`` — to end every contained process, waits
+        for the real exit, and captures the observed exit record. A
+        containment call that fails is raised, not swallowed: the teardown
+        releases the job handle before it touches the pipes, so
+        kill-on-close still sweeps every remaining job *member* — which
+        also unblocks a read blocked on a member's pipe — and the caller
+        is told the termination failed rather than reading a success the
+        binding cannot vouch for. What that does not cover is a process
+        outside the job: a descendant started inside the disclosed
+        assignment window, or any descendant of a child that exited before
+        assignment (see :meth:`spawn`). Such a process is not swept, and
+        if it holds the child's stdout write end it can block the pipe
+        release indefinitely — issue #213. On the raising path the exit
+        record is not captured: the raise is the result, and
+        ``exit_status`` stays ``None``. A second close
         arriving while another thread's close is in flight waits for that
         teardown to finish, so callers never observe a half-closed
         binding (the adapter consults ``exit_status`` right after
@@ -485,17 +536,33 @@ class PipeJsonlChild:
                 ) from error
             self._exit_status = int(status)
         finally:
-            self._close_pipes(process)
-            if (
-                process_handle is not None and sys.platform == "win32"
-            ):  # pragma: no cover - Windows-only leg
-                _kernel32.CloseHandle(process_handle)
             if (
                 job is not None and sys.platform == "win32"
             ):  # pragma: no cover - Windows-only leg
                 # Kill-on-close sweeps every remaining job member, so even
-                # a failed graceful path cannot leak the tree.
+                # a failed graceful path cannot leak a *contained* process.
+                # Release it before the pipes: a member still alive here —
+                # after a failed TerminateJobObject — may hold the write
+                # end a blocked read is waiting on, and that read owns the
+                # pipe's lock, so ``_close_pipes``' detach would wait on
+                # the lock forever and never reach this release. Sweeping
+                # first ends the member, which unblocks the read, which
+                # lets the pipes close. A write-end holder *outside* the
+                # job is not swept and can still stall the release (#213).
                 _kernel32.CloseHandle(job)
+            if (
+                process_handle is not None and sys.platform == "win32"
+            ):  # pragma: no cover - Windows-only leg
+                _kernel32.CloseHandle(process_handle)
+            self._close_pipes(process)
+            # Reap opportunistically, never by waiting: on the raising path
+            # the child was not reaped in the ``try``, and kill-on-close has
+            # usually ended it by now. A non-blocking poll releases the OS
+            # record without turning a failed teardown into another wait —
+            # and cannot set an exit record, so ``exit_status`` stays
+            # ``None`` exactly as documented.
+            with _suppress_os_errors():
+                process.poll()
             with self._lock:
                 self._closing = False
                 self._close_done.set()
@@ -533,15 +600,21 @@ class PipeJsonlChild:
     def _terminate_tree(
         self, process: subprocess.Popen[bytes], job: int | None
     ) -> None:
-        # Detach the buffered stdin writer first: it may hold unflushed
-        # input, and ``stdin.close`` (here or in ``_close_pipes``) would
-        # flush it before closing — a child that is not draining its
-        # pipe (the exact hang the abort deadline exists for) would
-        # block that flush forever. The forced teardown must release
-        # the handle, never flush.
+        # Give up the buffered stdin writer before terminating, so the
+        # teardown's later pipe release has nothing left to push at a
+        # child that is not draining (the exact hang the abort deadline
+        # exists for). Honest limit: ``detach`` flushes what the writer
+        # still holds — the buffered layer has no release-without-flush
+        # operation — so this drains here instead of later rather than
+        # not at all. It is bounded only because the flush races a child
+        # that is about to be killed below; issue #217 removes the stall.
         if process.stdin is not None:
             with _suppress_os_errors():
-                cast("io.BufferedWriter", process.stdin).detach()
+                raw = cast("io.BufferedWriter", process.stdin).detach()
+                # Close the raw stream rather than dropping it: an
+                # abandoned raw file releases its descriptor only through
+                # its finalizer, and does so with a ResourceWarning.
+                raw.close()
         if sys.platform == "win32":  # pragma: no cover - Windows-only containment leg
             if job is None:
                 # Defensive: unreachable on the only construction path.
@@ -628,16 +701,33 @@ class PipeJsonlChild:
             ) from error
 
     def _close_pipes(self, process: subprocess.Popen[bytes]) -> None:
-        for pipe in (process.stdin, process.stdout):
-            if pipe is not None:
-                with _suppress_os_errors():
-                    # Detach first: ``close`` on the buffered stdin writer
-                    # would flush any leftover input before closing, and a
-                    # terminated child never drains it — the forced
-                    # teardown must release the handle, not flush.
-                    cast("io.BufferedIOBase", pipe).detach()
-                with _suppress_os_errors():
-                    pipe.close()
+        _release_pipes(process)
+
+
+def _release_pipes(process: subprocess.Popen[bytes]) -> None:
+    """Release both of the child's pipe descriptors, deterministically.
+
+    ``detach`` hands back the raw stream and leaves the buffered wrapper
+    unusable, so the object that still owns the descriptor is the *raw*
+    one: closing the detached wrapper only raises, and the descriptor
+    would then survive until its finalizer ran — the garbage collector a
+    teardown must not depend on. Closing the raw stream is what actually
+    releases it.
+
+    Detaching a ``BufferedWriter`` flushes it first; the buffered layer
+    offers no release-without-flush operation. A child that never drains
+    its stdin can therefore still stall this call, which is why the forced
+    path terminates the tree before reaching it — and why issue #217
+    tracks removing that stall rather than describing it away.
+    """
+    for pipe in (process.stdin, process.stdout):
+        if pipe is None:
+            continue
+        raw: io.RawIOBase | None = None
+        with _suppress_os_errors():
+            raw = cast("io.BufferedIOBase", pipe).detach()
+        with _suppress_os_errors():
+            (pipe if raw is None else raw).close()
 
 
 class _suppress_os_errors:
