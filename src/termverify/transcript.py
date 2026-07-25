@@ -17,7 +17,6 @@ from termverify._language_tag import (
     is_well_formed_language_tag as _is_well_formed_language_tag,
 )
 from termverify._protocol_v1 import CONSTRAINT_NAMES, REQUIRED_CONFIG_MEMBERS
-from termverify._timezone_v1 import is_timezone_name
 
 type Record = dict[str, JsonValue]
 
@@ -505,7 +504,8 @@ def _validate_run_started(records: list[Record]) -> dict[str, JsonValue]:
     locale = config["locale"]
     if not isinstance(locale, str) or not _is_well_formed_language_tag(locale):
         raise TranscriptValidationError("run.started locale is invalid")
-    if not is_timezone_name(config["timezone"]):
+    timezone = config["timezone"]
+    if not isinstance(timezone, str) or not timezone:
         raise TranscriptValidationError("run.started timezone is invalid")
     return config
 

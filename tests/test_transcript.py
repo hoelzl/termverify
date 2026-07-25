@@ -1118,10 +1118,22 @@ def test_serialize_transcript_rejects_noncanonical_v1_timezone(
         serialize_transcript(transcript)
 
 
-@pytest.mark.parametrize("timezone", ["Etc/UTC", "Europe/Berlin"])
-def test_canonical_named_v1_timezone_request_round_trips_as_unsupported(
+@pytest.mark.parametrize(
+    "timezone",
+    ["Etc/UTC", "Europe/Berlin", "US/Eastern", "Mars/Olympus", "europe/Berlin"],
+)
+def test_any_named_timezone_request_round_trips_as_unsupported(
     timezone: str,
 ) -> None:
+    """A named-zone request is a plain string the adapter must refuse.
+
+    V1 can only ever apply literal ``UTC``, so the protocol no longer
+    carries a closed timezone registry whose entire purpose was to validate
+    requests that must then be refused anyway (adversarial review
+    2026-07-24, finding P4; owner decision 2026-07-24: remove it). Any
+    non-empty string is a structurally valid *request*, and the refusal —
+    not the vocabulary — is what keeps the evidence truthful.
+    """
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
     started_payload = transcript[0]["payload"]
     assert isinstance(started_payload, dict)

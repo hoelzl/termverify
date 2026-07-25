@@ -18,7 +18,6 @@ from termverify._json import JsonValue
 from termverify._key_v1 import is_key_chord
 from termverify._language_tag import is_well_formed_language_tag
 from termverify._protocol_v1 import CONSTRAINT_NAMES, ConstraintName
-from termverify._timezone_v1 import is_timezone_name
 
 __all__ = [
     "ENFORCEMENT_TIERS",
@@ -283,8 +282,6 @@ class RunConfiguration:
         if type(self.locale) is not str or not is_well_formed_language_tag(self.locale):
             raise ValueError("locale is invalid")
         _require_non_empty(self.timezone, "timezone")
-        if not is_timezone_name(self.timezone):
-            raise ValueError("timezone is not in the v1 timezone registry")
         if type(self.terminal) is not TerminalConfiguration:
             raise TypeError("terminal has the wrong type")
         if type(self.filesystem) is not FilesystemConfiguration:

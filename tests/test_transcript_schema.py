@@ -172,16 +172,28 @@ def test_runtime_owns_terminal_capability_ordering_beyond_schema() -> None:
         serialize_transcript(records)
 
 
-def test_runtime_owns_timezone_registry_membership_beyond_schema() -> None:
+def test_runtime_owns_utc_only_timezone_enforcement_beyond_schema() -> None:
+    """The schema takes any zone string; the runtime owns what may be applied.
+
+    With the closed registry removed (finding P4), the request carries no
+    vocabulary the schema could check and none that it should: `US/Eastern`
+    is a structurally valid request. The rule that survives, and that
+    schema validation cannot express, is that only literal `UTC` may appear
+    as an *applied* effective value.
+    """
     schema = _schema()
     timezone_schema = schema["$defs"]["runtimeConfig"]["properties"]["timezone"]
-    assert "termverify.timezone/v1" in timezone_schema["$comment"]
+    assert "only literal UTC" in timezone_schema["$comment"]
     records = parse_transcript(FIXTURE_PATH.read_bytes())
     payload = records[0]["payload"]
     assert isinstance(payload, dict)
     config = payload["config"]
     assert isinstance(config, dict)
     config["timezone"] = "US/Eastern"
+    timezone_result = records[4]["payload"]
+    assert isinstance(timezone_result, dict)
+    assert timezone_result["constraint"] == "timezone"
+    timezone_result["effective"] = "US/Eastern"
 
     assert Draft202012Validator(schema).is_valid(records[0])
     with pytest.raises(TranscriptValidationError, match="timezone"):

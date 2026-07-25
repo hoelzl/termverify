@@ -155,7 +155,7 @@
         "timezone": {
           "type": "string",
           "minLength": 1,
-          "$comment": "termverify.transcript runtime validation owns membership in the protocol-bound termverify.timezone/v1 registry."
+          "$comment": "The requested zone is a plain non-empty string; termverify.transcript runtime validation owns the rule that only literal UTC can be an applied effective value."
         },
         "terminal": {"$ref": "#/$defs/terminalConfig"},
         "filesystem": {"$ref": "#/$defs/filesystemConfig"},

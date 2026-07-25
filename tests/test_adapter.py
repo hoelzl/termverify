@@ -171,23 +171,27 @@ def test_allow_list_configuration_emits_sorted_v1_endpoint_objects() -> None:
     }
 
 
-@pytest.mark.parametrize("timezone", ["UTC", "Etc/UTC", "Europe/Berlin"])
-def test_run_configuration_accepts_canonical_v1_timezone_names(timezone: str) -> None:
+@pytest.mark.parametrize(
+    "timezone",
+    ["UTC", "Etc/UTC", "Europe/Berlin", "US/Eastern", "Mars/Olympus", "../UTC"],
+)
+def test_run_configuration_accepts_any_named_timezone_request(timezone: str) -> None:
+    """The request carries no vocabulary; only the receipt makes a claim.
+
+    Removing the closed registry (finding P4) means an unapplicable zone is
+    a valid *request* the adapter must refuse, not a malformed
+    configuration. What still cannot happen is an applied receipt for
+    anything but literal ``UTC`` — asserted at the codec, which owns it.
+    """
     configuration = replace(_configuration(), timezone=timezone)
 
     assert configuration.timezone == timezone
     assert configuration.to_protocol()["timezone"] == timezone
 
 
-@pytest.mark.parametrize(
-    "timezone",
-    ["US/Eastern", "Europe/Kiev", "Mars/Olympus", "../UTC", "europe/Berlin"],
-)
-def test_run_configuration_rejects_noncanonical_v1_timezone_names(
-    timezone: str,
-) -> None:
-    with pytest.raises(ValueError, match="timezone registry"):
-        replace(_configuration(), timezone=timezone)
+def test_run_configuration_rejects_an_empty_timezone() -> None:
+    with pytest.raises(ValueError, match="timezone"):
+        replace(_configuration(), timezone="")
 
 
 @pytest.mark.parametrize(
