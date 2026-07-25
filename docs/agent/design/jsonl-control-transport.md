@@ -279,8 +279,9 @@ material, never diagnostics.
 > deadline-abort path emits `epoch-timeout` and discloses the
 > forced-termination exit record in the terminal result, which is the
 > intended surface. The protocol text
-> (`docs/knowledge/control-protocol.md`) is authoritative; the
-> disclosure claim now lives on the `epoch-timeout` row.
+> (`docs/knowledge/control-protocol.md`) supersedes this record's
+> enumeration — and the codec supersedes both; the disclosure claim now
+> lives on the `epoch-timeout` row.
 
 ## Constraint semantics across the process boundary
 
