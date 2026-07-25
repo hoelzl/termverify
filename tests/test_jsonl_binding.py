@@ -21,12 +21,14 @@ helper-thread or wall-clock state:
   after close raise the binding's closed error.
 - **Containment results (Windows):** a failed job-object call is checked and
   reported — a failed assignment fails the spawn closed and kills the child,
-  and a failed termination is raised instead of read as a success. The two
+  and a failed termination is raised instead of read as a success. The
   boundaries of that checking are held too: a child that exits inside the
   assignment window still spawns and reports its real exit (Windows cannot
-  assign an exited process, which is not a containment failure), and a failed
-  termination with a read in flight still sweeps the tree and returns instead
-  of stranding the teardown behind the blocked reader's pipe lock.
+  assign an exited process, which is not a containment failure); a forced
+  close of such a binding claims nothing it cannot do, since its job is
+  permanently empty; and a failed termination with a read in flight still
+  sweeps every job member and returns, instead of stranding the teardown
+  behind the blocked reader's pipe lock.
 
 The fixture children are minimal ``python -c`` scripts in the ConPTY
 integration pattern: they read stdin as bytes, decode UTF-8, and split on
@@ -43,7 +45,7 @@ import sys
 import threading
 import time
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any
 
@@ -421,6 +423,41 @@ def _module_symbol(name: str) -> Any:
     return _jsonl_pipe.__dict__[name]
 
 
+def _patch_assignment_into_the_window(
+    monkeypatch: pytest.MonkeyPatch, refused: list[OSError]
+) -> None:
+    """Enter the assignment window deterministically, not by racing it.
+
+    The **real** ``AssignProcessToJobObject`` still runs, unchanged — only
+    later, after the child's own exit has been observed through its
+    process handle. So the failure driven is the one Windows actually
+    produces for an exited process, and any refusal it raises is recorded
+    in ``refused`` for the caller to assert.
+    """
+    real_assign = _module_symbol("_assign_to_job")
+    wait_for_handle = _module_symbol("_wait_for_handle")
+
+    def _assign_after_the_child_exits(job: int, process_handle: int) -> None:
+        assert wait_for_handle(process_handle, int(_OS_WAIT_TIMEOUT_S * 1000)), (
+            "the fast child did not exit within the wait budget"
+        )
+        try:
+            real_assign(job, process_handle)
+        except OSError as error:
+            refused.append(error)
+            raise
+
+    monkeypatch.setattr(
+        "termverify._jsonl_pipe._assign_to_job", _assign_after_the_child_exits
+    )
+
+
+def _kill_pid(pid: int) -> None:
+    """Cleanup arrangement, never evidence: end a deliberately orphaned pid."""
+    with suppress(OSError):
+        os.kill(pid, 9)
+
+
 @_windows_only
 def test_spawn_fails_closed_when_job_assignment_fails(
     monkeypatch: pytest.MonkeyPatch,
@@ -519,24 +556,74 @@ def test_spawn_survives_a_child_that_exits_inside_the_assignment_window(
     through its own process handle, so the failure this test drives is the
     one Windows actually produces.
     """
-    real_assign = _module_symbol("_assign_to_job")
-    wait_for_handle = _module_symbol("_wait_for_handle")
+    refused: list[OSError] = []
+    _patch_assignment_into_the_window(monkeypatch, refused)
 
-    def _assign_after_the_child_exits(job: int, process_handle: int) -> None:
-        assert wait_for_handle(process_handle, int(_OS_WAIT_TIMEOUT_S * 1000)), (
-            "the fast child did not exit within the wait budget"
-        )
-        real_assign(job, process_handle)
+    with _reaped(_spawn(_FAST_EXIT_CHILD)) as child:
+        with pytest.raises(JsonlEndOfStreamError):
+            child.read_line()
+        child.close(force=False)
+        assert child.exit_status == 7
 
-    monkeypatch.setattr(
-        "termverify._jsonl_pipe._assign_to_job", _assign_after_the_child_exits
-    )
+    # The disclosed cause is pinned by the OS, not assumed: the real
+    # assignment refused an exited process with ERROR_ACCESS_DENIED.
+    assert refused, "the real assignment did not run inside the window"
+    assert f"AssignProcessToJobObject failed: {_ERROR_ACCESS_DENIED}" in str(refused[0])
 
-    child = _spawn(_FAST_EXIT_CHILD)
-    with pytest.raises(JsonlEndOfStreamError):
-        child.read_line()
-    child.close(force=False)
-    assert child.exit_status == 7
+
+#: Orphaning child: starts a grandchild that holds none of the child's
+#: pipes, reports its pid, then exits at once — so the spawn's assignment
+#: lands on a corpse and the grandchild is outside the empty job.
+_ORPHANING_CHILD = """\
+import subprocess
+import sys
+
+grandchild = subprocess.Popen(
+    [sys.executable, "-c", "import time; time.sleep(600)"],
+    stdin=subprocess.DEVNULL,
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+)
+sys.stdout.buffer.write(b"TV_GRANDCHILD:" + str(grandchild.pid).encode() + b"\\n")
+sys.stdout.buffer.flush()
+sys.exit(9)
+"""
+
+
+@_windows_only
+def test_a_forced_close_after_the_window_leg_claims_nothing_it_cannot_do(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The window leg's binding must not pretend to contain anything.
+
+    A binding handed out for an already-exited child owns a job that stays
+    **permanently empty**: Windows job membership comes only from
+    assignment or from inheritance through a member, and this child was
+    never assigned. A forced close therefore terminates nothing — it can
+    only report the child's honest exit record (adversarial review round 2
+    of PR #214, finding 2).
+
+    What this test does **not** assert is that the child's descendant
+    survives, even though it is uncontained by us: on the toolchain this
+    suite runs under, the launcher's own outer job sweeps it, so a
+    survivor is not observable here. That is precisely why the limit is
+    disclosed in :meth:`spawn` rather than asserted — the containment that
+    covers this case is somebody else's, and the binding must not claim
+    credit for it.
+    """
+    _patch_assignment_into_the_window(monkeypatch, [])
+
+    child = _spawn(_ORPHANING_CHILD)
+    grandchild_pid = int(child.read_line().split(b":", 1)[1])
+    try:
+        with pytest.raises(JsonlEndOfStreamError):
+            child.read_line()
+        # A forced close of a binding whose job is empty is honest and
+        # quiet: the real exit record, no fabricated termination, no error.
+        child.close(force=True)
+        assert child.exit_status == 9
+    finally:
+        _kill_pid(grandchild_pid)  # cleanup, not evidence
 
 
 @_windows_only
@@ -555,57 +642,69 @@ def test_forced_close_with_a_read_in_flight_sweeps_the_tree_and_returns(
     whole tree would leak while ``close`` never returned.
 
     Releasing containment before touching the pipes is what makes the
-    documented guarantee true: the tree is swept, the blocked read is
-    unblocked by the child's death, and the caller still learns the
-    graceful termination failed.
+    documented behavior true for a contained tree: every job member is
+    swept, the sweep unblocks the blocked read, and the caller still
+    learns the graceful termination failed. A write-end holder outside the
+    job is a different, disclosed case (#213).
     """
     child = _spawn(_TREE_CHILD)
     pid = int(child.read_line().split(b":", 1)[1])
     grandchild_pid = int(child.read_line().split(b":", 1)[1])
-    assert _pid_alive(grandchild_pid)
+    try:
+        assert _pid_alive(grandchild_pid)
 
-    reading = threading.Event()
-    outcome: list[BaseException | bytes] = []
+        reading = threading.Event()
+        outcome: list[BaseException | bytes] = []
 
-    def _read() -> None:
-        reading.set()
-        try:
-            outcome.append(child.read_line())
-        except BaseException as error:  # noqa: BLE001 - diagnostic capture
-            outcome.append(error)
+        def _read() -> None:
+            reading.set()
+            try:
+                outcome.append(child.read_line())
+            except BaseException as error:  # noqa: BLE001 - diagnostic capture
+                outcome.append(error)
 
-    reader = threading.Thread(target=_read, daemon=True)
-    reader.start()
-    assert reading.wait(timeout=_OS_WAIT_TIMEOUT_S)
-    # The tree child is silent after its banner, so the reader is blocked
-    # in the read syscall once it has had a moment to get there.
-    time.sleep(0.2)
+        reader = threading.Thread(target=_read, daemon=True)
+        reader.start()
+        assert reading.wait(timeout=_OS_WAIT_TIMEOUT_S)
+        # Best-effort arrangement, not evidence: the tree child is silent
+        # after its banner, so this gives the reader a moment to reach the
+        # read syscall. If it has not blocked yet the assertions below all
+        # still hold — the test simply stops exercising the deadlock, which
+        # is why the reverted implementation is what proves it does.
+        time.sleep(0.2)
 
-    monkeypatch.setattr(
-        "termverify._jsonl_pipe._kernel32.TerminateJobObject",
-        lambda job, exit_code: 0,
-    )
+        monkeypatch.setattr(
+            "termverify._jsonl_pipe._kernel32.TerminateJobObject",
+            lambda job, exit_code: 0,
+        )
 
-    closing: list[BaseException | None] = []
+        closing: list[BaseException | None] = []
 
-    def _close() -> None:
-        try:
-            child.close(force=True)
-            closing.append(None)
-        except BaseException as error:  # noqa: BLE001 - diagnostic capture
-            closing.append(error)
+        def _close() -> None:
+            try:
+                child.close(force=True)
+                closing.append(None)
+            except BaseException as error:  # noqa: BLE001 - diagnostic capture
+                closing.append(error)
 
-    closer = threading.Thread(target=_close, daemon=True)
-    closer.start()
-    closer.join(timeout=_OS_WAIT_TIMEOUT_S)
-    assert not closer.is_alive(), "close deadlocked with a read in flight"
-    assert closing and isinstance(closing[0], OSError), (
-        f"close did not report the failed termination: {closing!r}"
-    )
-    assert "TerminateJobObject failed" in str(closing[0])
+        closer = threading.Thread(target=_close, daemon=True)
+        closer.start()
+        closer.join(timeout=_OS_WAIT_TIMEOUT_S)
+        assert not closer.is_alive(), "close deadlocked with a read in flight"
+        assert closing and isinstance(closing[0], OSError), (
+            f"close did not report the failed termination: {closing!r}"
+        )
+        assert "TerminateJobObject failed" in str(closing[0])
+        # The raise is the result: no exit record is fabricated for a
+        # teardown whose graceful termination the binding cannot vouch for.
+        assert child.exit_status is None
 
-    reader.join(timeout=_OS_WAIT_TIMEOUT_S)
-    assert not reader.is_alive(), "the in-flight read was never unblocked"
-    _wait_for_exit(pid)
-    _wait_for_exit(grandchild_pid)
-    assert not _pid_alive(grandchild_pid)
+        reader.join(timeout=_OS_WAIT_TIMEOUT_S)
+        assert not reader.is_alive(), "the in-flight read was never unblocked"
+        _wait_for_exit(pid)
+        _wait_for_exit(grandchild_pid)
+        assert not _pid_alive(grandchild_pid)
+    finally:
+        # Cleanup, not evidence: a regression must not leak the tree.
+        _kill_pid(grandchild_pid)
+        _kill_pid(pid)

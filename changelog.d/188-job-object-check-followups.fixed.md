@@ -9,9 +9,21 @@
   on the child's pipe — the adapter's own watchdog shape, where the deadline
   timer closes while the main thread is in `read_line` — the pipe detach
   waited on the blocked reader's lock, the job handle was never released,
-  kill-on-close never fired, the tree leaked and `close` never returned. The
-  teardown now releases containment before it touches the pipes, so the
-  sweep ends the tree, the sweep unblocks the read, and the caller still
-  learns the termination failed. The spawn's fail-closed path also releases
-  the child's pipes instead of leaving them to the garbage collector, and the
-  docstrings no longer claim more than the code delivers. (Refs #188.)
+  kill-on-close never fired, the contained tree leaked and `close` never
+  returned. The teardown now releases containment before it touches the
+  pipes, so the sweep ends every remaining job member, the sweep unblocks the
+  read, and the caller still learns the termination failed.
+- **Made the pipe binding's containment prose match what it can deliver.**
+  A second review round refuted the claims attached to those fixes: a job
+  whose member was never assigned stays permanently empty, so it sweeps
+  nothing, and a forced close of such a binding cannot terminate a
+  descendant the exited child left behind. `spawn` and `close` now disclose
+  that boundary — it is the same escape as the already-disclosed assignment
+  window, since failing the spawn would not contain the descendant either —
+  and describe the sweep as covering every remaining job *member* rather
+  than "the tree". Pipe descriptors are also now released deterministically:
+  the teardown closes the raw stream `detach` hands back instead of leaving
+  it to a finalizer, the spawn's fail-closed path releases both pipes and
+  both kernel handles even if the child cannot be reaped, and a failed
+  teardown reaps the child with a non-blocking poll rather than not at all.
+  (Refs #188, #213, #217.)

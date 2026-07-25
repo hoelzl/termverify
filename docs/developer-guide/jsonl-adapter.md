@@ -47,7 +47,13 @@ adapter = JsonlAdapter(
   `peer-malformed` on Windows;
 - **tree containment**: on Windows the child is assigned to a kill-on-close
   job object; on POSIX it becomes a process-group leader, so a forced stop
-  terminates the whole tree, never a leaked grandchild;
+  terminates every contained process rather than only the immediate child.
+  Disclosed limit: containment is established just *after* the child starts,
+  so a descendant the child manages to start inside that window — including
+  any descendant of a child that exits before assignment can complete — is
+  outside the job or process group and is not swept. Such a descendant can
+  also stall the teardown's pipe release if it inherits the child's stdout
+  write end ([issue #213](https://github.com/hoelzl/termverify/issues/213));
 - **unbuffered-friendly framing**: writes are newline-terminated and flushed
   per message; reads deliver one framed line per call. The subject has the
   matching obligation: it must flush its stdout **after every protocol
