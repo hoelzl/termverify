@@ -12,8 +12,10 @@
   (freeze fired prematurely on a self-published artifact and needed a
   recorded exception within days — issue #155,
   [`key-v1-punctuation-bases.md`](key-v1-punctuation-bases.md)), and P4 (a
-  frozen closed timezone registry v1 gains nothing from); the
-  "Compatibility and evolution" policy in
+  frozen closed timezone registry v1 gains nothing from), and P9 (doc/code
+  authority polarity inverted between the two protocols — decided the same
+  day and recorded here as decision 5, because its rationale is
+  stage-specific); the "Compatibility and evolution" policy in
   [`docs/knowledge/protocol.md`](../../knowledge/protocol.md); the state of
   the only known TermVerify users.
 
@@ -62,6 +64,18 @@ While the prototyping stage lasts:
 4. **Version identifiers remain as labels, not promises.** `/v1` continues
    to name the current shape so readers can reject foreign input; it does
    not imply stability across TermVerify revisions.
+5. **Code wins over prose, everywhere** (finding P9; a separate decision
+   taken on the same date, not a consequence of the suspension). Where a
+   protocol document and its codec disagree, the codec's behavior is
+   authoritative, per the executable-over-prose rule in `AGENTS.md`. This
+   settles the inverted polarity in
+   [`docs/knowledge/control-protocol.md`](../../knowledge/control-protocol.md),
+   which previously claimed the document wins. A disagreement remains a
+   defect either way: repaired doc-side by default, and code-side through
+   an ordinary test-first slice when the codec is the wrong one. The
+   rationale is stage-specific — while the protocols move in place, prose
+   cannot be a contract, and an agent must never "fix" working code to
+   match stale text.
 
 **Exit criterion:** the prototyping stage ends only by an explicit recorded
 owner decision that TermVerify is usable by external clients — not by any
@@ -69,7 +83,10 @@ release, publication, or artifact event (the 0.1.0 experience shows those
 are the wrong trigger). At that boundary, freeze and versioning guarantees
 are re-established by a fresh recorded design (the review's recommendation
 12 — e.g. "frozen for consumers, amendable by recorded owner decision until
-a third-party consumer is declared" — is input to that future design).
+a third-party consumer is declared" — is input to that future design), and
+that design also revisits decision 5 above: doc-as-contract becomes a
+defensible polarity once third-party subjects implement a protocol whose
+specification has stopped moving.
 
 ## Consequences
 
@@ -88,17 +105,11 @@ a third-party consumer is declared" — is input to that future design).
 - `docs/knowledge/protocol.md` "Compatibility and evolution" and the
   `AGENTS.md` protocol row state the prototyping status and link here, so
   future agents do not rediscover or re-impose the freeze.
-- Review finding **P9** (doc/code authority polarity) is resolved in the
-  same direction, by owner decision 2026-07-24: **code wins everywhere**
-  for the duration of the prototyping stage, including for the control
-  protocol, whose specification previously claimed the opposite. A
-  doc/codec disagreement is a defect repaired doc-side by default, and
-  code-side through an ordinary test-first slice when the codec is the
-  wrong one. The polarity is a consequence of this stage, not a permanent
-  stance: at the exit criterion above it is revisited together with freeze
-  and versioning, because doc-as-contract becomes defensible once
-  third-party subjects implement the control protocol against a
-  specification that has stopped moving.
+- Review finding **P9** is resolved by decision 5 above: the control
+  protocol's specification no longer claims the document wins, `AGENTS.md`
+  gains a control-protocol sources-of-truth row naming
+  `src/termverify/control.py`, and the polarity's revisit is bound to this
+  record's exit criterion rather than left to be rediscovered.
 
 ## Rejected alternatives
 
