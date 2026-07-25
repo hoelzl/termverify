@@ -244,9 +244,14 @@ class PipeJsonlChild:
         On Windows the child is assigned to a fresh kill-on-close job
         object before the binding is returned; every containment call's
         result is checked, so if containment cannot be established the
-        child is terminated and the spawn fails closed — no uncontained
-        session is ever handed out. On POSIX the child starts its own
-        session so a forced close can kill its process group.
+        child is terminated, its handles and pipes are released, and the
+        spawn fails closed — no uncontained live session is handed out.
+        One case is not a failure: a child that exits inside the
+        assignment window cannot be assigned (Windows answers
+        ERROR_ACCESS_DENIED for an exited process) and needs no
+        containment, so the binding is handed out and reports the child's
+        real exit record. On POSIX the child starts its own session so a
+        forced close can kill its process group.
         """
         arguments = [str(argument) for argument in argv]
         if not arguments:
@@ -276,8 +281,29 @@ class PipeJsonlChild:
                 process_handle = _open_containment_handle(process.pid)
                 _assign_to_job(job, process_handle)
             except OSError as error:
+                if (
+                    job is not None
+                    and process_handle is not None
+                    and process.poll() is not None
+                ):
+                    # The child exited inside the disclosed assignment
+                    # window. Windows refuses to assign an exited process
+                    # (ERROR_ACCESS_DENIED), and there is nothing left to
+                    # contain: a fast subject is legitimate, and failing
+                    # its spawn would blame containment for a race it won.
+                    # The binding reports its real exit record; the empty
+                    # job still sweeps, on release, any descendant that
+                    # joined before the child died.
+                    return cls(process, job=job, process_handle=process_handle)
                 process.kill()
-                process.wait()
+                process.wait(timeout=_CHILD_EXIT_WAIT_S)
+                for pipe in (process.stdin, process.stdout):
+                    if pipe is not None:
+                        # Release, never flush: the child is already dead.
+                        with _suppress_os_errors():
+                            cast("io.BufferedIOBase", pipe).detach()
+                        with _suppress_os_errors():
+                            pipe.close()
                 if process_handle is not None:
                     _kernel32.CloseHandle(process_handle)
                 if job is not None:
@@ -400,10 +426,13 @@ class PipeJsonlChild:
         terminated with the uniform forced exit code, or the POSIX
         process-group ``SIGKILL`` — to end the whole tree, waits for the
         real exit, and captures the observed exit record. A containment
-        call that fails is raised, not swallowed: releasing the job
-        handle still sweeps the tree through kill-on-close, so nothing
-        leaks, but the caller is told the termination failed rather than
-        reading a success the binding cannot vouch for. A second close
+        call that fails is raised, not swallowed: the teardown releases
+        the job handle before it touches the pipes, so kill-on-close
+        sweeps the tree even then — which also unblocks any read still
+        holding a pipe — and the caller is told the termination failed
+        rather than reading a success the binding cannot vouch for. On
+        that path the exit record is not captured: the raise is the
+        result, and ``exit_status`` stays ``None``. A second close
         arriving while another thread's close is in flight waits for that
         teardown to finish, so callers never observe a half-closed
         binding (the adapter consults ``exit_status`` right after
@@ -485,17 +514,24 @@ class PipeJsonlChild:
                 ) from error
             self._exit_status = int(status)
         finally:
-            self._close_pipes(process)
-            if (
-                process_handle is not None and sys.platform == "win32"
-            ):  # pragma: no cover - Windows-only leg
-                _kernel32.CloseHandle(process_handle)
             if (
                 job is not None and sys.platform == "win32"
             ):  # pragma: no cover - Windows-only leg
                 # Kill-on-close sweeps every remaining job member, so even
-                # a failed graceful path cannot leak the tree.
+                # a failed graceful path cannot leak the tree. Release it
+                # *before* the pipes: if the tree is somehow still alive
+                # here — a failed TerminateJobObject, or a descendant
+                # holding the child's stdout write end — a read blocked on
+                # that pipe still owns its lock, and ``_close_pipes``'
+                # detach would wait on that lock forever, never reaching
+                # this release. Sweeping first ends the tree, which
+                # unblocks the read, which lets the pipes close.
                 _kernel32.CloseHandle(job)
+            if (
+                process_handle is not None and sys.platform == "win32"
+            ):  # pragma: no cover - Windows-only leg
+                _kernel32.CloseHandle(process_handle)
+            self._close_pipes(process)
             with self._lock:
                 self._closing = False
                 self._close_done.set()
