@@ -23,8 +23,9 @@ The repository is in its foundation phase. The reviewed transcript design has
 an initial codec, semantic validator, mandatory safe transcript-persistence
 boundary, immutable producer-side adapter contract, and deterministic in-process
 direct runtime. Semantic key chords use a closed, protocol-owned v1 registry and
-have an immutable direct-dispatch representation; a requested timezone is a plain
-string, since only `UTC` can be applied and any other request is refused. The canonical transcript schema ships inside the package with a
+have an immutable direct-dispatch representation; a requested timezone is a
+plain non-empty string, since only `UTC` can be applied and any other request
+is refused. The canonical transcript schema ships inside the package with a
 public access API, and isolated installation checks verify the wheel and sdist
 resource contract; the schema's `$id` resolves at
 [termverify.dev](https://termverify.dev/schemas/termverify.transcript/v1.schema.json)

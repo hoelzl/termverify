@@ -242,7 +242,7 @@ v1 reserves `adapter-start-failed`, `adapter-runtime-failed`,
 | `seed` | canonical decimal string representing an unsigned 64-bit integer: `"0"` or a nonzero digit followed by digits, with no leading zeroes |
 | `clock` | `{"mode": "manual", "initial_ms": non-negative integer}` |
 | `locale` | literal `"C"`, or a well-formed RFC 5646 language tag |
-| `timezone` | non-empty string naming the requested zone; only literal `"UTC"` can be applied, so any other request must terminate as `unsupported` |
+| `timezone` | non-empty string naming the requested zone; only literal `"UTC"` may be reported as applied, so any other request is refused through `unsupported` (or the run fails before its receipt) |
 | `terminal` | `columns` and `rows` positive integers; `capabilities` sorted unique strings |
 | `filesystem` | `{"mode": "sandbox", "root_id": string}` |
 | `network` | `{"mode": "deny"}` or `{"mode": "allow-list", "allowed": [{"host": string, "port": integer 1–65535}]}`; `allowed` is sorted by host then port and has no duplicates |

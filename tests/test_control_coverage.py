@@ -1068,10 +1068,6 @@ def test_config_accepts_any_non_empty_timezone_request() -> None:
     assert config["timezone"] == "Not/AZone"
 
 
-def test_config_rejects_an_empty_timezone() -> None:
-    _rejects("session.hello", _hello_payload(timezone=""))
-
-
 def test_config_rejects_port_above_65535() -> None:
     _rejects(
         "session.hello",

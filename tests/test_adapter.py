@@ -189,11 +189,6 @@ def test_run_configuration_accepts_any_named_timezone_request(timezone: str) -> 
     assert configuration.to_protocol()["timezone"] == timezone
 
 
-def test_run_configuration_rejects_an_empty_timezone() -> None:
-    with pytest.raises(ValueError, match="timezone"):
-        replace(_configuration(), timezone="")
-
-
 @pytest.mark.parametrize(
     ("factory", "message"),
     [

@@ -1,8 +1,8 @@
 """Protocol-owned enforcement-tier vocabulary `termverify.enforcement-tier/v1`.
 
-A closed, versioned vocabulary owned by the protocol exactly like the
-timezone and key registries: exact case-sensitive membership, no aliases or
-normalization, runtime validation authoritative. Post-freeze membership or
+A closed, versioned vocabulary owned by the protocol exactly like the key
+registries: exact case-sensitive membership, no aliases or normalization,
+runtime validation authoritative. Post-freeze membership or
 meaning changes require a new vocabulary version. Membership is not evidence
 that an emitter exists; each tier's authorized emitting path is fixed by the
 accepted cooperation-tier design

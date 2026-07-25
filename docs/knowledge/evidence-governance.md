@@ -83,7 +83,7 @@ disposition:
 | --- | --- |
 | Envelope `protocol` and `kind`; capability `constraint` and `status`; clock, filesystem, network, input-mouse, process, and exit tagged-enum strings | Preserve after protocol validation. |
 | Envelope `run_id` and `id`; replay-subject format and selector tokens; decimal seed; locale | Preserve as replay structure after protocol validation. Credential regexes do not scan these fields. |
-| Timezone | Replace with the fixed valid `UTC` sentinel in requested configuration and any effective value. A request is an unconstrained string, so it is redacted like any other free value; an applied v1 effective value is already `UTC`, and any other named request can only appear on the structured unsupported path. |
+| Timezone | Replace with the fixed valid `UTC` sentinel in requested configuration and any effective value. The request is an unconstrained string, so the sentinel — not a `<redacted:...>` marker — is what keeps the redacted record protocol-valid; an applied v1 effective value is already `UTC`, and any other named request either terminates through the structured unsupported path or the run fails before its receipt. |
 | Filesystem root and network allow-list host | Replace with deterministic sandbox/positional markers in both requested and effective configuration. |
 | Terminal capability names | Replace by ordered positional markers in both requested and effective configuration, preserving ordering, uniqueness, and equality. |
 | Input semantic key chord | Replace the entire chord with the fixed registry-valid `["Escape"]` sentinel, revealing neither the original base nor modifiers. Input text and clipboard text are blanket-redacted. |

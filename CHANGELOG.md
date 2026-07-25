@@ -9,8 +9,8 @@ with the pre-1.0 policy below.
 
 - **Package versions are not protocol versions.** The transcript wire contract
   (`termverify.transcript/v1`) and its closed registries
-  (`termverify.timezone/v1`, `termverify.key/v1`) are versioned independently
-  and are immutable after freeze; changing their membership or meaning requires
+  (`termverify.key/v1`, `termverify.key-encoding/v1`) are versioned
+  independently and are immutable after freeze; changing their membership or meaning requires
   a new protocol or registry version, never a package release note alone.
 - **Before 1.0.0** every `0.x` release may contain breaking changes to the
   Python API. Breaking changes are listed under a **Changed** or **Removed**
