@@ -56,7 +56,7 @@ from termverify.recorder import (
     TranscriptRecorderError,
     run_scripted,
 )
-from termverify.transcript import parse_transcript
+from termverify.transcript import TranscriptValidationError, parse_transcript
 
 RUN_ID = "run-recorder"
 
@@ -542,6 +542,83 @@ def test_coalescing_never_crosses_an_observation() -> None:
             data = cast(dict[str, object], cast(dict[str, object], event)["data"])
             chunks.append(data["chunk"])
     assert chunks == ["first", "second"]
+
+
+def test_unrecognized_output_payloads_pass_through_untouched() -> None:
+    """Coalescing never guesses at a shape it does not recognize.
+
+    Only ``{"chunk": <str>}`` is merged. Anything else — an extra member, a
+    non-string chunk, a nested value — is recorded exactly as the old path
+    recorded it, because repairing an unrecognized payload would invent
+    evidence.
+    """
+    recorder = TranscriptRecorder(RUN_ID, _configuration(), SUBJECT)
+    recorder.record_start(Started(_constraints(), _observation()))
+    recorder.record_epoch(
+        TextInput(ManualTime(0), "go"),
+        EpochCompleted(
+            _observation(
+                events=(
+                    Event("terminal.output", {"chunk": "a", "fd": 2}),
+                    Event("terminal.output", {"chunk": "b"}),
+                    Event("terminal.output", {"chunk": "c"}),
+                )
+            )
+        ),
+    )
+    recorder.record_epoch(
+        TextInput(ManualTime(0), "quit"),
+        TerminalResult(
+            _observation(process=ProcessObservation.exited(ExitStatus("code", 0))),
+            RunFinished.code(0),
+        ),
+    )
+
+    records = parse_transcript(recorder.transcript())
+
+    observations = [
+        cast(dict[str, object], record["payload"])
+        for record in records
+        if record["kind"] == "observation"
+    ]
+    assert observations[1]["events"] == [
+        {"type": "terminal.output", "data": {"chunk": "a", "fd": 2}},
+        {"type": "terminal.output", "data": {"chunk": "bc"}},
+    ]
+
+
+def test_a_coalesced_epoch_beyond_the_per_string_ceiling_is_rejected() -> None:
+    """Disclosed boundary: coalescing moves which codec ceiling binds first.
+
+    Merging N chunk strings into one means a single epoch's output must fit
+    the protocol's **per-string** ceiling, where the per-record aggregate —
+    twice as large — used to bind. Native reads are far smaller than either,
+    so this was previously unreachable; now an epoch emitting more than one
+    mebibyte of terminal output is refused by the codec, and the refusal
+    discards the recording rather than failing the epoch.
+
+    Pinned here so the boundary cannot move silently. The adapter-side bound
+    that turns this into a structured epoch failure instead is issue #194.
+    """
+    half = "x" * (600 * 1024)
+    recorder = TranscriptRecorder(RUN_ID, _configuration(), SUBJECT)
+    recorder.record_start(Started(_constraints(), _observation()))
+    recorder.record_epoch(
+        TextInput(ManualTime(0), "flood"),
+        TerminalResult(
+            _observation(
+                process=ProcessObservation.exited(ExitStatus("code", 0)),
+                events=(
+                    Event("terminal.output", {"chunk": half}),
+                    Event("terminal.output", {"chunk": half}),
+                ),
+            ),
+            RunFinished.code(0),
+        ),
+    )
+
+    with pytest.raises(TranscriptValidationError, match="string bytes"):
+        recorder.transcript()
 
 
 def test_delivered_tier_receipts_record_delivery() -> None:

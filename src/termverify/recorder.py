@@ -91,20 +91,40 @@ _TERMINAL_OUTPUT: Final = "terminal.output"
 
 
 def _coalesced_events(observation: Observation) -> list[JsonValue]:
-    """Merge adjacent ``terminal.output`` events into one per run.
+    """Merge each maximal run of adjacent ``terminal.output`` events into one.
 
-    Chunk boundaries are OS scheduling noise, not evidence: two identical
-    runs can split the same bytes differently, and the exact comparator —
-    which has no normalizers by design — would then call them divergent
-    (adversarial review 2026-07-24, finding R6; owner decision 2026-07-24:
-    coalesce at record time). Only the byte stream reaches the transcript.
+    Read boundaries are OS scheduling noise, not evidence: two identical runs
+    can split the same bytes across different numbers of native reads, and
+    the exact comparator — which has no normalizers by design — would then
+    call them divergent (adversarial review 2026-07-24, finding R6; owner
+    decision 2026-07-24: coalesce at record time rather than weaken the
+    comparator).
 
     Merging is deliberately narrow. It never crosses an observation, because
     each observation is its own record and its own point in the lifecycle,
     and it never crosses a structural event, because the order of output
     relative to a state change *is* evidence. A ``terminal.output`` event
-    whose payload is not the expected single ``chunk`` string is passed
-    through untouched rather than guessed at.
+    whose payload is not the expected single ``chunk`` string passes through
+    untouched rather than being guessed at.
+
+    Three consequences, disclosed rather than implied away:
+
+    - **Boundaries *within* an observation stop mattering; which observation
+      a read lands in still does.** A subject that emits after its readiness
+      marker without waiting for input has those bytes recorded in whichever
+      epoch's read carried them, so read timing can still move output between
+      records. Coalescing does not and cannot fix that.
+    - **The per-string codec ceiling now binds where the per-record aggregate
+      used to.** One merged string per epoch means an epoch emitting more
+      than the protocol's per-string limit is refused by the codec, and that
+      refusal discards the recording. Native reads are far smaller, so this
+      was previously unreachable; the adapter-side bound that turns it into a
+      structured epoch failure is issue #194.
+    - **The rule is adapter-agnostic.** It applies to any producer of
+      ``terminal.output`` events, including a cooperating control-protocol
+      subject that chose its own boundaries deliberately. The type name is
+      treated as read-boundary output, and boundaries inside it are not
+      preserved for anyone.
     """
     events: list[JsonValue] = []
     pending: list[str] = []

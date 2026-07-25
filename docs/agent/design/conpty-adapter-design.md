@@ -322,7 +322,7 @@ the normalizer implementation choice to its own assessment:
   concepts with no terminal enforcement.
 - Raw evidence retention: each epoch's observation carries ordered
   `Event("terminal.output", {"chunk": <raw text>})` events containing the
-  exact decoded chunks, including the readiness marker. Replaying the
+  exact decoded chunks, including the readiness marker. **Amendment (issue #195, finding R6):** the recorder merges each maximal run of adjacent `terminal.output` events into one before recording, because read boundaries are OS scheduling noise that would otherwise make two identical runs compare divergent. The adapter still retains one chunk per read in memory; the transcript carries the byte stream. Replaying the
   normalizer over the raw chunks must reproduce the frames — this is the
   replay check that makes frames trustworthy, and it aligns with the
   transcript schema's replay-subject `normalizer {id, version}` field: the

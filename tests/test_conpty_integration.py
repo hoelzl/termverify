@@ -83,6 +83,7 @@ from termverify.adapter import (
     EpochCompleted,
     ExitStatus,
     FilesystemConfiguration,
+    JsonInput,
     KeyInput,
     ManualTime,
     NetworkConfiguration,
@@ -99,8 +100,11 @@ from termverify.adapter import (
     TerminalResult,
     TextInput,
 )
+from termverify.comparator import compare_transcripts
 from termverify.conpty import READINESS_MARKER_DEFAULT, ConptyAdapter, ConptyBinding
 from termverify.cooperation import CooperationConstraintPorts, RealDirectoryProbe
+from termverify.recorder import ScriptedInput, run_scripted
+from termverify.transcript import parse_transcript
 from termverify.vt import VtScreenNormalizer
 
 _INITIAL_ROWS: Final = 24
@@ -189,6 +193,17 @@ sys.stdout.flush()
 sys.stdout.write("TV_AFTER")
 sys.stdout.flush()
 """
+
+
+#: Subject metadata for the repeat-run comparison; identical across runs.
+_REPEAT_SUBJECT: Final[dict[str, JsonInput]] = {
+    "format": "termverify.replay-subject/v1",
+    "application": {"id": "conpty-repeat", "version": "1", "build": "b1"},
+    "fixture": {"id": "conpty-repeat", "version": "1"},
+    "adapter": {"id": "termverify.conpty", "version": "1"},
+    "normalizer": {"id": "termverify.vt", "version": "1"},
+    "state_schema": {"id": "conpty-state", "version": "1"},
+}
 
 
 def _argv(script: str) -> list[str]:
@@ -952,3 +967,84 @@ def test_unencodable_chord_fails_closed_on_the_real_adapter() -> None:
     assert os_exit_code == FORCED_TERMINATION_EXIT_CODE
     with pytest.raises(RuntimeError):
         adapter.dispatch(TextInput(ManualTime(0), "late\r\n"))
+
+
+#: Deterministic cooperative child for the replay-equivalence evidence: no
+#: pid, no terminal size, no resize watcher — nothing whose value differs
+#: between two runs. It emits enough output per epoch that ConPTY splits it
+#: across several native reads, which is the noise the coalescing removes.
+_DETERMINISTIC_CHILD_TEMPLATE: Final = """\
+import sys
+
+MARKER = {marker!r}
+
+def emit(text):
+    sys.stdout.write(text + MARKER)
+    sys.stdout.flush()
+
+emit("TV_READY\r\n")
+for line in sys.stdin:
+    command = line.strip()
+    if command == "exit":
+        sys.stdout.write("TV_EXIT\r\n")
+        sys.stdout.flush()
+        sys.exit(3)
+    emit("".join(f"TV_LINE:{{index}}:{{command}}\r\n" for index in range(40)))
+"""
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY integration evidence")
+def test_two_identical_conpty_runs_compare_equivalent(tmp_path: Path) -> None:
+    """Slice 5.1's acceptance evidence: repeat runs reach an equivalent verdict.
+
+    Native read boundaries are OS scheduling noise — the same bytes arrive as
+    a different number of chunks from run to run — and the exact comparator
+    has no normalizers, so before recorder-side coalescing (finding R6) two
+    identical runs of this subject compared *divergent* purely on
+    `payload.events`. This is the only test that drives the real ConPTY
+    adapter through the recorder, which is what makes it the acceptance
+    evidence rather than a unit assertion.
+
+    The subject is deliberately free of run-varying content: no pid, no
+    terminal size, no watcher thread.
+    """
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    argv = _argv(_DETERMINISTIC_CHILD_TEMPLATE.format(marker=READINESS_MARKER_DEFAULT))
+    inputs: tuple[ScriptedInput, ...] = (
+        TextInput(ManualTime(0), "one\r\n"),
+        TextInput(ManualTime(0), "two\r\n"),
+        Stop(ManualTime(0)),
+    )
+
+    transcripts: list[bytes] = []
+    for index in range(2):
+        adapter = _adapter(argv)
+        run = run_scripted(
+            adapter,
+            "run-conpty-repeat",
+            _configuration(),
+            _REPEAT_SUBJECT,
+            inputs,
+        )
+        transcripts.append(run.transcript)
+        assert transcripts[index], "the run produced no transcript"
+
+    verdict = compare_transcripts(transcripts[0], transcripts[1])
+    assert verdict.equivalent, verdict.divergences
+
+    # The property that makes the verdict meaningful: each observation now
+    # carries at most one output event, so a differing chunk count cannot
+    # reach the transcript at all.
+    records = parse_transcript(transcripts[0])
+    for record in records:
+        if record["kind"] != "observation":
+            continue
+        payload = cast("Mapping[str, object]", record["payload"])
+        events = cast("list[object]", payload["events"])
+        output_events = [
+            event
+            for event in events
+            if cast("Mapping[str, object]", event)["type"] == "terminal.output"
+        ]
+        assert len(output_events) <= 1, output_events
