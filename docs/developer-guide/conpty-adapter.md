@@ -68,15 +68,16 @@ The byte bound is **computed**, not fixed, and two ceilings feed it:
   string's own per-string ceiling applies. At ordinary geometry this is the
   binding one, and the scale is roughly 1 MB of output in a single epoch.
 - The record's total string bytes, less what the rest of the record costs.
-  That is dominated by the frame's lines, so a very wide terminal leaves less
-  room for output than an 80×24 one — this binds above roughly 261,000 cells.
+  That is dominated by the frame's lines, so a large terminal leaves less
+  room for output than an 80×24 one — this binds above 261,121 total cells.
+  Cells, not columns: an 80×3,265 terminal crosses it and is not wide.
 
 The byte bound also depends on what the screen *contains*, not only its size:
 the codec counts UTF-8 bytes, so a box-drawn or CJK frame costs three to four
-bytes per cell. The adapter reserves the worst case, which is why a very large
-terminal leaves less room for output — and above roughly 2.09 million cells a
-record cannot hold even its own frame, so no epoch can be recorded at all and
-`start()` fails with `budget: "geometry"`.
+bytes per cell. The adapter reserves the worst case, which is why a large
+terminal leaves less room for output — and at **523,264 cells** a record
+cannot hold even its own frame, so no epoch can be recorded at that geometry
+and the run fails with `budget: "geometry"` on its first read.
 
 Do **not** try to fit inside the bound by emitting extra readiness markers
 inside one epoch: the contract is exactly one marker per processed input, and

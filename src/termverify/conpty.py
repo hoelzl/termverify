@@ -67,10 +67,11 @@ Readiness and quiescence are defined only by observable evidence:
   bounds memory rather than time: an epoch may retain only what its chunks
   can cost the one observation record they land in. They land there as a
   *single* coalesced ``terminal.output`` string (issue #195), so the binding
-  ceiling at ordinary geometry is the per-string one, and only a very wide
-  terminal makes the per-record string sum bind first. Chunk *count* is not
-  a separate axis: coalescing means no number of reads can reach the
-  protocol's collection ceiling. Hosts must budget the deadline above the disclosed
+  ceiling at ordinary geometry is the per-string one, and only a terminal
+  above 261,121 *total cells* makes the per-record string sum bind first.
+  Chunk *count* is not a separate axis: coalescing means no number of reads
+  can reach the protocol's collection ceiling. Hosts must budget the deadline
+  above the disclosed
   DA-stall floor: conhost defers client output while its unanswered
   ``CSI c`` device-attributes query waits (measured ~3.1 s; see the
   DA-stall disclosure in the adapter design document), so a deadline at or
@@ -165,10 +166,16 @@ _MAX_UTF8_BYTES_PER_CELL: Final = 4
 
 #: Reserve for an observation record's fixed strings: the envelope's
 #: protocol, kind, run and record identifiers, the cursor and mode values,
-#: the event's own member names, and the member names around them. Generous
-#: by a wide margin, and unlike the frame it does not scale with anything —
-#: the epoch's chunks reach the record as a *single* coalesced event, so
-#: their envelope cost is paid once rather than per chunk.
+#: the event's own member names, and the member names around them. Unlike
+#: the frame these do not scale with the geometry — the epoch's chunks reach
+#: the record as a *single* coalesced event, so their envelope cost is paid
+#: once rather than per chunk — and they measure ~216 bytes in practice.
+#:
+#: The margin is wide but not unconditional: `run_id` is host-supplied and
+#: `_validate_run_id` constrains its charset, not its length, so a run
+#: identifier above ~3.9 KiB defeats this reserve and the codec rejects a
+#: record the adapter admitted. Callers are expected to use identifiers of
+#: ordinary length; this is a stated assumption, not an enforced invariant.
 _FIXED_RECORD_STRING_BYTES: Final = 4 * 1024
 
 #: The `termverify.enforcement-tier/v1` authorization matrix row for the
@@ -675,6 +682,14 @@ class ConptyAdapter:
         admitted and then rejected by the codec (adversarial review of this
         PR, round 4). Four bytes per cell is UTF-8's worst case per code
         point, so the reserve cannot be short.
+
+        Bounded here: the frame's *aggregate* cost against the per-record
+        sum. Not bounded here: a single frame **line**, which is one string
+        of ``columns`` code points and meets the per-string ceiling on its
+        own. Above 262,144 columns the codec rejects the record whatever the
+        output budget says — unreachable through the real binding, whose
+        ``COORD`` dimensions are 16-bit, and so disclosed rather than
+        checked.
         """
         frame_bytes = _MAX_UTF8_BYTES_PER_CELL * self._rows * self._columns
         record_budget = (
@@ -698,14 +713,21 @@ class ConptyAdapter:
           its own deadline, checked between reads.
         - **retained output bytes**, against what the single coalesced
           ``terminal.output`` string those chunks become may cost its
-          observation record. This bounds retained memory too: a chunk costs
-          at least one byte, so the byte budget also caps how many the epoch
-          can hold — though the per-object cost of holding them is not itself
-          counted, and at the ceiling a one-byte-per-read trickle retains on
-          the order of tens of megabytes of Python string objects before the
-          epoch deadline or this budget ends it.
+          observation record.
 
-        Each is a structured failure, never a claimed epoch.
+        Retained memory follows from the byte bound only under a stated port
+        assumption: that a native read yields at least one byte, so bytes
+        also cap how many chunks the epoch can hold. ``ConptyChildPort.read``
+        does not forbid an empty string, and an empty-read loop would advance
+        neither bound — only the epoch deadline would end it. Real ConPTY was
+        measured not to do this (no empty read across a 3 s idle), so this is
+        an assumption about the port, not a claim about the arithmetic.
+        The per-object cost of retention is not counted either: at the
+        ceiling a two-byte-per-read trickle retains ~27 MB of Python objects
+        (a one-byte trickle costs less, ~8 MB, because single-character ASCII
+        decodes are interned) before the deadline or this budget ends it.
+
+        Each bound is a structured failure, never a claimed epoch.
         """
         if self._scan_for_marker():
             return

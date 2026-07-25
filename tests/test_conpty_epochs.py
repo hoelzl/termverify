@@ -58,6 +58,8 @@ from termverify.adapter import (
     TimezoneReceipt,
 )
 from termverify.conpty import (
+    _FIXED_RECORD_STRING_BYTES,
+    _MAX_UTF8_BYTES_PER_CELL,
     READINESS_MARKER_DEFAULT,
     ConptyAdapter,
     ConptyChildPort,
@@ -683,6 +685,75 @@ def test_an_output_flood_exhausts_the_per_epoch_byte_budget() -> None:
     assert isinstance(budget, int)
     assert budget < _MAX_RECORD_STRING_BYTES
     assert "one observation" in result.failure.message
+
+
+@pytest.mark.parametrize(
+    ("columns", "rows", "starts"),
+    [(1000, 523, True), (1000, 524, False), (1024, 512, False)],
+)
+def test_a_terminal_too_large_for_its_own_frame_fails_on_geometry(
+    columns: int, rows: int, starts: bool
+) -> None:
+    """Past a threshold no epoch can be recorded, and the threshold is real.
+
+    The frame is reserved at UTF-8's worst case per cell, so the record has
+    no room left for it once the terminal passes `(2 MiB - fixed) / 4` cells.
+    The cases straddle that threshold rather than merely reaching it, because
+    the guide and changelog quote a cell count to hosts, and the previous
+    revision quoted the *byte* figure read as cells — off by 4x, the same
+    cells-vs-bytes confusion round 4 rejected this PR for.
+    """
+    threshold = (_MAX_RECORD_STRING_BYTES - _FIXED_RECORD_STRING_BYTES) // (
+        _MAX_UTF8_BYTES_PER_CELL
+    )
+    assert threshold == 523_264, "the documented threshold moved"
+    assert (rows * columns < threshold) is starts, "case does not straddle it"
+
+    binding = _FakeBinding(_FakeChild([_MARKER]))
+    adapter = _adapter(
+        binding,
+        watchdog=_FakeWatchdog(),
+        normalizer_factory=_NormalizerFactory(frame_dimensions=(rows, columns)),
+    )
+    configuration = replace(
+        _configuration(),
+        terminal=TerminalConfiguration(columns=columns, rows=rows, capabilities=()),
+    )
+
+    result = adapter.start("run-conpty", configuration)
+
+    if starts:
+        assert type(result) is Started
+        return
+    assert type(result) is StartFailed
+    assert result.failure.details == {
+        "budget": "geometry",
+        "terminal-cells": rows * columns,
+    }
+    assert "too large" in result.failure.message
+
+
+def test_a_stalled_read_that_wins_the_close_race_is_not_relabelled() -> None:
+    """A read the watchdog already killed stays `bound: "read"`.
+
+    Such a read can return normally and arrive at the epoch check with the
+    deadline spent, which looks exactly like a subject that produces output
+    but never reaches readiness. Only the latter is `bound: "epoch"`, since
+    the two need opposite remediations.
+    """
+    # Fires after the first read returns: the read won the race with expiry.
+    watchdog = _FakeWatchdog(fire_at_disarm=1)
+    clock = _SteppingClock(_DEADLINE_MS / 1000, every=1)
+    binding = _FakeBinding(_FakeChild(["." * 8, _MARKER]))
+    adapter = _adapter(binding, watchdog=watchdog, monotonic=clock)
+
+    result = adapter.start("run-conpty", _configuration())
+
+    assert type(result) is StartFailed
+    assert result.failure.details == {
+        "abort-deadline-ms": _DEADLINE_MS,
+        "bound": "read",
+    }
 
 
 def test_the_byte_budget_counts_the_marker_bearing_chunk_too() -> None:

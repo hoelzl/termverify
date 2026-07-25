@@ -31,8 +31,8 @@
   frame reserve counts **UTF-8 bytes per cell, not cells**: the codec measures
   bytes, and a box-drawn or CJK screen costs three to four bytes per cell, so
   counting cells under-reserved by up to 3x and a box-drawn TUI at 100x30 was
-  admitted and then rejected. A terminal above ~2.09 million cells cannot hold
-  even its own frame in one record, and now fails at `start()` with
+  admitted and then rejected. A terminal at 523,264 cells or more cannot hold
+  even its own frame in one record, and now fails on its first read with
   `budget: "geometry"` rather than as a phantom output flood.
   Disclosed limit: the codec still owns recordability and enforces ceilings no
   budget can model, notably a canonical-line limit ESC-dense output reaches far
