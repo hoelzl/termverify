@@ -136,7 +136,11 @@ from termverify.adapter import (
     UiObservation,
     _validate_run_id,
 )
-from termverify.transcript import _MAX_RECORD_STRING_BYTES, _MAX_STRING_BYTES
+from termverify.transcript import (
+    _MAX_COLLECTION_ITEMS,
+    _MAX_RECORD_STRING_BYTES,
+    _MAX_STRING_BYTES,
+)
 from termverify.vt import ScreenSnapshot, TerminalOutputNormalizer, VtScreenNormalizer
 
 __all__ = [
@@ -681,15 +685,25 @@ class ConptyAdapter:
         UTF-8 bytes, and the screen model puts any character at or above
         U+00A0 into a cell one-for-one, so box drawing costs three bytes per
         cell and an emoji four. Reserving one byte per cell under-reserved by
-        up to 3x — enough for an ordinary box-drawn TUI at 100x30 to be
-        admitted and then rejected by the codec (adversarial review of this
-        PR, round 4). Four bytes per cell is UTF-8's worst case per code
-        point, so the reserve cannot be short.
+        up to 4x (adversarial review of this PR, round 4). Four bytes per
+        cell is UTF-8's worst case per code point, so the reserve cannot be
+        short.
 
-        Bounded here: the frame's *aggregate* cost against the per-record
-        sum. Not bounded here: a single frame **line**, which is one string
-        of ``columns`` code points and meets the per-string ceiling on its
-        own. Like the aggregate, that limit depends on what the screen
+        That under-reserve is only observable where the per-record sum is the
+        binding ceiling, which is above ~261,000 cells: below it the
+        per-string ceiling binds and the frame reserve is entirely slack. The
+        witness is therefore a large 4-byte-per-cell frame — 800x400 of
+        emoji, which the tests exercise — not an ordinary TUI. An earlier
+        revision of this docstring cited a box-drawn 100x30, which was true
+        of the budget shape round 4 rejected and which #195 and the ``min()``
+        below then made false (round 7, finding 3).
+
+        Bounded here: the frame's *aggregate* byte cost against the
+        per-record sum. Bounded by the caller, because bytes cannot express
+        it: the frame's **row count** against the record's collection
+        ceiling. Not bounded anywhere: a single frame **line**, which is one
+        string of ``columns`` code points and meets the per-string ceiling on
+        its own. Like the aggregate, that limit depends on what the screen
         contains — 262,144 columns for a 4-byte-per-cell frame, 1,048,576
         for an ASCII one. Unreachable through the real binding, whose
         ``COORD`` dimensions are 16-bit, and at two rows or more the
@@ -740,6 +754,19 @@ class ConptyAdapter:
         # returns below without ever reading — which let a resize past this
         # threshold complete an epoch that the codec then rejected, losing
         # the run's evidence at the end (round 6, finding 1).
+        #
+        # Rows first, because bytes cannot model this axis: the frame costs
+        # the record collection *items* as well as bytes, one per row, and
+        # above the v1 collection ceiling no epoch is recordable at any cell
+        # count — a ten-column terminal reaches it two orders of magnitude
+        # below the cell threshold (round 7, finding 1).
+        if self._rows > _MAX_COLLECTION_ITEMS:
+            raise _EpochFailure(
+                "the requested terminal has more rows than one observation"
+                " record's frame may carry, so no epoch can be recorded at"
+                " this geometry",
+                {"budget": "geometry", "terminal-rows": self._rows},
+            )
         budget = self._epoch_output_budget()
         if budget <= 0:
             raise _EpochFailure(

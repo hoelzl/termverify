@@ -176,6 +176,9 @@ class _FakeChild:
         self.resizes: list[tuple[int, int]] = []
         self.closes: list[bool] = []
         self.closed = False
+        #: Reads served, cumulative. `reads` is the *remaining* script, so it
+        #: empties on every path and cannot witness that a read was skipped.
+        self.reads_served = 0
 
     @property
     def pid(self) -> int:
@@ -191,6 +194,7 @@ class _FakeChild:
         if not self.reads:
             raise AssertionError("the fake child was read past its script")
         item = self.reads.pop(0)
+        self.reads_served += 1
         if isinstance(item, Exception):
             raise item
         return item
@@ -691,10 +695,12 @@ def test_an_output_flood_exhausts_the_per_epoch_byte_budget() -> None:
     ("columns", "rows", "starts"),
     [
         (1000, 523, True),
-        # Exactly at the documented threshold, and exactly one cell below it.
-        # Straddling it from a distance is not enough: with only the 1000x523
-        # and 1000x524 cases, weakening the check to `budget < 0` stays green
-        # while making the documented number false (round 6, finding 7).
+        # Exactly at the documented threshold, and one column below it (16
+        # cells: 32,703 x 16 is 523,248, the nearest point reachable on this
+        # row count). Straddling it from a distance is not enough: with only
+        # the 1000x523 and 1000x524 cases, weakening the check to
+        # `budget < 0` stays green while making the documented number false
+        # (round 6, finding 7).
         (32_704, 16, False),
         (32_703, 16, True),
         (1000, 524, False),
@@ -747,6 +753,63 @@ def test_a_terminal_too_large_for_its_own_frame_fails_on_geometry(
     assert "no room for output" in result.failure.message
 
 
+@pytest.mark.parametrize(
+    ("rows", "starts"),
+    [
+        (_MAX_COLLECTION_ITEMS, True),
+        (_MAX_COLLECTION_ITEMS + 1, False),
+        # The tallest geometry the real binding can request: `COORD` is 16-bit,
+        # so this is the far end of the reachable range, not a fake-only value.
+        (32_767, False),
+    ],
+)
+def test_a_terminal_with_more_rows_than_a_frame_may_carry_fails_on_geometry(
+    rows: int, starts: bool
+) -> None:
+    """Rows are a second geometry axis, and bytes do not model it.
+
+    The byte budget reserves `4 * rows * columns` and refuses when nothing is
+    left for output. That is a *cell* model, and the frame has a second cost
+    the codec charges separately: `frame.lines` is one collection item per
+    row, so above the v1 collection ceiling no epoch is recordable at any
+    cell count. Ten columns keeps the cell product an order of magnitude
+    below the 523,264-cell threshold, so only the row axis can refuse these.
+
+    Reachable, not hypothetical: `TerminalConfiguration` requires a positive
+    int and nothing more, and a 20,000-row pseudoconsole was created and
+    spawned into on the Windows dev host. Round 7, finding 1.
+    """
+    columns = 10
+    assert (
+        rows * columns
+        < (_MAX_RECORD_STRING_BYTES - _FIXED_RECORD_STRING_BYTES)
+        // _MAX_UTF8_BYTES_PER_CELL
+    ), "the cell threshold would refuse these anyway"
+
+    binding = _FakeBinding(_FakeChild([_MARKER]))
+    adapter = _adapter(
+        binding,
+        watchdog=_FakeWatchdog(),
+        normalizer_factory=_NormalizerFactory(frame_dimensions=(rows, columns)),
+    )
+    configuration = replace(
+        _configuration(),
+        terminal=TerminalConfiguration(columns=columns, rows=rows, capabilities=()),
+    )
+
+    result = adapter.start("run-conpty", configuration)
+
+    if starts:
+        assert type(result) is Started
+        # The admitted end of the boundary is proved recordable by the real
+        # recorder and the real codec, not by restating the ceiling here.
+        _recorded_transcript(result, configuration)
+        return
+    assert type(result) is StartFailed
+    assert result.failure.details == {"budget": "geometry", "terminal-rows": rows}
+    assert "more rows" in result.failure.message
+
+
 def test_a_resize_past_the_threshold_cannot_slip_through_a_buffered_marker() -> None:
     """An epoch that never reads must still honor the geometry bound.
 
@@ -764,6 +827,7 @@ def test_a_resize_past_the_threshold_cannot_slip_through_a_buffered_marker() -> 
     adapter = _adapter(binding, watchdog=_FakeWatchdog())
     started = adapter.start("run-conpty", _configuration())
     assert type(started) is Started
+    reads_before_resize = binding.child.reads_served
 
     result = adapter.dispatch(Resize(ManualTime(0), columns=32_767, rows=16))
 
@@ -774,8 +838,10 @@ def test_a_resize_past_the_threshold_cannot_slip_through_a_buffered_marker() -> 
         "budget": "geometry",
         "terminal-cells": 16 * 32_767,
     }
-    # No read was consumed: the epoch never entered the loop.
-    assert binding.child.reads == []
+    # No read was consumed by the resize epoch: it never entered the loop.
+    # `reads == []` would not say this — the script is popped as it is served,
+    # so it is empty on every path, including one that did read (round 7).
+    assert binding.child.reads_served == reads_before_resize
 
 
 def test_a_stalled_read_that_wins_the_close_race_is_not_relabelled() -> None:
