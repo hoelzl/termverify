@@ -714,7 +714,7 @@ _REPEAT_SUBJECT: Final[dict[str, JsonInput]] = {
     "application": {"id": "repeat-echo-fixture", "version": "1", "build": "b1"},
     "fixture": {"id": "repeat-echo", "version": "1"},
     "adapter": {"id": "termverify.conpty", "version": "1"},
-    "normalizer": {"id": "termverify.vt-screen", "version": "1"},
+    "normalizer": {"id": "termverify.vt", "version": "1"},
     "state_schema": {"id": "terminal-dimensions", "version": "1"},
 }
 
@@ -728,6 +728,15 @@ def test_repeat_runs_reach_an_equivalent_comparator_verdict(tmp_path: Path) -> N
     same deterministic subject through the real adapter compare equivalent
     under the exact comparator — the DirectAdapter repeat-run pattern
     promoted to the real ConPTY path.
+
+    Disclosed residual risk: coalescing merges only within one
+    observation. The epoch reader stops at the first readiness marker, so
+    bytes conhost flushes after the marker-bearing read belong to the
+    next epoch's chunks; if that flush timing ever differs across runs,
+    the same bytes land in different epochs and the comparator diverges
+    for a reason coalescing cannot mask. Not observed on the verified
+    matrix; if this test flakes with divergence at an epoch boundary,
+    suspect cross-epoch attribution, not chunk splits.
     """
 
     def one_run() -> bytes:

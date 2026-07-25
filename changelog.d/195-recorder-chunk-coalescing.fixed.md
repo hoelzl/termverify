@@ -11,5 +11,8 @@
   per-read chunk lists in memory — only the transcript loses the noise.
   Acceptance evidence: two runs of a deterministic fixture subject through
   the real ConPTY adapter now reach an equivalent comparator verdict, the
-  DirectAdapter repeat-run pattern promoted to the real Windows path; the
-  same test fails without the coalescing. (Resolves #195.)
+  DirectAdapter repeat-run pattern promoted to the real Windows path.
+  Without the coalescing the test's no-adjacent-chunks check fails
+  deterministically (ConPTY split every probed run), while the repeat-run
+  comparison itself diverges only intermittently — the original R6
+  symptom — which is why the test asserts both. (Resolves #195.)

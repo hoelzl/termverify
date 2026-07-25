@@ -51,7 +51,14 @@ class ScreenSnapshot:
 
 @runtime_checkable
 class TerminalOutputNormalizer(Protocol):
-    """Port for turning decoded terminal output into screen evidence."""
+    """Port for turning decoded terminal output into screen evidence.
+
+    Implementations must be chunk-boundary insensitive:
+    ``feed(a + b)`` is equivalent to ``feed(a); feed(b)``, so the screen
+    model is a function of the concatenated text alone. The recorder
+    coalesces adjacent transcript chunks (issue #195), so replay feeds
+    different boundaries than the live run did.
+    """
 
     def feed(self, chunk: str) -> None: ...
 
