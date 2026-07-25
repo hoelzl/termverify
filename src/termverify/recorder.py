@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Final, Literal, cast
 
 from termverify._json import JsonValue
 from termverify._protocol_v1 import CONSTRAINT_NAMES
@@ -85,14 +85,58 @@ def _exit_payload(exit_status: ExitStatus) -> dict[str, JsonValue]:
     return {"kind": exit_status.kind, "value": exit_status.value}
 
 
+#: The one event type whose boundaries are not evidence: a terminal read
+#: returns whatever the OS had buffered when it ran.
+_TERMINAL_OUTPUT: Final = "terminal.output"
+
+
+def _coalesced_events(observation: Observation) -> list[JsonValue]:
+    """Merge adjacent ``terminal.output`` events into one per run.
+
+    Chunk boundaries are OS scheduling noise, not evidence: two identical
+    runs can split the same bytes differently, and the exact comparator —
+    which has no normalizers by design — would then call them divergent
+    (adversarial review 2026-07-24, finding R6; owner decision 2026-07-24:
+    coalesce at record time). Only the byte stream reaches the transcript.
+
+    Merging is deliberately narrow. It never crosses an observation, because
+    each observation is its own record and its own point in the lifecycle,
+    and it never crosses a structural event, because the order of output
+    relative to a state change *is* evidence. A ``terminal.output`` event
+    whose payload is not the expected single ``chunk`` string is passed
+    through untouched rather than guessed at.
+    """
+    events: list[JsonValue] = []
+    pending: list[str] = []
+
+    def flush() -> None:
+        if pending:
+            events.append(
+                {"type": _TERMINAL_OUTPUT, "data": {"chunk": "".join(pending)}}
+            )
+            pending.clear()
+
+    for event in observation.events:
+        data = event.data
+        if (
+            event.type == _TERMINAL_OUTPUT
+            and isinstance(data, Mapping)
+            and set(data) == {"chunk"}
+            and isinstance(data["chunk"], str)
+        ):
+            pending.append(data["chunk"])
+            continue
+        flush()
+        events.append({"type": event.type, "data": _thaw(event.data)})
+    flush()
+    return events
+
+
 def _observation_payload(observation: Observation) -> dict[str, JsonValue]:
     payload: dict[str, JsonValue] = {
         "at_ms": int(observation.at_ms),
         "state": _thaw(observation.state),
-        "events": [
-            {"type": event.type, "data": _thaw(event.data)}
-            for event in observation.events
-        ],
+        "events": _coalesced_events(observation),
         "ui": {
             "regions": [
                 {

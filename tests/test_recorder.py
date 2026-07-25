@@ -459,6 +459,91 @@ def test_natural_exit_during_dispatch_records_finished() -> None:
     assert records[-1]["kind"] == "run.finished"
 
 
+def test_adjacent_terminal_output_chunks_coalesce_into_one_event() -> None:
+    """Chunk boundaries are OS scheduling noise, not evidence (finding R6).
+
+    A native read returns whatever the OS had buffered, so two identical runs
+    can split the same bytes differently and the exact comparator — which has
+    no normalizers by design — would call them divergent. Adjacent
+    ``terminal.output`` events are therefore merged at record time, within an
+    epoch, so only the byte stream reaches the transcript. Structural events
+    still break the run: their order relative to the output is evidence.
+    """
+    recorder = TranscriptRecorder(RUN_ID, _configuration(), SUBJECT)
+    recorder.record_start(Started(_constraints(), _observation()))
+    recorder.record_epoch(
+        TextInput(ManualTime(0), "go"),
+        EpochCompleted(
+            _observation(
+                events=(
+                    Event("terminal.output", {"chunk": "he"}),
+                    Event("terminal.output", {"chunk": "llo"}),
+                    Event("Quit", {"reason": "player"}),
+                    Event("terminal.output", {"chunk": "bye"}),
+                )
+            )
+        ),
+    )
+
+    recorder.record_epoch(
+        TextInput(ManualTime(0), "quit"),
+        TerminalResult(
+            _observation(process=ProcessObservation.exited(ExitStatus("code", 0))),
+            RunFinished.code(0),
+        ),
+    )
+
+    records = parse_transcript(recorder.transcript())
+
+    observations = [
+        cast(dict[str, object], record["payload"])
+        for record in records
+        if record["kind"] == "observation"
+    ]
+    assert observations[1]["events"] == [
+        {"type": "terminal.output", "data": {"chunk": "hello"}},
+        {"type": "Quit", "data": {"reason": "player"}},
+        {"type": "terminal.output", "data": {"chunk": "bye"}},
+    ]
+
+
+def test_coalescing_never_crosses_an_observation() -> None:
+    """Each observation is its own record; merging across them would lie."""
+    recorder = TranscriptRecorder(RUN_ID, _configuration(), SUBJECT)
+    recorder.record_start(
+        Started(
+            _constraints(),
+            _observation(events=(Event("terminal.output", {"chunk": "first"}),)),
+        )
+    )
+    recorder.record_epoch(
+        TextInput(ManualTime(0), "go"),
+        EpochCompleted(
+            _observation(events=(Event("terminal.output", {"chunk": "second"}),))
+        ),
+    )
+
+    recorder.record_epoch(
+        TextInput(ManualTime(0), "quit"),
+        TerminalResult(
+            _observation(process=ProcessObservation.exited(ExitStatus("code", 0))),
+            RunFinished.code(0),
+        ),
+    )
+
+    records = parse_transcript(recorder.transcript())
+
+    chunks: list[object] = []
+    for record in records:
+        if record["kind"] != "observation":
+            continue
+        payload = cast(dict[str, object], record["payload"])
+        for event in cast(list[object], payload["events"]):
+            data = cast(dict[str, object], cast(dict[str, object], event)["data"])
+            chunks.append(data["chunk"])
+    assert chunks == ["first", "second"]
+
+
 def test_delivered_tier_receipts_record_delivery() -> None:
     configuration = _configuration()
     constraints = EnforcedConstraints(
