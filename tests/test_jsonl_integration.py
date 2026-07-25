@@ -32,6 +32,8 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
+import time
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
@@ -70,6 +72,11 @@ _FIXTURE: Final = str(Path(__file__).parent / "fixtures" / "jsonl_echo_subject.p
 _RUN_ID: Final = "run-jsonl-integration"
 _SAFE_DEADLINE_MS: Final = 60_000
 _ABORT_DEADLINE_MS: Final = 5_000
+#: Joined-thread budget for a deliberately hostile subject: above the
+#: binding's own worst-case bounded teardown waits (two 30 s exit waits
+#: plus the read-delivery and reap graces), so only a genuinely unbounded
+#: operation trips it.
+_TEARDOWN_BUDGET_S: Final = 75.0
 
 _SUBJECT: Final[dict[str, JsonInput]] = {
     "format": "termverify.replay-subject/v1",
@@ -271,6 +278,78 @@ def test_forced_stop_tears_down_the_real_child(tmp_path: Path) -> None:
     assert child.exit_status == expected
     with pytest.raises(RuntimeError):
         adapter.dispatch(TextInput(ManualTime(0), "late"))
+
+
+def test_a_non_reading_subject_cannot_hang_a_write(tmp_path: Path) -> None:
+    """The abort deadline must cover writes, not only reads (finding C2).
+
+    Every wire write ran outside the watchdog, so a subject that stops
+    reading its stdin blocked ``stdin.write`` forever once the pipe buffer
+    filled, and ``dispatch()`` never returned: no deadline, no structured
+    failure, no evidence. The subject here completes negotiation honestly
+    and then never reads again, and the dispatched text is far larger than
+    any pipe buffer, so the write is certain to block.
+
+    The dispatch runs on a joined helper thread so a regression of the
+    *arming* fails this test rather than hanging CI. The budget is sized
+    above the binding's own worst-case bounded teardown waits (two 30 s
+    exit waits plus the delivery and reap grace), so a slow-but-correct
+    teardown is not misreported as a missing deadline. It is not a
+    universal guard: reverting the teardown ordering this slice also
+    changes leaves ``close(force=True)`` stalled in the pipe release until
+    the subject exits on its own, which no in-test budget can shorten.
+    """
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    adapter = JsonlAdapter(
+        [*_argv(), "--deaf"],
+        binding=JsonlBinding(),
+        abort_deadline_ms=_ABORT_DEADLINE_MS,
+        constraint_ports=CooperationConstraintPorts({"fixture-root": str(sandbox)}),
+    )
+    with _reaped(adapter):
+        started = adapter.start(_RUN_ID, _configuration())
+        assert type(started) is Started, started
+        child = adapter._child  # noqa: SLF001 - OS-liveness evidence only
+        assert child is not None
+
+        outcome: list[object] = []
+
+        def _dispatch() -> None:
+            try:
+                outcome.append(
+                    adapter.dispatch(TextInput(ManualTime(0), "x" * 400_000))
+                )
+            except BaseException as error:  # noqa: BLE001 - diagnostic capture
+                outcome.append(error)
+
+        worker = threading.Thread(target=_dispatch, daemon=True)
+        started_at = time.monotonic()
+        worker.start()
+        worker.join(timeout=_TEARDOWN_BUDGET_S)
+        elapsed = time.monotonic() - started_at
+        assert not worker.is_alive(), (
+            "dispatch never returned: the write is not under the abort deadline"
+        )
+        # The deadline is what ended it, not some longer bounded wait: the
+        # abort must land near its own budget, not merely eventually.
+        assert elapsed < _ABORT_DEADLINE_MS / 1000 * 3, elapsed
+        result = outcome[0]
+        assert type(result) is TerminalResult, result
+        assert result.observation is None
+        run_outcome = result.outcome
+        assert type(run_outcome) is RunFailed
+        assert run_outcome.failure.code == "adapter-runtime-failed"
+        details = cast("Mapping[str, object]", run_outcome.failure.details)
+        assert details["failure"] == "epoch-timeout"
+        assert details["abort-deadline-ms"] == _ABORT_DEADLINE_MS
+        # The evidence must say the input never reached the subject, not
+        # that a reply went missing: those are different facts.
+        assert details["during"] == "write"
+        assert "could be written to the child" in run_outcome.failure.message
+        # OS-observed, like the sibling forced-stop test: the tree is gone.
+        expected = 15 if os.name == "nt" else -9
+        assert child.exit_status == expected
 
 
 def test_subject_reported_failure_maps_to_run_failed(tmp_path: Path) -> None:

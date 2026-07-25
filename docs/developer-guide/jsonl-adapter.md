@@ -89,6 +89,9 @@ implementation for real-subprocess integration evidence: a cooperative
 subject that negotiates, echoes text/key/resize/clock epochs, renders a
 deterministic frame, honors `input.stop` (exit 3), exits naturally on
 `"quit"` (exit 7), and hangs on `"hang"` (to exercise the abort-deadline
-forced-stop path). The integration suite in `tests/test_jsonl_integration.py`
+forced-stop path). One deliberately hostile mode exists alongside the
+cooperative ones: `--deaf` completes negotiation honestly and then never reads
+stdin again, so the adapter's next write blocks once the pipe buffer fills —
+the evidence that wire writes run under the abort deadline. The integration suite in `tests/test_jsonl_integration.py`
 drives it through `run_scripted` and proves the recorded transcript passes
 the comparator unchanged — the Phase 2 core consumes the transport as-is.

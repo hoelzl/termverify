@@ -24,10 +24,21 @@ Pipes are portable, so this binding runs identically on Windows and POSIX:
   observed exit record of a signal-killed child is the negative signal
   number reported by ``waitpid`` semantics.
 
-A forced close closes the child's stdin first: a cooperative child blocked
-on input observes end-of-stream and may exit on its own, but containment
-(job object / process-group kill) is what guarantees the tree dies, and
-the binding never waits on cooperation. ``exit_status`` is captured from
+A forced close terminates first and releases the child's stdin second:
+containment (job object / process-group kill) is what guarantees the tree
+dies, and the binding never waits on cooperation. The order matters and is
+not cosmetic — releasing the buffered writer flushes it, so against a child
+that is not draining its stdin that release blocks until the child dies
+anyway (finding C2, issue #217). A cooperative child therefore observes
+end-of-stream only as a consequence of its own termination on this path,
+not as an invitation to exit first.
+
+Disclosed limit on that guarantee: interrupting a blocked read or write
+requires containment to reach whoever holds the other end of the pipe. A
+descendant started inside the containment window, or any descendant of a
+child that exited before assignment, is outside it — if such a process
+holds the child's stdout write end or stdin read end, the corresponding
+teardown step can still block (issue #213). ``exit_status`` is captured from
 the real process only — a release-only close of a live child records no
 exit status, never a fabricated one, and is refused outright because
 silently abandoning a live pipe child has no honest reading.
@@ -600,21 +611,17 @@ class PipeJsonlChild:
     def _terminate_tree(
         self, process: subprocess.Popen[bytes], job: int | None
     ) -> None:
-        # Give up the buffered stdin writer before terminating, so the
-        # teardown's later pipe release has nothing left to push at a
-        # child that is not draining (the exact hang the abort deadline
-        # exists for). Honest limit: ``detach`` flushes what the writer
-        # still holds — the buffered layer has no release-without-flush
-        # operation — so this drains here instead of later rather than
-        # not at all. It is bounded only because the flush races a child
-        # that is about to be killed below; issue #217 removes the stall.
-        if process.stdin is not None:
-            with _suppress_os_errors():
-                raw = cast("io.BufferedWriter", process.stdin).detach()
-                # Close the raw stream rather than dropping it: an
-                # abandoned raw file releases its descriptor only through
-                # its finalizer, and does so with a ResourceWarning.
-                raw.close()
+        # Kill first, release the writer second. ``detach`` on a
+        # ``BufferedWriter`` flushes whatever it still holds (the buffered
+        # layer offers no release-without-flush operation, #217), and
+        # against the subject this teardown exists for — one that never
+        # drains its stdin, with a full pipe buffer — that flush blocks
+        # forever. Ending the tree first makes the flush fail fast against
+        # a dead reader instead, which is what lets a write under the abort
+        # deadline produce a structured failure rather than a hang
+        # (adversarial review 2026-07-24, finding C2). Same invariant as
+        # the teardown's handle ordering: release every mechanism that can
+        # unblock an operation before performing one that can block on it.
         if sys.platform == "win32":  # pragma: no cover - Windows-only containment leg
             if job is None:
                 # Defensive: unreachable on the only construction path.
@@ -623,6 +630,13 @@ class PipeJsonlChild:
         else:
             with suppress(ProcessLookupError):
                 os.killpg(process.pid, FORCED_TERMINATION_SIGNAL)  # type: ignore[attr-defined,unused-ignore]
+        if process.stdin is not None:
+            with _suppress_os_errors():
+                raw = cast("io.BufferedWriter", process.stdin).detach()
+                # Close the raw stream rather than dropping it: an
+                # abandoned raw file releases its descriptor only through
+                # its finalizer, and does so with a ResourceWarning.
+                raw.close()
 
     def _wait_out(
         self, process: subprocess.Popen[bytes], process_handle: int | None

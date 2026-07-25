@@ -41,6 +41,23 @@ writes showed no backpressure on the verified matrix. Classification into
 the structured failure/abort taxonomy is adapter behavior and remains
 unclaimed here.
 
+Disclosed boundary — conin writes run outside the abort deadline (finding
+C2, issue #193). The JSONL transport now arms that deadline around every
+wire write, and the mechanism does not port here: ``pty.write`` hands the
+bytes to pywinpty, which owns the conin handle, so nothing in this binding
+can cancel or close it to interrupt a blocked write — and the single-flight
+contract above exists precisely because a concurrent ``pty.write`` against
+a blocked ``pty.read`` intermittently wedges the native pseudoconsole, so
+the write cannot be moved to another thread either. Reaching the handle
+means a pywinpty surface that does not exist, or TermVerify's own ConPTY
+binding: the same conclusion the raw-byte read path reached (finding R7).
+The theoretical bound: if a subject stops draining conin and the console
+input buffer fills, ``write`` blocks indefinitely and the adapter's abort
+deadline cannot end it. No such backpressure was observed on the verified
+matrix, and the interactive inputs written here are far smaller than any
+plausible buffer, so this is a stated bound rather than a measured failure
+— but it is real, and it closes only when this binding owns its handles.
+
 ``write`` intentionally returns ``None``: the ConPTY write return value is not
 a reliable byte-count receipt, and exposing it would fabricate evidence.
 """

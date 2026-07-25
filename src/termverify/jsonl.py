@@ -47,9 +47,13 @@ Readiness and quiescence are defined only by protocol messages:
   diagnostic.
 - Wall-clock silence is never evidence. The only wall-clock input is the
   mandatory, explicitly configured abort deadline: a watchdog armed
-  before each blocking read force-closes the binding when it expires,
-  which always produces a structured failure disclosing the deadline
-  policy and never a successful epoch.
+  around each blocking wire operation — every read and, since finding
+  C2, every write — force-closes the binding when it expires, which
+  produces a structured failure disclosing the deadline policy and
+  never a successful epoch. Disclosed limit: interrupting a blocked
+  operation depends on the binding's containment actually reaching the
+  process holding the other end of the pipe; a descendant outside that
+  containment can still hold it (see ``_jsonl_pipe`` and issue #213).
 """
 
 from __future__ import annotations
@@ -420,14 +424,37 @@ class JsonlAdapter:
 
     # --- wire mapping ------------------------------------------------------
 
-    @staticmethod
-    def _write_message(child: JsonlChildPort, kind: str, payload: JsonInput) -> None:
+    def _write_message(
+        self,
+        child: JsonlChildPort,
+        kind: str,
+        payload: JsonInput,
+        expired: threading.Event,
+    ) -> None:
+        """Write one message with the abort deadline armed around it.
+
+        Writes were the one wire operation outside the watchdog, so a
+        subject that never reads its stdin blocked the write as soon as the
+        pipe buffer filled and no deadline could end it — an unbounded wait
+        producing no evidence (adversarial review 2026-07-24, finding C2).
+
+        The mechanism is the read path's, named rather than assumed: the
+        timer force-closes the binding, terminating the child; the child's
+        death closes its end of the stdin pipe; the blocked write then
+        fails instead of waiting. ``expired`` tells the caller the failure
+        belongs to the deadline rather than to the peer.
+        """
         message: dict[str, JsonValue] = {
             "protocol": CONTROL_PROTOCOL_V1,
             "kind": kind,
             "payload": cast(JsonValue, payload),
         }
-        child.write_line(serialize_message(message))
+        line = serialize_message(message)
+        disarm = self._arm_abort(child, expired)
+        try:
+            child.write_line(line)
+        finally:
+            disarm()
 
     @staticmethod
     def _exit_record(payload: dict[str, JsonValue], name: str) -> ExitStatus:
@@ -508,13 +535,25 @@ class JsonlAdapter:
 
     # --- epoch machinery ---------------------------------------------------
 
-    def _read_message(
+    def _arm_abort(
         self, child: JsonlChildPort, expired: threading.Event
-    ) -> tuple[str, dict[str, JsonValue]]:
-        """Read one validated message; return (kind, payload).
+    ) -> Callable[[], None]:
+        """Arm the abort deadline around one blocking wire operation.
 
-        Raises :class:`JsonlEndOfStreamError` at end-of-stream and
-        :class:`_EpochFailure` for every other failure, classified.
+        Shared by the read and write paths so the *expiry* cannot drift:
+        one closure sets ``expired``, force-closes the binding to interrupt
+        the blocked syscall, and records ``_deadline_closed`` so a failure
+        arriving after a late close is attributed to the deadline rather
+        than to the peer. Returns the disarm callable. Aftermath handling
+        stays per-call-site and is not unified by this helper: the read
+        paths also re-check ``expired`` after a *successful* operation,
+        which a write cannot meaningfully do.
+
+        ``_deadline_closed`` is deliberately sticky and never reset. The
+        invariant that keeps it from misattributing a later, unrelated
+        failure is that every observation of a fired deadline drives the
+        run to ``terminal``, after which no further wire operation is
+        accepted — so a stale ``True`` has nothing left to mislabel.
         """
 
         def expire() -> None:
@@ -525,7 +564,17 @@ class JsonlAdapter:
                 return
             self._deadline_closed = True
 
-        disarm = self._watchdog.arm(self._abort_deadline_ms, expire)
+        return self._watchdog.arm(self._abort_deadline_ms, expire)
+
+    def _read_message(
+        self, child: JsonlChildPort, expired: threading.Event
+    ) -> tuple[str, dict[str, JsonValue]]:
+        """Read one validated message; return (kind, payload).
+
+        Raises :class:`JsonlEndOfStreamError` at end-of-stream and
+        :class:`_EpochFailure` for every other failure, classified.
+        """
+        disarm = self._arm_abort(child, expired)
         try:
             line = child.read_line()
         except JsonlEndOfStreamError:
@@ -583,14 +632,33 @@ class JsonlAdapter:
             ),
         )
 
-    def _deadline_abort(self, at_ms: ManualTime, phase: str) -> TerminalResult:
+    def _deadline_abort(
+        self, at_ms: ManualTime, phase: str, during: str = "read"
+    ) -> TerminalResult:
+        """Build the structured deadline failure for one aborted operation.
+
+        ``during`` is recorded evidence, not decoration: this message and
+        these details are written verbatim into the transcript, and "the
+        closing message never arrived" and "the input could never be
+        delivered" are different facts about the subject. A reader must be
+        able to tell them apart from the record alone.
+        """
         code = _HANDSHAKE_TIMEOUT if phase == "handshake" else _EPOCH_TIMEOUT
+        reached = (
+            "before the message could be written to the child"
+            if during == "write"
+            else "before the closing message was observed"
+        )
         return self._fail_runtime(
             at_ms,
             code,
-            "the abort deadline expired before the closing message was"
-            " observed; the deadline is host abort policy, not evidence",
-            {"abort-deadline-ms": self._abort_deadline_ms, "phase": phase},
+            f"the abort deadline expired {reached}; the deadline is host"
+            " abort policy, not evidence",
+            {
+                "abort-deadline-ms": self._abort_deadline_ms,
+                "phase": phase,
+                "during": during,
+            },
         )
 
     def _observed_exit_status(self) -> ExitStatus | None:
@@ -859,20 +927,25 @@ class JsonlAdapter:
     def _run_epoch(
         self,
         at_ms: ManualTime,
-        write: Callable[[], None],
+        write: Callable[[threading.Event], None],
         write_failure: str,
         phase: str,
     ) -> EpochResult:
-        if write is not None:
-            try:
-                write()
-            except Exception:
-                return self._fail_runtime(
-                    at_ms,
-                    _PEER_LIFECYCLE,
-                    write_failure,
-                    {"during": "write"},
-                )
+        write_expired = threading.Event()
+        try:
+            write(write_expired)
+        except Exception:
+            if write_expired.is_set() or self._deadline_closed:
+                # The deadline fired during the write: a non-reading subject
+                # is the abort policy's case, not a peer-lifecycle event, and
+                # the read path already classifies its aftermath this way.
+                return self._deadline_abort(at_ms, phase, during="write")
+            return self._fail_runtime(
+                at_ms,
+                _PEER_LIFECYCLE,
+                write_failure,
+                {"during": "write"},
+            )
         outcome = self._read_epoch(at_ms, phase)
         if outcome.terminal is not None:
             return outcome.terminal
@@ -1025,6 +1098,7 @@ class JsonlAdapter:
                 {"during": "spawn"},
             )
         initial_ms = ManualTime(configuration.clock.initial_ms)
+        hello_expired = threading.Event()
         try:
             self._write_message(
                 self._child,
@@ -1036,9 +1110,25 @@ class JsonlAdapter:
                         "at_ms": int(initial_ms),
                     }
                 ),
+                hello_expired,
             )
         except Exception:
             self._close_child()
+            if hello_expired.is_set() or self._deadline_closed:
+                # A subject that never reads its stdin cannot even be told
+                # the configuration; that is the deadline's case, not a
+                # spawn failure.
+                return start_failed(
+                    _HANDSHAKE_TIMEOUT,
+                    "the abort deadline expired before session.hello could be"
+                    " written to the child; the deadline is host abort policy,"
+                    " not evidence",
+                    {
+                        "abort-deadline-ms": self._abort_deadline_ms,
+                        "phase": "handshake",
+                        "during": "write",
+                    },
+                )
             return start_failed(
                 _SPAWN_FAILED,
                 "the session.hello message could not be written to the child",
@@ -1230,9 +1320,12 @@ class JsonlAdapter:
         if type(input_event) is TextInput:
             text = input_event.text
 
-            def write_text() -> None:
+            def write_text(expired: threading.Event) -> None:
                 self._write_message(
-                    cast(JsonlChildPort, self._child), "input.text", {"text": text}
+                    cast(JsonlChildPort, self._child),
+                    "input.text",
+                    {"text": text},
+                    expired,
                 )
 
             return self._run_epoch(
@@ -1244,12 +1337,13 @@ class JsonlAdapter:
         if type(input_event) is KeyInput:
             keys: list[str] = list(input_event.keys)
 
-            def write_key() -> None:
+            def write_key(expired: threading.Event) -> None:
                 key_payload: dict[str, JsonValue] = {"keys": list(keys)}
                 self._write_message(
                     cast(JsonlChildPort, self._child),
                     "input.key",
                     _as_json_input(key_payload),
+                    expired,
                 )
 
             return self._run_epoch(
@@ -1260,11 +1354,12 @@ class JsonlAdapter:
             )
         resize = cast(Resize, input_event)
 
-        def write_resize() -> None:
+        def write_resize(expired: threading.Event) -> None:
             self._write_message(
                 cast(JsonlChildPort, self._child),
                 "input.resize",
                 {"columns": resize.columns, "rows": resize.rows},
+                expired,
             )
 
         return self._run_epoch(
@@ -1288,11 +1383,12 @@ class JsonlAdapter:
             self._state = "active"
         at_ms = input_event.at_ms
 
-        def write_clock() -> None:
+        def write_clock(expired: threading.Event) -> None:
             self._write_message(
                 cast(JsonlChildPort, self._child),
                 "input.clock",
                 {"at_ms": int(at_ms)},
+                expired,
             )
 
         return self._run_epoch(
@@ -1312,9 +1408,14 @@ class JsonlAdapter:
                 raise ValueError("stop must use the current manual time")
             self._state = "stopping"
         at_ms = input_event.at_ms
+        stop_expired = threading.Event()
         try:
-            self._write_message(cast(JsonlChildPort, self._child), "input.stop", {})
+            self._write_message(
+                cast(JsonlChildPort, self._child), "input.stop", {}, stop_expired
+            )
         except Exception:
+            if stop_expired.is_set() or self._deadline_closed:
+                return self._deadline_abort(at_ms, "stop", during="write")
             return self._fail_runtime(
                 at_ms,
                 _PEER_LIFECYCLE,

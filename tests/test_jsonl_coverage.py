@@ -160,6 +160,30 @@ class FiringWatchdog:
         return disarm
 
 
+class AimedWatchdog:
+    """A watchdog that fires on exactly the arming a test aims it at.
+
+    ``FiringWatchdog`` fires on every arming, which since the write-deadline
+    fix (finding C2) includes the ``session.hello`` write — so a test that
+    needs the deadline to land on one specific operation must aim it.
+    """
+
+    def __init__(self) -> None:
+        self.fire_next = False
+        self.arms = 0
+
+    def arm(self, delay_ms: int, expire: Callable[[], None]) -> Callable[[], None]:
+        self.arms += 1
+        if self.fire_next:
+            self.fire_next = False
+            expire()
+
+        def disarm() -> None:
+            return None
+
+        return disarm
+
+
 def _config(**overrides: object) -> RunConfiguration:
     base: dict[str, object] = {
         "seed": 42,
@@ -544,6 +568,70 @@ def test_dispatch_rejects_deadline_abort_during_epoch() -> None:
     # terminal, so dispatch must fail fast.
     with pytest.raises(RuntimeError):
         adapter.dispatch(TextInput(at_ms=ManualTime(0), text="x"))
+
+
+def test_a_write_failure_after_the_deadline_fired_is_not_blamed_on_the_peer() -> None:
+    """The write path's aftermath is classified like the read path's.
+
+    Writes now run under the abort deadline (finding C2), so a write that
+    fails *because* the watchdog force-closed the binding is the adapter's
+    own abort policy firing — attributing it to `peer-lifecycle` would
+    blame the subject for the harness's deadline, which is exactly the
+    misclassification the review flagged on the late-close read path.
+    """
+    child = FakeChild([_hello_reply()])
+    watchdog = AimedWatchdog()
+    adapter, _, _ = _adapter(child, watchdog=watchdog)
+    assert isinstance(adapter.start(_RUN_ID, _config()), Started)
+
+    # Aim the deadline at the next arming — the epoch write — and make the
+    # child's write fail the way a force-closed pipe makes it fail.
+    watchdog.fire_next = True
+    child._write_error = True  # noqa: SLF001 - the forced close's observable effect
+    result = adapter.dispatch(TextInput(at_ms=ManualTime(0), text="x"))
+
+    failure = _failed(result).failure
+    assert _details(failure)["failure"] == "epoch-timeout"
+    assert _details(failure)["abort-deadline-ms"] == 60_000
+
+
+def test_a_deadline_during_the_hello_write_is_a_handshake_timeout() -> None:
+    """The hello write is the first armed operation, so it can abort too.
+
+    A subject that never reads its stdin cannot even be told the
+    configuration. That is the deadline's case, not a spawn failure, and it
+    is unreachable through a real binding — `session.hello` is far smaller
+    than any pipe buffer — so the fake child is the only way to pin it.
+    """
+    child = FakeChild([_hello_reply()], write_error=True)
+    adapter, _, _ = _adapter(child, watchdog=FiringWatchdog())
+
+    result = adapter.start(_RUN_ID, _config())
+
+    assert isinstance(result, StartFailed)
+    details = _details(result.failure)
+    assert details["failure"] == "handshake-timeout"
+    assert details["during"] == "write"
+    assert details["phase"] == "handshake"
+
+
+def test_a_deadline_during_the_stop_write_is_attributed_to_the_deadline() -> None:
+    """`input.stop` is a wire write like any other, and can abort like one."""
+    child = FakeChild([_hello_reply()])
+    watchdog = AimedWatchdog()
+    adapter, _, _ = _adapter(child, watchdog=watchdog)
+    assert isinstance(adapter.start(_RUN_ID, _config()), Started)
+
+    watchdog.fire_next = True
+    child._write_error = True  # noqa: SLF001 - the forced close's observable effect
+    result = adapter.stop(Stop(at_ms=ManualTime(0)))
+
+    outcome = result.outcome
+    assert isinstance(outcome, RunFailed)
+    details = _details(outcome.failure)
+    assert details["failure"] == "epoch-timeout"
+    assert details["phase"] == "stop"
+    assert details["during"] == "write"
 
 
 def test_dispatch_rejects_excessive_epoch_diagnostics() -> None:
