@@ -312,7 +312,9 @@ the normalizer implementation choice to its own assessment:
   returns the current screen model — the `Frame` (a `rows`-line grid) and the
   `Cursor` for the observation's mandatory `ui`. Determinism requirement: the
   snapshot is a pure function of the fed sequence, initial dimensions, and
-  resize notifications.
+  resize notifications. Boundary-insensitivity requirement: `feed(a + b)` is
+  equivalent to `feed(a); feed(b)`, so the screen model depends on the
+  concatenated text alone, never on how reads happened to chunk it.
 - The observation's mandatory `ui.cursor` makes the normalizer a **hard
   dependency of any successful start** — `Started` cannot be constructed
   without cursor evidence, so no adapter slice may claim a successful run
@@ -322,11 +324,19 @@ the normalizer implementation choice to its own assessment:
   concepts with no terminal enforcement.
 - Raw evidence retention: each epoch's observation carries ordered
   `Event("terminal.output", {"chunk": <raw text>})` events containing the
-  exact decoded chunks, including the readiness marker. Replaying the
-  normalizer over the raw chunks must reproduce the frames — this is the
-  replay check that makes frames trustworthy, and it aligns with the
-  transcript schema's replay-subject `normalizer {id, version}` field: the
-  normalizer's identity and version are recorded so a replay can verify it.
+  exact decoded chunks, including the readiness marker. Native read
+  boundaries are not retained in transcripts: they are OS scheduling
+  noise, so the recorder coalesces adjacent chunk events at record time
+  (review finding R6, issue #195) — the adapter's in-memory observations
+  keep the per-read chunks, and the recorded event preserves the exact
+  concatenated text. Replaying the normalizer over the raw chunks must
+  reproduce the frames — this is the replay check that makes frames
+  trustworthy, and it aligns with the transcript schema's replay-subject
+  `normalizer {id, version}` field: the normalizer's identity and version
+  are recorded so a replay can verify it. The boundary-insensitivity
+  requirement above is what keeps replay over coalesced chunks
+  reproducing the same frames the live run's differently-chunked feeds
+  produced.
 - Choosing the implementation (a minimal in-house VT interpreter for the
   sequences ConPTY actually emits, versus a third-party screen emulator such
   as `pyte`) requires its own reuse/dependency assessment with rationale and

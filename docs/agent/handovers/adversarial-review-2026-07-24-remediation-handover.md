@@ -514,7 +514,18 @@ prevented). The `poll`/`select` + self-pipe reader this slice already plans
 is the remedy for both; add each as a named acceptance scenario rather than
 re-deriving them.
 
-- **Slice 5.1 — ConPTY replay-equivalence story (R6).**
+- **Slice 5.1 — ConPTY replay-equivalence story (R6). [DONE — PR #224]**
+  Merged 2026-07-25, adversarial review: merge after nits, findings
+  applied pre-merge. Coalescing lives at the recorder's single
+  observation-payload seam (`_coalesce_output_events`), covering every
+  adapter without crossing a record; adapters keep per-read chunks in
+  memory. No stored fixture migration was needed: no transcript fixture
+  contained `terminal.output` events, and the adapter-level chunk-split
+  tests assert on in-memory observations. The Windows repeat-run
+  comparison test is the acceptance evidence and additionally pins
+  no-adjacent-chunks — the deterministic red without the fix, since
+  comparator divergence alone reproduces only intermittently. `feed`
+  boundary insensitivity is now an explicit normalizer-port requirement.
   **Owner decision 2026-07-24: recorder-side coalescing (Option A1).**
   Merge adjacent `terminal.output` chunks into one event at record time
   (within an epoch, between structural events), so chunk boundaries — OS

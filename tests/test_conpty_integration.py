@@ -50,6 +50,7 @@ the real adapter.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
@@ -83,6 +84,7 @@ from termverify.adapter import (
     EpochCompleted,
     ExitStatus,
     FilesystemConfiguration,
+    JsonInput,
     KeyInput,
     ManualTime,
     NetworkConfiguration,
@@ -99,8 +101,10 @@ from termverify.adapter import (
     TerminalResult,
     TextInput,
 )
+from termverify.comparator import compare_transcripts
 from termverify.conpty import READINESS_MARKER_DEFAULT, ConptyAdapter, ConptyBinding
 from termverify.cooperation import CooperationConstraintPorts, RealDirectoryProbe
+from termverify.recorder import run_scripted
 from termverify.vt import VtScreenNormalizer
 
 _INITIAL_ROWS: Final = 24
@@ -680,6 +684,102 @@ def test_first_fully_successful_verified_run_with_cooperation_ports(
     _assert_replay_reproduces(observations, rows=_WIDE_ROWS, columns=_WIDE_COLUMNS)
     with pytest.raises(RuntimeError):
         adapter.dispatch(TextInput(ManualTime(0), "late\r\n"))
+
+
+# Deterministic sibling of the delivery-echo subject for repeat-run
+# comparison: no pid, environment, or working-directory echo — every byte
+# it writes is identical across runs, so any transcript divergence is the
+# adapter's or recorder's, not the subject's.
+_REPEAT_ECHO_CHILD_TEMPLATE: Final = """\
+import sys
+
+MARKER = {marker!r}
+
+def emit(text):
+    sys.stdout.write(text + MARKER)
+    sys.stdout.flush()
+
+emit("TV_READY\\r\\n")
+for line in sys.stdin:
+    command = line.strip()
+    if command == "exit":
+        sys.stdout.write("TV_EXIT\\r\\n")
+        sys.stdout.flush()
+        sys.exit(0)
+    emit("TV_ECHO:" + command + "\\r\\n")
+"""
+
+_REPEAT_SUBJECT: Final[dict[str, JsonInput]] = {
+    "format": "termverify.replay-subject/v1",
+    "application": {"id": "repeat-echo-fixture", "version": "1", "build": "b1"},
+    "fixture": {"id": "repeat-echo", "version": "1"},
+    "adapter": {"id": "termverify.conpty", "version": "1"},
+    "normalizer": {"id": "termverify.vt", "version": "1"},
+    "state_schema": {"id": "terminal-dimensions", "version": "1"},
+}
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY integration evidence")
+def test_repeat_runs_reach_an_equivalent_comparator_verdict(tmp_path: Path) -> None:
+    """Slice 5.1 acceptance (issue #195): repeat-run comparator equivalence.
+
+    Native read boundaries are OS scheduling noise; the recorder coalesces
+    adjacent ``terminal.output`` chunks at record time, so two runs of the
+    same deterministic subject through the real adapter compare equivalent
+    under the exact comparator — the DirectAdapter repeat-run pattern
+    promoted to the real ConPTY path.
+
+    Disclosed residual risk: coalescing merges only within one
+    observation. The epoch reader stops at the first readiness marker, so
+    bytes conhost flushes after the marker-bearing read belong to the
+    next epoch's chunks; if that flush timing ever differs across runs,
+    the same bytes land in different epochs and the comparator diverges
+    for a reason coalescing cannot mask. Not observed on the verified
+    matrix; if this test flakes with divergence at an epoch boundary,
+    suspect cross-epoch attribution, not chunk splits.
+    """
+
+    def one_run() -> bytes:
+        sandbox = tmp_path / "sandbox"
+        sandbox.mkdir(exist_ok=True)
+        adapter = ConptyAdapter(
+            _argv(_REPEAT_ECHO_CHILD_TEMPLATE.format(marker=READINESS_MARKER_DEFAULT)),
+            binding=ConptyBinding(),
+            abort_deadline_ms=_SAFE_DEADLINE_MS,
+            constraint_ports=CooperationConstraintPorts({"fixture-root": str(sandbox)}),
+        )
+        with _reaped(adapter):
+            scripted = run_scripted(
+                adapter,
+                "run-repeat",
+                _cooperation_configuration(),
+                _REPEAT_SUBJECT,
+                (
+                    TextInput(ManualTime(0), "hello\r\n"),
+                    TextInput(ManualTime(0), "exit\r\n"),
+                ),
+            )
+        assert type(scripted.result) is TerminalResult, scripted.result
+        assert scripted.result.outcome == RunFinished(ExitStatus("code", 0))
+        return scripted.transcript
+
+    first = one_run()
+    second = one_run()
+
+    # Coalescing evidence on the real adapter: no observation retains
+    # adjacent chunk events, whatever the native read boundaries were.
+    for line in first.decode("utf-8").splitlines():
+        record = json.loads(line)
+        if record["kind"] != "observation":
+            continue
+        types = [event["type"] for event in record["payload"]["events"]]
+        assert not any(
+            left == right == "terminal.output"
+            for left, right in zip(types, types[1:], strict=False)
+        ), types
+
+    verdict = compare_transcripts(first, second)
+    assert verdict.equivalent, verdict
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY integration evidence")

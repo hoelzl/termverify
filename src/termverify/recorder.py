@@ -85,14 +85,58 @@ def _exit_payload(exit_status: ExitStatus) -> dict[str, JsonValue]:
     return {"kind": exit_status.kind, "value": exit_status.value}
 
 
+_TERMINAL_OUTPUT = "terminal.output"
+
+
+def _chunk_text(event: dict[str, JsonValue]) -> str | None:
+    if event["type"] != _TERMINAL_OUTPUT:
+        return None
+    data = event["data"]
+    if not isinstance(data, dict) or set(data) != {"chunk"}:
+        return None
+    chunk = data["chunk"]
+    return chunk if isinstance(chunk, str) else None
+
+
+def _flush_chunk_run(events: list[JsonValue], run: list[str]) -> None:
+    if run:
+        events.append({"type": _TERMINAL_OUTPUT, "data": {"chunk": "".join(run)}})
+        run.clear()
+
+
+def _coalesce_output_events(
+    events: list[dict[str, JsonValue]],
+) -> list[JsonValue]:
+    """Merge adjacent ``terminal.output`` chunk events into one event.
+
+    Chunk boundaries within an observation reflect OS read scheduling, not
+    subject behavior, so they must not reach the transcript (issue #195).
+    Only events whose data is exactly ``{"chunk": <str>}`` participate; any
+    other event passes through unchanged and ends the current run.
+    """
+    coalesced: list[JsonValue] = []
+    run: list[str] = []
+    for event in events:
+        chunk = _chunk_text(event)
+        if chunk is None:
+            _flush_chunk_run(coalesced, run)
+            coalesced.append(event)
+        else:
+            run.append(chunk)
+    _flush_chunk_run(coalesced, run)
+    return coalesced
+
+
 def _observation_payload(observation: Observation) -> dict[str, JsonValue]:
     payload: dict[str, JsonValue] = {
         "at_ms": int(observation.at_ms),
         "state": _thaw(observation.state),
-        "events": [
-            {"type": event.type, "data": _thaw(event.data)}
-            for event in observation.events
-        ],
+        "events": _coalesce_output_events(
+            [
+                {"type": event.type, "data": _thaw(event.data)}
+                for event in observation.events
+            ]
+        ),
         "ui": {
             "regions": [
                 {
