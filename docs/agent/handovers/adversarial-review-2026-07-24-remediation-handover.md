@@ -8,8 +8,8 @@
   (reviewed revision: `main` @ `8f33e6c`).
 - **Owner:** project maintainer
 - **Created:** 2026-07-24
-- **Updated:** 2026-07-25 (checkpoint b: Phases 1–2 complete, Phase 3
-  complete except the timezone-registry removal, next item #192)
+- **Updated:** 2026-07-25 (checkpoint c: **Phases 1–4 complete**, plus
+  #192 and Slice 5.1; next item is Slice 5.2 / #196, carrying #213 and #217)
 - **Review required:** yes — every slice that changes runtime behavior, the
   public API, protocol prose with normative force, or release/security claims
   requires TDD evidence, full validation, and an independent adversarial
@@ -457,7 +457,55 @@ Scope facts established by that slice, worth not rediscovering:
 **Acceptance:** no two normative documents state opposite rules for the same
 question; owner decision recorded (issue or ADR) for each slice.
 
-### Phase 4 — Deadline coverage for writes (review rec 5) [TODO]
+### Phase 4 — Deadline coverage for writes (review rec 5) [DONE 2026-07-25]
+
+Slice 4.1 merged as PR #221 (resolves #193); Slice 4.2 merged as PR #222
+(resolves #194) after **six** adversarial review rounds. Original slice text
+follows for the record.
+
+**Slice 4.2's arc is this handover's best evidence for what the review step
+actually buys, and it is not what the earlier phases suggested.** Rounds 1–4
+each found the *bound* mis-sized against real measurement: a read-count
+budget that aborted a cooperative subject (real ConPTY barely coalesces),
+a flat headroom wrong on the chunk axis, then wrong on the frame axis, then
+counting frame **cells** where the codec counts UTF-8 **bytes**. Rounds 5
+and 6 found no arithmetic wrong at all — both found a *correct* bound
+described by a false sentence:
+
+- **Merge order silently invalidated a budget single-sourced from protocol
+  ceilings.** Slice 5.1 (#195) merged first and made an epoch's chunks reach
+  the transcript as one coalesced string, so they meet the per-string
+  ceiling (1 MiB), not only the per-record string sum (2 MiB) the budget was
+  derived from. Measured: a plain 80×24 run admitted 1.98× the ceiling and
+  the codec rejected the record. **A budget derived from a protocol ceiling
+  must be re-derived when the *shape* of the record that ceiling applies to
+  changes** — single-sourcing the constant is not enough.
+- **The adapter's own test hid it**, because it replicated the codec's
+  counting rule over the adapter's *pre*-coalescing observation. Budget
+  evidence now goes through the real `TranscriptRecorder` and codec. Rule
+  worth generalizing: **do not assert against a replica of a component's
+  rules when the component itself can be run.**
+- **An untested failure leg is a documentation risk before it is a coverage
+  one.** The geometry threshold was published to hosts as "~2.09 million
+  cells" — the *byte* figure read as cells, off by 4×, and the same
+  cells-vs-bytes class round 4 had already rejected. It survived because
+  nothing tested the leg; a test asserting `terminal-cells` would have
+  contradicted it immediately. The real threshold is 523,264.
+- **A bound checked in the wrong place can be walked around.** The geometry
+  check sat inside the read loop, below the early return taken when the
+  readiness marker is already buffered — so a `dispatch(Resize(...))` past
+  the threshold completed an epoch having consumed zero reads, and the codec
+  then rejected the record. Found in round 6, in the commit that had just
+  written the sentence asserting this was impossible.
+- **Constants pinned by a test that restates them are not pinned.** Three
+  separate times a constant survived mutation because the test fed it back
+  or straddled its boundary from a distance. Each was closed by measuring
+  behavior at the exact boundary instead.
+
+Also merged in this phase's window: the timezone-registry removal (#192,
+decision 9.4) as PR #220, and Slice 5.1 (#195) as PR #224.
+
+### Phase 4 — original slice text [superseded]
 
 The critical runtime fix. Findings: **C2**, **R2**. These change adapter
 control flow; sequence after Phase 2 merges (they touch the same modules).
@@ -756,6 +804,27 @@ implementation gets its own future handover/boundary, not this one.
   already resolved by PR #183.
 - **Phase 0 complete (2026-07-24):** issues #184–#204 filed under the
   `review-2026-07-24` label (mapping table in Phase 0 above).
+- **Checkpoint 2026-07-25c (third session).**
+  - **Merged:** timezone-registry removal (PR #220, closes #192); Slice 4.1
+    (PR #221, closes #193); Slice 5.1 (PR #224, closes #195); Slice 4.2
+    (PR #222, closes #194). **Phases 1–4 are complete**, and Phase 5 has
+    5.2 (#196) and 5.3 (#197) left. Working state clean: no open PRs, no
+    outstanding worktrees or feature branches.
+  - **Closed without merging:** PR #223, an earlier #195 implementation
+    superseded by #224. Its worktree and branch are removed.
+  - **The Slice 4.2 lessons are recorded in Phase 4 above, not here**,
+    because they are about how budgets and their prose drift rather than
+    about session state. The short form: a budget single-sourced from a
+    protocol ceiling still breaks when the record's *shape* changes; a test
+    that replicates a component's rules will share that component's blind
+    spot; an untested failure leg drifts in prose before it drifts in code;
+    and a constant is not pinned by a test that restates it.
+  - **Process note that worked:** the review gated the merge this time, for
+    all six rounds. Rounds 5 and 6 each found a defect that a green gate,
+    green CI, and 100% branch coverage on the changed module did not —
+    including one bound that a control-flow branch could walk around
+    entirely. The cost was real (six rounds for one unbounded loop) and so
+    was the return.
 - **Checkpoint 2026-07-25b (second autonomous session).**
   - **Merged:** Slice 2.2 (PR #211, closes #188) and its review follow-up
     (PR #214, two review rounds); Slice 3.2 (PR #212, closes #191) and its
@@ -836,7 +905,20 @@ implementation gets its own future handover/boundary, not this one.
    follow-up #214.
 5. ~~Slices 3.2 (#191) and 3.1 (#190)~~ **done 2026-07-25** — PRs #212 and
    #215; PR #216.
-6. **Resume with the timezone-registry removal (#192, decision 9.4)** in a
+6. ~~Timezone-registry removal (#192), Slice 4.1 (#193), Slice 5.1 (#195),
+   Slice 4.2 (#194)~~ **all done 2026-07-25** — PRs #220, #221, #224, #222.
+   **Phases 1–4 are complete.**
+7. **Resume with Slice 5.2 (#196)**, which now carries #213 and #217 as named
+   acceptance scenarios. Then Slice 5.3 (#197), Phase 6 (#198 plus #218),
+   Phase 7 (#199), Phase 8 (#200–#203). Read the Phase 4 lessons above before
+   starting 5.2: it is the last large runtime slice, it spans POSIX and
+   Windows, and three of the six Slice 4.2 review rounds turned on prose that
+   outlived the mechanism it described.
+
+Superseded next-step detail from the previous checkpoint, kept because the
+file survey is still accurate:
+
+6. ~~**Resume with the timezone-registry removal (#192, decision 9.4)**~~ in a
    fresh sibling worktree from a `main` containing #216. Scope surveyed and
    small: `src/termverify/_timezone_v1.py` (374 lines) and
    `scripts/generate_timezone_registry.py` are deleted with
