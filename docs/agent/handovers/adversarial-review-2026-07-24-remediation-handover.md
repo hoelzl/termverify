@@ -8,13 +8,16 @@
   (reviewed revision: `main` @ `8f33e6c`).
 - **Owner:** project maintainer
 - **Created:** 2026-07-24
-- **Updated:** 2026-07-25 (checkpoint: Phase 1 complete, Phase 2 two-thirds
-  complete, next item Slice 2.2 / #188)
+- **Updated:** 2026-07-25 (checkpoint b: Phases 1–2 complete, Phase 3
+  complete except the timezone-registry removal, next item #192)
 - **Review required:** yes — every slice that changes runtime behavior, the
   public API, protocol prose with normative force, or release/security claims
   requires TDD evidence, full validation, and an independent adversarial
   review pass per the standard slice loop. Doc-only hygiene slices require
-  normal PR review.
+  normal PR review. **The review gates the merge.** Two 2026-07-25 slices
+  were merged while their reviews were still running and both reviews then
+  found substantive defects in merged code, one of them a behavioral
+  regression on `main`; see the checkpoint note in §4.
 - **Predecessor:** none (the archived
   [adversarial review remediation handover](archive/adversarial-review-remediation-handover.md)
   covered the earlier review cycle through PR #80 and is complete; this
@@ -209,16 +212,12 @@ and the transcript docstring no longer contradict runtime acceptance; each
 listed hygiene item done. Validation: `pre-commit run --all-files` plus the
 repo's docs validators.
 
-### Phase 2 — One-comparison runtime hardening (review rec 2, 3) [IN PROGRESS]
+### Phase 2 — One-comparison runtime hardening (review rec 2, 3) [DONE 2026-07-25]
 
 Small, high-leverage behavioral fixes. Strict TDD each. Findings: **R1**,
-**R3**, **R5**. Status 2026-07-25: Slices 2.1 (PR #208) and 2.3 (PR #209)
-are merged with fresh-context adversarial reviews; **Slice 2.2 (#188) is
-the next work item** — its design is settled (mirror the ConPTY binding's
-checked `_assign_to_job`/`_terminate_job` wrappers in `_jsonl_pipe.py`;
-the spawn path's existing `except OSError` block already fails closed;
-tests monkeypatch the `_kernel32` function attributes to force the
-failure legs, Windows-only).
+**R3**, **R5** — all three merged with fresh-context adversarial reviews:
+Slice 2.1 (PR #208), Slice 2.3 (PR #209), Slice 2.2 (PR #211 plus its
+review follow-up #214).
 
 - **Slice 2.1 — Bound the JSONL read buffer (R1). [DONE — PR #208]**
   Merged 2026-07-25 after a three-round adversarial review whose round 1
@@ -237,6 +236,79 @@ failure legs, Windows-only).
   `parse_message` check. Test: subject streaming newline-free bytes; assert
   structured failure and bounded memory (assert the loop exits by byte count,
   not by timing).
+- **Slice 2.2 — Check job-object containment results (R3). [DONE — PR #211
+  plus follow-up #214]** Merged 2026-07-25. Checked
+  `_assign_to_job`/`_terminate_job` wrappers mirroring the ConPTY binding's,
+  called from the spawn containment block and `_terminate_tree`, with
+  Windows-only tests that force the native failure legs by replacing the
+  bound `_kernel32` function.
+
+  **This slice is the handover's clearest evidence for why the review step
+  must gate the merge.** PR #211 was merged while its adversarial review was
+  still running, and the review then found two defects in the merged code:
+
+  1. *A regression on `main`.* Windows answers `ERROR_ACCESS_DENIED` when
+     asked to assign an **already-exited** process to a job, so a subject
+     that exited inside the disclosed assignment window was reported as a
+     containment failure — a legitimate fast subject failing to spawn,
+     non-deterministically. Fixed in #214: that case is read as nothing
+     left to contain, and the binding reports the child's real exit.
+  2. *A false claim plus a live deadlock.* The docstring and changelog
+     asserted that a failed `TerminateJobObject` cannot leak the tree
+     because kill-on-close still sweeps it. With a read in flight that was
+     false: the raise skipped the delivery wait, `_close_pipes`' detach
+     blocked forever on the blocked reader's lock, `CloseHandle(job)` was
+     never reached, the tree leaked and `close` never returned — reachable
+     through the adapter's own watchdog shape. Fixed in #214 by releasing
+     containment **before** touching the pipes, on the stated invariant:
+     *release every mechanism that can unblock a reader before performing
+     any operation that can block behind one.*
+
+  A third finding was pre-existing and deliberately not widened into the
+  fix: the same `_close_pipes` deadlock is reachable with **no patching at
+  all** when a descendant holds the child's stdout write end, which POSIX
+  cannot unblock at all. Filed as **#213** for Slice 5.2 (#196), whose
+  `poll`/self-pipe reader is the real remedy.
+
+  **Round 2 of that review returned REJECT, and was right to.** It could
+  not refute either functional fix — it verified the teardown reorder is
+  safe on all five paths through `close` (the only assignment to
+  `_exit_status` precedes the `finally`, and the property short-circuits on
+  `_process is None`), that both new tests are red on revert, and that the
+  reorder is a no-op on POSIX. What it refuted, by probe, were the *claims*
+  attached to the fixes:
+
+  - I had written that a window-leg binding's job "still sweeps, on
+    release, any descendant that joined". **Impossible:** job membership
+    comes only from assignment or inheritance through a member, so a job
+    whose member was never assigned stays permanently empty. The probe then
+    showed the consequence — with a job handle present, a descendant
+    holding the child's stdout write end still hung `close` and leaked the
+    tree, re-opening the very failure mode the round-1 fix addressed. The
+    binding now **discloses** that boundary in `spawn` and `close` instead
+    of denying it, and describes the sweep as covering every remaining job
+    *member*, never "the tree".
+  - The new pipe release **did not release**: after `detach` the descriptor
+    belongs to the raw stream, so closing the buffered wrapper only raises
+    (and `_suppress_os_errors` swallows `ValueError` too). Both pipes still
+    reached their finalizers with a `ResourceWarning`. A shared
+    `_release_pipes` now closes the raw stream on both paths.
+  - `subprocess.TimeoutExpired` is not an `OSError`, so the timeout I added
+    to the fail-closed wait could escape unclassified while leaking two
+    kernel handles and both pipes. Now wrapped in `try/finally`.
+
+  Two further findings are **recorded rather than fixed**:
+
+  - **#217** — `io.BufferedWriter.detach()` *flushes*. Two comments claimed
+    a release-without-flush, so the stdin-flush hang they exist to prevent
+    is not actually prevented; it is bounded only because the tree is
+    usually already dead. Belongs with #213 and Slice 5.2.
+  - The window leg's uncontained descendant is **not observable on this
+    toolchain**: the launcher's own outer job sweeps it before a test can
+    look. Worth knowing — the containment covering that case is somebody
+    else's, which is exactly why the binding must not claim credit for it.
+
+  Original slice text follows.
 - **Slice 2.2 — Check job-object containment results (R3).**
   `src/termverify/_jsonl_pipe.py:266`: check `AssignProcessToJobObject`'s
   BOOL return like the sibling calls (`CreateJobObjectW` `:145`,
@@ -267,10 +339,85 @@ failure legs, Windows-only).
 **Acceptance:** each slice merged with red→green TDD evidence and full gate;
 review sign-off that failure classification matches the taxonomy.
 
-### Phase 3 — Protocol-truthfulness reconciliation (review rec 7, partial) [TODO]
+### Phase 3 — Protocol-truthfulness reconciliation (review rec 7, partial) [IN PROGRESS]
 
 Prose with normative force; needs owner decisions on wording. Findings:
 **P2**, **P9**.
+
+Status 2026-07-25: **both slices are merged.** Slice 3.2 (#191) as PR #212
+plus its review follow-up PR #215; Slice 3.1 (#190) as PR #216. The only
+Phase 3-adjacent item left is the timezone-registry removal (#192, decision
+9.4).
+
+**Slice 3.1 outcome (PR #216).** The chosen vocabulary is `enforced` →
+**`applied`**: the status word states only that the adapter carried out the
+constraint's application step and recorded the value it applied, and the
+already-mandatory `tier` states what that step was worth — at `os` and
+`constructive` the constraint is in force; at `delivered` what was applied
+is the *delivery*, and whether the subject honors it is not observable.
+There is no third status, and `enforced` is not an accepted value.
+
+Rejected alternatives, recorded here so the reasoning is in-repo rather
+than only in issue #190's comment thread:
+
+- *Keep `enforced` for `os`/`constructive` and add `delivered` as a third
+  status* — reintroduces exactly the `supported-but-not-enforced` state the
+  spec calls invalid, and splits claim strength across two members.
+- *Fold the tier into the status (`enforced-os`, …)* — duplicates `tier`,
+  and the status vocabulary would then grow whenever the tier vocabulary
+  does.
+- *Drop `status`, make `tier`-or-`unsupported` the discriminator* — a
+  larger structural change for no truthfulness gain; `status` is also what
+  the terminal-record rule keys off.
+- *A word with no residual claim at all (`negotiated`, `recorded`)* — raised
+  by the slice's reviewer, who did not block on it. `applied` keeps a mild
+  looseness at the `delivered` tier, addressed in prose rather than by a
+  second migration; revisit if a vertical makes it bite.
+
+The related seam moved in the same change: "an adapter that cannot enforce a
+requested constraint must not claim a verified run" became the rule the
+shipped tiers support — record `unsupported` and terminate when a constraint
+cannot be applied at any tier, and never record a tier stronger than the
+mechanism used. A run's constraint claims are **no stronger than** its
+weakest tier; the first draft said "exactly as strong as", which the review
+correctly called an overstatement (only an upper bound holds, and nothing
+computes a min-tier).
+
+**The review also found the P2 defect class still alive in prose the slice
+had not touched**, which is the more valuable outcome. `protocol.md`'s
+adapter-facing contract told authors that an adapter "gives filesystem
+access only through the named sandbox root and denies network access by
+default", "injects the requested seed and manual clock", and "starts
+subprocesses with the requested locale and timezone" — while
+`src/termverify/cooperation.py` discloses in its own words that nothing
+blocks sockets, that the filesystem check is not containment, that
+manual-time advances are never delivered, and that no `LANG`/`LC_ALL` is
+set. Those sentences were a *stronger* overstatement than the status word,
+and they contradicted the accepted 2026-07-18 decision that no receipt,
+claim, or document may imply containment. The contract is now stated per
+tier, and `architecture.md`'s "either enforces … or unsupported" binary
+(one bullet above a line the slice had already edited) is replaced by the
+tiered rule. **Lesson for later slices: when a vocabulary is corrected,
+sweep the prose that the old vocabulary licensed, not just the sites that
+name it.**
+
+Scope facts established by that slice, worth not rediscovering:
+
+- The packaged JSON Schema never encoded `status`, so no schema, `$id`, or
+  mirror-publication work rides along with a status-vocabulary change.
+- `recorder.py` holds the only emitter; `transcript.py` holds all validation.
+- The external GlyphWright spike fixture stays byte-for-byte as retrieved
+  (its recorded SHA-256 still verifies); its disclosed conformance delta
+  widened from one member to two, recorded in `PROVENANCE.md` and the test.
+- Deliberately deferred and now **tracked as #218**: the in-process API keeps
+  the older vocabulary — `EnforcedConstraints` (public, exported),
+  `AdapterResult.enforced`, `StartOk`/`StartUnsupported`/`StartFailed`
+  `.enforced`, `UnenforcedConstraintPorts`. Nothing there is false (claim
+  strength is carried by `EnforcementReceipt.tier`), but an adapter author now
+  populates `EnforcedConstraints` and watches it emit `applied`. Phase 6 as
+  written adds exports and does not cover renaming existing public names, so
+  **fold #218 into Phase 6's scope explicitly**. The `constraint-not-enforced`
+  wire code stays: renaming it has no truthfulness payoff.
 
 - **Slice 3.1 — `status: "enforced"` vs. "Nothing is enforced" (P2).**
   **Owner decision 2026-07-24: fix the wire vocabulary properly (Option B),
@@ -283,6 +430,19 @@ Prose with normative force; needs owner decisions on wording. Findings:
   the shipped cooperation-tier semantics. Behavioral slice: strict TDD;
   draft the exact vocabulary in the issue for owner sign-off before
   implementation (wording matters; the mechanism is decided).
+- **Slice 3.2 — Authority polarity (P9). [DONE — PRs #212, #215]**
+  Merged 2026-07-25. `control-protocol.md` now states that it is normative
+  for *intent*, not for acceptance, and that the codec wins; `AGENTS.md`
+  carries a control-protocol sources-of-truth row (and its transcript row is
+  retitled, since the addition made the old title ambiguous); the polarity
+  is **decision 5** of the prototyping-stage record, listed in its Inputs
+  and bound to its Exit criterion, so an agent re-freezing the protocol
+  meets the revisit trigger where it matters. The adversarial review
+  confirmed the repo-wide sweep found no other inverted statement and noted
+  that `control.py`'s own module docstring already agreed with the new
+  polarity. One recorded non-action: dated ADRs are not retro-edited, so
+  `jsonl-control-transport.md`'s freeze-stale prose belongs to the P8/9.2
+  mechanization slice, not here. Original slice text follows.
 - **Slice 3.2 — Authority polarity (P9).**
   **Owner decision 2026-07-24: code wins everywhere (Option A) for the
   duration of the prototyping stage.** Amend `control-protocol.md:16-19` to
@@ -342,6 +502,17 @@ failure within bounded time and memory, demonstrated by tests.
 
 Findings: **R6**, **R4**, **R7**. Each starts with an owner decision recorded
 in its issue.
+
+**Slice 5.2's scope grew during Phase 2 (2026-07-25).** Two verified issues
+belong to it, both about a reader that cannot be unblocked — the same shape
+R4 describes on POSIX, found on Windows: **#213** (`_close_pipes` blocks
+indefinitely inside a `finally` when a descendant holds the child's stdout
+write end; the job object only unblocks holders that are job *members*) and
+**#217** (the `detach()` believed to release the stdin writer without
+flushing actually flushes, so the teardown stall it exists to prevent is not
+prevented). The `poll`/`select` + self-pipe reader this slice already plans
+is the remedy for both; add each as a named acceptance scenario rather than
+re-deriving them.
 
 - **Slice 5.1 — ConPTY replay-equivalence story (R6).**
   **Owner decision 2026-07-24: recorder-side coalescing (Option A1).**
@@ -565,7 +736,49 @@ implementation gets its own future handover/boundary, not this one.
   already resolved by PR #183.
 - **Phase 0 complete (2026-07-24):** issues #184–#204 filed under the
   `review-2026-07-24` label (mapping table in Phase 0 above).
-- **Checkpoint 2026-07-25 (autonomous session paused by owner request):**
+- **Checkpoint 2026-07-25b (second autonomous session).**
+  - **Merged:** Slice 2.2 (PR #211, closes #188) and its review follow-up
+    (PR #214, two review rounds); Slice 3.2 (PR #212, closes #191) and its
+    review follow-up (PR #215); Slice 3.1 (PR #216, closes #190).
+    **Phases 1 and 2 are complete; Phase 3 has only the timezone-registry
+    removal (#192) left.** Working state clean: no open PRs, no outstanding
+    worktrees or feature branches.
+  - **New issues filed, all from review findings that were out of the
+    reviewed slices' scope:**
+    - **#213** — `_close_pipes` can deadlock behind a read blocked on a
+      descendant-held pipe, verified against unmodified shipped code; the
+      Windows twin of finding **R4**. Fold into Slice 5.2 (#196) as a named
+      acceptance scenario. Its Windows exposure is narrowed, not removed, by
+      PR #214: containment only unblocks a write-end holder that is a job
+      *member*.
+    - **#217** — the buffered-writer `detach()` used to "release without
+      flushing" actually flushes, so the teardown stall it exists to prevent
+      is not prevented. Same lines as #213; resolve together.
+    - **#218** — the in-process API still calls its receipts `enforced`
+      after the wire became `applied`; belongs in Phase 6, which as written
+      covers only adding exports.
+  - **Process lesson, recorded because it cost real defects.** Two PRs were
+    merged through the GitHub UI while their adversarial reviews were still
+    running, and both reviews then found substantive problems in
+    already-merged code — including a behavioral regression on `main` (see
+    Slice 2.2). **The review must gate the merge, not trail it.** Where a
+    merge has already happened, the follow-up PR must reference the original
+    issue and the review's finding numbers so the trail stays
+    reconstructable.
+  - **Reviews earn their cost by attacking claims, not just code.** Across
+    three rounds this session, every finding above nit level was a *false or
+    unsupported statement* in a docstring, changelog fragment, or knowledge
+    page — not a broken test. Two were impossible on their face once
+    checked against the OS (a job sweeping members it can never have) and
+    one was a stronger overstatement than the finding being remediated. When
+    reviewing, run the claim, not only the code; when implementing, write no
+    guarantee whose mechanism cannot be named.
+  - **Second lesson, cheap to avoid:** editing tracked files with Python's
+    `pathlib.write_text` on Windows rewrites LF as CRLF, which silently
+    breaks the transcript fixtures (the protocol requires LF) even though
+    `.gitattributes` normalizes on commit. Use binary reads/writes for bulk
+    edits, and check for `\r\n` in every touched file before running tests.
+- **Checkpoint 2026-07-25 (first autonomous session, paused by owner request):**
   - **Merged:** governance docs (PR #205, closes #184); Slice 1.1
     (PR #206, closes #185); Slice 1.2 (PR #207, closes #186); Slice 2.1
     (PR #208, closes #187 — three-round adversarial review, round 1
@@ -599,15 +812,29 @@ implementation gets its own future handover/boundary, not this one.
 1. ~~Phase 0: file the issues~~ **done 2026-07-24** — #184–#204.
 2. ~~Phase 1 (Slices 1.1, 1.2)~~ **done 2026-07-25** — PRs #206, #207.
 3. ~~Slices 2.1 and 2.3~~ **done 2026-07-25** — PRs #208, #209.
-4. **Resume with Slice 2.2 (#188)** in a fresh sibling worktree from
-   `origin/main`: add checked `_assign_to_job`/`_terminate_job` wrappers
-   to `_jsonl_pipe.py` mirroring `_conpty.py:214-220`; call them from the
-   spawn containment block (its `except OSError` already fails closed:
-   kill, wait, close handles, raise) and `_terminate_tree`. Windows-only
-   TDD by monkeypatching the `_kernel32` function attributes to return 0.
-5. **Then Phase 3 onward in handover order** (3.1 #190 needs the
-   vocabulary draft posted to the issue for owner sign-off first;
-   timezone removal #192 and polarity docs #191 are unblocked).
+4. ~~Slice 2.2 (#188)~~ **done 2026-07-25** — PR #211 plus review
+   follow-up #214.
+5. ~~Slices 3.2 (#191) and 3.1 (#190)~~ **done 2026-07-25** — PRs #212 and
+   #215; PR #216.
+6. **Resume with the timezone-registry removal (#192, decision 9.4)** in a
+   fresh sibling worktree from a `main` containing #216. Scope surveyed and
+   small: `src/termverify/_timezone_v1.py` (374 lines) and
+   `scripts/generate_timezone_registry.py` are deleted with
+   `tests/test_timezone_registry_generation.py`; the three call sites are
+   `adapter.py:286`, `control.py:361`, and `transcript.py:508`
+   (`is_timezone_name`); `tests/test_internal_v1.py` carries the registry
+   tests; the packaged schema's `timezone` `$comment` names the registry and
+   must change with it (schema bytes are mirrored from `main`, so the
+   publication follows automatically). The constraint request becomes a
+   plain non-empty string that an adapter either enforces as `UTC` or
+   reports unsupported — note that this **widens acceptance**: a transcript
+   requesting `Mars/Olympus` becomes structurally valid and must then take
+   the `unsupported` path, so the tests must pin that behavior rather than
+   just deleting the rejection tests.
+7. **Then Phase 4 onward in handover order.** Phase 4 (#193 writes under the
+   abort deadline, #194 ConPTY per-epoch budget) is the substantive runtime
+   work and the largest remaining risk; #213 should be read alongside Slice
+   5.2 (#196), since both concern a reader that cannot be unblocked.
 
 Gotchas:
 
