@@ -19,12 +19,16 @@
   the adapter now bounds both retained bytes — counting each chunk's per-event
   overhead, which scales with chunk count — and retained chunk count, against
   `termverify.transcript/v1`'s per-record string and collection ceilings.
-  Without the overhead accounting an ordinary 41,000-line scroll stayed inside
-  the byte budget and still produced a transcript the codec rejected at the end
-  of the run; without a chunk bound a spinner reached the collection ceiling
-  with ~50 KB of payload. Disclosed limit: the codec still owns recordability
-  and enforces ceilings no static budget can model, notably a canonical-line
-  limit that ESC-dense output reaches far sooner.
+  The byte budget is **computed from the terminal geometry** rather than fixed,
+  because the frame's lines are the record's other large strings: a flat
+  reserve was measurably wrong in both directions — too small at 200x328 and
+  above, where the adapter admitted epochs the codec then rejected for size,
+  and too large at 80x24, where it aborted epochs that recorded fine.
+  Disclosed limits: the codec still owns recordability and enforces ceilings no
+  budget can model, notably a canonical-line limit ESC-dense output reaches far
+  sooner; and the chunk bound counts native reads, so a subject redrawing in
+  place can reach it with under 100 KB in seconds — the cause is one event per
+  read, which the recorder-side coalescing of #195 removes.
 - **Rejected a read-count budget on measurement.** A count low enough to bound
   a trickle also aborts a cooperative subject: real ConPTY barely coalesces
   (635 reads for a 2,000-line scroll), so a 1024-read budget failed a plain

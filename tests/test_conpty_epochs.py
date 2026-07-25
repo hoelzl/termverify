@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import threading
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from typing import cast
 
 import pytest
@@ -40,6 +41,7 @@ from termverify.adapter import (
     ManualTime,
     NetworkConfiguration,
     NetworkReceipt,
+    Observation,
     Resize,
     RunConfiguration,
     RunFailed,
@@ -57,11 +59,14 @@ from termverify.adapter import (
 )
 from termverify.conpty import (
     _MAX_EPOCH_CHUNKS,
-    _MAX_EPOCH_OUTPUT_BYTES,
     READINESS_MARKER_DEFAULT,
     ConptyAdapter,
     ConptyChildPort,
     TimerWatchdog,
+)
+from termverify.transcript import (
+    _MAX_COLLECTION_ITEMS,
+    _MAX_RECORD_STRING_BYTES,
 )
 from termverify.vt import ScreenSnapshot, VtNormalizationError
 
@@ -644,17 +649,19 @@ def test_an_output_flood_exhausts_the_per_epoch_byte_budget() -> None:
     ceilings this budget cannot model.
     """
     chunk = "x" * 64 * 1024
-    reads = [chunk] * (_MAX_EPOCH_OUTPUT_BYTES // len(chunk) + 2)
+    reads = [chunk] * (_MAX_RECORD_STRING_BYTES // len(chunk) + 2)
     binding = _FakeBinding(_FakeChild(reads))
     adapter = _adapter(binding, watchdog=_FakeWatchdog())
 
     result = adapter.start("run-conpty", _configuration())
 
     assert type(result) is StartFailed
-    assert result.failure.details == {
-        "budget": "bytes",
-        "epoch-output-byte-budget": _MAX_EPOCH_OUTPUT_BYTES,
-    }
+    details = cast("Mapping[str, object]", result.failure.details)
+    assert details["budget"] == "bytes"
+    # The budget is computed from the terminal geometry, not a constant.
+    budget = details["epoch-output-byte-budget"]
+    assert isinstance(budget, int)
+    assert budget < _MAX_RECORD_STRING_BYTES
     assert "one observation" in result.failure.message
 
 
@@ -666,7 +673,7 @@ def test_the_byte_budget_counts_the_marker_bearing_chunk_too() -> None:
     may carry.
     """
     filler = "x" * 64 * 1024
-    reads = [filler] * (_MAX_EPOCH_OUTPUT_BYTES // len(filler))
+    reads = [filler] * (_MAX_RECORD_STRING_BYTES // len(filler) - 1)
     reads.append("x" * 512 * 1024 + _MARKER)
     binding = _FakeBinding(_FakeChild(reads))
     adapter = _adapter(binding, watchdog=_FakeWatchdog())
@@ -678,6 +685,73 @@ def test_the_byte_budget_counts_the_marker_bearing_chunk_too() -> None:
     assert details["budget"] == "bytes"
 
 
+def _record_string_bytes(observation: Observation) -> int:
+    """Decoded string bytes one observation record costs, the codec's way.
+
+    Mirrors `termverify.transcript`'s counting rule — every string value and
+    every member name in the record — over exactly what the recorder emits
+    for an observation: the chunk events, the frame lines, and the fixed
+    envelope and UI strings.
+    """
+    total = 0
+    for event in observation.events:
+        total += len("type") + len(event.type)
+        data = cast("Mapping[str, object]", event.data)
+        for key, value in data.items():
+            total += len(key)
+            if isinstance(value, str):
+                total += len(value.encode("utf-8", "surrogatepass"))
+        total += len("data")
+    if observation.frame is not None:
+        for line in observation.frame.lines:
+            total += len(line.encode("utf-8", "surrogatepass"))
+    return total
+
+
+@pytest.mark.parametrize(("columns", "rows"), [(80, 24), (200, 400), (400, 200)])
+def test_the_largest_admitted_epoch_fits_one_record_at_any_geometry(
+    columns: int, rows: int
+) -> None:
+    """The bound must admit only epochs a record can actually hold.
+
+    Nothing here feeds the adapter's constants back to it: the epoch grows
+    until the adapter refuses, and the largest one it *accepted* is then
+    measured against the protocol ceiling by the codec's own counting rule.
+    A wrong per-event overhead, or a headroom that ignores the frame, shows
+    up as a measured overflow instead of a passing assertion — which is how
+    the previous revision's flat headroom hid: it admitted epochs the codec
+    rejected for size at 200x328 and larger (adversarial review of this PR,
+    rounds 2 and 3).
+    """
+    chunk = "y" * 8192
+    configuration = replace(
+        _configuration(),
+        terminal=TerminalConfiguration(columns=columns, rows=rows, capabilities=()),
+    )
+
+    accepted: Observation | None = None
+    count = 1
+    while count < 2_000:
+        binding = _FakeBinding(_FakeChild([chunk] * count + [_MARKER]))
+        adapter = _adapter(
+            binding,
+            watchdog=_FakeWatchdog(),
+            normalizer_factory=_NormalizerFactory(frame_dimensions=(rows, columns)),
+        )
+        result = adapter.start("run-conpty", configuration)
+        if type(result) is not Started:
+            break
+        accepted = result.observation
+        count += 1
+    else:  # pragma: no cover - the bound must be reachable within the sweep
+        raise AssertionError("the byte bound was never reached")
+    assert accepted is not None, "no epoch was admitted at all"
+
+    assert _record_string_bytes(accepted) <= _MAX_RECORD_STRING_BYTES, (
+        "the adapter admitted an epoch whose record exceeds the v1 ceiling"
+    )
+
+
 def test_a_chunk_flood_exhausts_the_per_epoch_chunk_budget() -> None:
     """Bytes cannot bound chunk count, and the protocol bounds both.
 
@@ -687,6 +761,9 @@ def test_a_chunk_flood_exhausts_the_per_epoch_chunk_budget() -> None:
     verified matrix — which is far inside any byte budget, so the byte bound
     alone would admit an epoch whose record the codec must reject.
     """
+    # Pinned to its single source: a test that only fed the constant back
+    # would pass with the bound raised to any value (round 3, finding 2).
+    assert _MAX_EPOCH_CHUNKS == _MAX_COLLECTION_ITEMS
     binding = _FakeBinding(_FakeChild(["W"] * (_MAX_EPOCH_CHUNKS + 1)))
     adapter = _adapter(binding, watchdog=_FakeWatchdog())
 
@@ -720,7 +797,7 @@ def test_the_epoch_deadline_also_bounds_a_dispatch_epoch() -> None:
 def test_a_budget_abort_in_a_dispatch_epoch_is_a_runtime_failure() -> None:
     """Every other budget test drives `start()`; dispatch must match."""
     chunk = "x" * 64 * 1024
-    flood = [chunk] * (_MAX_EPOCH_OUTPUT_BYTES // len(chunk) + 2)
+    flood = [chunk] * (_MAX_RECORD_STRING_BYTES // len(chunk) + 2)
     adapter, binding, _, _ = _started([_MARKER, *flood])
 
     result = adapter.dispatch(TextInput(at_ms=ManualTime(0), text="go"))

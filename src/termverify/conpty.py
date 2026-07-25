@@ -162,26 +162,26 @@ READINESS_MARKER_DEFAULT: Final = "\x1b]7791;ready\x1b\\"
 #: alone is ~258 KB.
 _EVENT_STRING_OVERHEAD_BYTES: Final = 28
 
-#: Headroom reserved for the strings in an observation record that are not
-#: chunk events: the frame's lines, the cursor and mode values, and the
-#: envelope's run and record identifiers.
-_RECORD_STRING_HEADROOM_BYTES: Final = 64 * 1024
-
-#: Retained output bytes one epoch may cost its observation record, chunks
-#: plus their per-event overhead. `termverify.transcript/v1` caps a record's
-#: aggregate decoded string bytes, so this is where an epoch's memory has to
-#: stop — and, with the overhead counted, it tracks the ceiling it is derived
-#: from rather than approximating it.
-_MAX_EPOCH_OUTPUT_BYTES: Final = (
-    _MAX_RECORD_STRING_BYTES - _RECORD_STRING_HEADROOM_BYTES
-)
+#: Reserve for an observation record's fixed strings: the envelope's
+#: protocol, kind, run and record identifiers, the cursor and mode values,
+#: and the member names around them. Generous by a wide margin, and unlike
+#: the frame it does not scale with anything.
+_FIXED_RECORD_STRING_BYTES: Final = 4 * 1024
 
 #: Chunks one epoch may retain. Every chunk becomes one item in the
 #: observation's ``events`` array, and the protocol caps the items in one
-#: JSON collection — a bound a byte budget cannot express, because a
-#: cooperative spinner reaches it with ~50 KB of payload (25,000 one-byte
-#: updates measured on the verified matrix). Single-sourced from the same
-#: protocol ceiling.
+#: JSON collection — a bound a byte budget cannot express, because a subject
+#: doing tight in-place updates reaches it with well under 100 KB of payload
+#: (~40,000 two-byte updates in under three seconds, measured; the exact
+#: count is host-dependent, as ConPTY's coalescing is). Single-sourced from
+#: the same protocol ceiling.
+#:
+#: Disclosed: this can abort a *cooperative* subject, and the cause is one
+#: event per native read rather than anything the protocol requires — chunk
+#: boundaries are OS scheduling noise, and every consumer joins them. Slice
+#: 5.1 (issue #195) coalesces adjacent chunks at record time, which removes
+#: the cause; until then the bound is the honest alternative to building an
+#: observation the codec must reject.
 _MAX_EPOCH_CHUNKS: Final = _MAX_COLLECTION_ITEMS
 
 #: The `termverify.enforcement-tier/v1` authorization matrix row for the
@@ -659,6 +659,20 @@ class ConptyAdapter:
             process=process,
         )
 
+    def _epoch_output_budget(self) -> int:
+        """Retained chunk bytes this epoch may cost its observation record.
+
+        Computed rather than reserved, because the record's other strings
+        are dominated by the frame — ``rows x columns`` bytes of lines, at a
+        geometry the host chooses and ``dispatch(Resize(...))`` can change
+        mid-run. A flat headroom is wrong in both directions: too small for a
+        wide terminal, so the adapter admits an epoch the codec then rejects
+        for size, and too large for an ordinary one, so it aborts epochs that
+        would have recorded fine.
+        """
+        frame_bytes = self._rows * self._columns
+        return _MAX_RECORD_STRING_BYTES - frame_bytes - _FIXED_RECORD_STRING_BYTES
+
     def _read_epoch_chunks(
         self, child: ConptyChildPort, chunks: list[str], expired: threading.Event
     ) -> None:
@@ -693,15 +707,13 @@ class ConptyAdapter:
                 len(chunk.encode("utf-8", "surrogatepass"))
                 + _EVENT_STRING_OVERHEAD_BYTES
             )
-            if output_bytes > _MAX_EPOCH_OUTPUT_BYTES:
+            budget = self._epoch_output_budget()
+            if output_bytes > budget:
                 raise _EpochFailure(
                     "the epoch retained more output than one observation"
                     " record may carry; the budget is adapter abort policy,"
                     " not evidence",
-                    {
-                        "budget": "bytes",
-                        "epoch-output-byte-budget": _MAX_EPOCH_OUTPUT_BYTES,
-                    },
+                    {"budget": "bytes", "epoch-output-byte-budget": budget},
                 )
             if len(chunks) >= _MAX_EPOCH_CHUNKS:
                 raise _EpochFailure(
@@ -721,8 +733,13 @@ class ConptyAdapter:
                 # is exactly finding R2. The epoch's own deadline — the same
                 # configured value — is what ends it, and the abort is the
                 # ordinary deadline abort, classified by `expired` below.
+                if not expired.is_set():
+                    # Only when the watchdog did not already fire: a stalled
+                    # read that won the close race arrives here with the
+                    # deadline spent, and it is a stalled read, not a subject
+                    # that never reached readiness.
+                    self._deadline_bound = "epoch"
                 expired.set()
-                self._deadline_bound = "epoch"
                 raise _EpochFailure(
                     "the abort deadline expired before readiness evidence was observed",
                     {"during": "read"},

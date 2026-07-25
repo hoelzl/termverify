@@ -54,10 +54,25 @@ configurable: an epoch may retain only as much output, and only as many
 chunks, as one observation record can carry, because every chunk becomes a
 `terminal.output` event in that record. Exceeding either fails the epoch
 (`budget: "bytes"` or `budget: "chunks"`) rather than building evidence the
-transcript codec would reject only at the end of the run. These bound the
-adapter's own retention; the codec still owns recordability and enforces
-further ceilings — notably a canonical-line limit that ESC-dense output
-reaches much sooner, since RFC 8785 escapes every control byte — so a
+transcript codec would reject only at the end of the run.
+
+The byte bound is **computed from the terminal geometry**, not fixed: the
+frame's lines are the record's other large strings, so a 400×200 terminal
+leaves less room for output than an 80×24 one. Roughly 2 MB of output in a
+single epoch is the scale at ordinary geometry.
+
+The chunk bound is 16,384 chunks, and it is the one that can surprise you: it
+counts *native reads*, not bytes, so a subject doing tight in-place updates —
+a spinner, a progress bar redrawing in place — can reach it with under 100 KB
+of output in a couple of seconds. If you hit it, the fix is not a bigger
+number: emit a readiness marker more often, so each epoch covers fewer
+updates. Chunk boundaries are OS scheduling noise rather than evidence, and
+coalescing them at record time ([issue #195](https://github.com/hoelzl/termverify/issues/195))
+removes the cause.
+
+Both bound the adapter's own retention; the codec still owns recordability
+and enforces further ceilings — notably a canonical-line limit that ESC-dense
+output reaches much sooner, since RFC 8785 escapes every control byte — so a
 transcript can still be rejected for size after an epoch the adapter
 accepted.
 
