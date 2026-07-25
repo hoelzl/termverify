@@ -136,6 +136,16 @@ def main() -> int:
             )
         },
     )
+    if "--deaf" in sys.argv[1:]:
+        # Hostile-subject mode for the write-deadline evidence (adversarial
+        # review 2026-07-24, finding C2): negotiation completes honestly and
+        # then the subject never reads its stdin again. The adapter's next
+        # write blocks as soon as the pipe buffer fills, which is the hang
+        # the abort deadline must turn into a structured failure.
+        import time
+
+        time.sleep(600)
+        return 5
     # --- epoch loop ---------------------------------------------------------
     while True:
         line = sys.stdin.buffer.readline()
