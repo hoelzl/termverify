@@ -565,7 +565,7 @@ def _validate_negotiation(
         raise TranscriptValidationError("capability results are out of order")
     statuses = [payload.get("status") for payload in capability_payloads]
     if any(
-        not isinstance(status, str) or status not in {"enforced", "unsupported"}
+        not isinstance(status, str) or status not in {"applied", "unsupported"}
         for status in statuses
     ):
         raise TranscriptValidationError("capability result status is invalid")
@@ -576,28 +576,28 @@ def _validate_negotiation(
             raise TranscriptValidationError("capability result constraint is invalid")
         allowed_members = (
             frozenset({"constraint", "status", "effective", "tier", "delivery"})
-            if status == "enforced"
+            if status == "applied"
             else frozenset({"constraint", "status", "reason"})
         )
         if _has_unknown_generic_members(payload, allowed_members):
             raise TranscriptValidationError(
                 "capability result members are invalid for its status"
             )
-        if status == "enforced":
+        if status == "applied":
             _validate_capability_tier(constraint, payload)
         if (
             constraint == "timezone"
-            and status == "enforced"
+            and status == "applied"
             and payload.get("effective") != "UTC"
         ):
             raise TranscriptValidationError(
                 "named timezone enforcement is unavailable in v1"
             )
-        if status == "enforced" and not _json_equivalent(
+        if status == "applied" and not _json_equivalent(
             payload.get("effective"), config[constraint]
         ):
             raise TranscriptValidationError(
-                "enforced capability effective value does not match config"
+                "applied capability effective value does not match config"
             )
         if status == "unsupported" and not isinstance(payload.get("reason"), str):
             raise TranscriptValidationError("unsupported capability reason is invalid")

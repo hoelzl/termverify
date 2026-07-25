@@ -176,7 +176,7 @@ def test_full_run_produces_a_codec_accepted_transcript() -> None:
     seed_result = records[1]["payload"]
     assert seed_result == {
         "constraint": "seed",
-        "status": "enforced",
+        "status": "applied",
         "effective": "42",
         "tier": "constructive",
     }
@@ -491,7 +491,7 @@ def test_delivered_tier_receipts_record_delivery() -> None:
 
     assert records[1]["payload"] == {
         "constraint": "seed",
-        "status": "enforced",
+        "status": "applied",
         "effective": "42",
         "tier": "delivered",
         "delivery": {"channel": "spawn-env", "env": {"TERMVERIFY_SEED": "42"}},

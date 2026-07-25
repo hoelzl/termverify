@@ -241,5 +241,12 @@ def test_recorder_reproduces_the_glyphwright_spike_transcript() -> None:
             spike_record["kind"] == "capability.result"
             and expected_payload["status"] == "enforced"
         ):
+            # The disclosed delta is now two members wide (PROVENANCE.md):
+            # the spike predates both the mandatory enforcement tier
+            # (2026-07-18) and the tier-truthful status vocabulary, which
+            # replaced `enforced` with `applied` so no status word claims
+            # enforcement that a `delivered` tier disclaims (issue #190).
+            # The fixture stays byte-for-byte as retrieved.
+            expected_payload["status"] = "applied"
             expected_payload["tier"] = "constructive"
         assert record["payload"] == expected_payload, spike_record["id"]

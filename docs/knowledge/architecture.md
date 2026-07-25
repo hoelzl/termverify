@@ -83,7 +83,7 @@ direct and terminal vertical slices prove that a shared abstraction is needed.
 - An adapter either enforces each requested deterministic constraint and reports
   its effective value, or returns a structured unsupported result before input
   dispatch; it never silently falls back to ambient state.
-- Requested/effective equality does not prove enforcement. Each enforced result
+- Requested/effective equality does not prove enforcement. Each applied result
   is backed by a constraint-specific receipt from the path that applied the
   constraint; direct adapters can produce those receipts only through explicit
   application ports.
