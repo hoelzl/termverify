@@ -322,11 +322,18 @@ the normalizer implementation choice to its own assessment:
   concepts with no terminal enforcement.
 - Raw evidence retention: each epoch's observation carries ordered
   `Event("terminal.output", {"chunk": <raw text>})` events containing the
-  exact decoded chunks, including the readiness marker. Replaying the
-  normalizer over the raw chunks must reproduce the frames — this is the
-  replay check that makes frames trustworthy, and it aligns with the
-  transcript schema's replay-subject `normalizer {id, version}` field: the
-  normalizer's identity and version are recorded so a replay can verify it.
+  exact decoded chunks, including the readiness marker. Native read
+  boundaries are not retained in transcripts: they are OS scheduling
+  noise, so the recorder coalesces adjacent chunk events at record time
+  (review finding R6, issue #195) — the adapter's in-memory observations
+  keep the per-read chunks, and the recorded event preserves the exact
+  concatenated text. Replaying the normalizer over the raw chunks must
+  reproduce the frames — this is the replay check that makes frames
+  trustworthy, and it aligns with the transcript schema's replay-subject
+  `normalizer {id, version}` field: the normalizer's identity and version
+  are recorded so a replay can verify it. The determinism requirement
+  above makes `feed` boundary-insensitive, so replay over coalesced
+  chunks reproduces the same frames.
 - Choosing the implementation (a minimal in-house VT interpreter for the
   sequences ConPTY actually emits, versus a third-party screen emulator such
   as `pyte`) requires its own reuse/dependency assessment with rationale and

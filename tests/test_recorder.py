@@ -459,6 +459,108 @@ def test_natural_exit_during_dispatch_records_finished() -> None:
     assert records[-1]["kind"] == "run.finished"
 
 
+def _output(chunk: str) -> Event:
+    return Event("terminal.output", {"chunk": chunk})
+
+
+def _record_run_with_events(
+    *,
+    start_events: tuple[Event, ...] = (),
+    epoch_events: tuple[Event, ...] = (),
+) -> list[object]:
+    recorder = TranscriptRecorder(RUN_ID, _configuration(), SUBJECT)
+    recorder.record_start(Started(_constraints(), _observation(events=start_events)))
+    recorder.record_epoch(
+        TextInput(ManualTime(0), "hello"),
+        EpochCompleted(_observation(events=epoch_events)),
+    )
+    recorder.record_epoch(
+        TextInput(ManualTime(0), "quit"),
+        TerminalResult(
+            _observation(process=ProcessObservation.exited(ExitStatus("code", 0))),
+            RunFinished.code(0),
+        ),
+    )
+    return list(parse_transcript(recorder.transcript()))
+
+
+def _observation_events(records: list[object], index: int) -> object:
+    observations = [
+        record
+        for record in records
+        if cast(dict[str, object], record)["kind"] == "observation"
+    ]
+    observation = cast(dict[str, object], observations[index])
+    payload = cast(dict[str, object], observation["payload"])
+    return payload["events"]
+
+
+def test_adjacent_terminal_output_chunks_coalesce_into_one_event() -> None:
+    records = _record_run_with_events(
+        epoch_events=(_output("he"), _output("ll"), _output("o"))
+    )
+
+    assert _observation_events(records, 1) == [
+        {"type": "terminal.output", "data": {"chunk": "hello"}}
+    ]
+
+
+def test_start_observation_chunks_coalesce() -> None:
+    records = _record_run_with_events(start_events=(_output("ab"), _output("cd")))
+
+    assert _observation_events(records, 0) == [
+        {"type": "terminal.output", "data": {"chunk": "abcd"}}
+    ]
+
+
+def test_non_output_events_are_coalescing_barriers() -> None:
+    records = _record_run_with_events(
+        epoch_events=(
+            _output("a"),
+            _output("b"),
+            Event("Moved", {"to": "north"}),
+            _output("c"),
+            _output("d"),
+        )
+    )
+
+    assert _observation_events(records, 1) == [
+        {"type": "terminal.output", "data": {"chunk": "ab"}},
+        {"type": "Moved", "data": {"to": "north"}},
+        {"type": "terminal.output", "data": {"chunk": "cd"}},
+    ]
+
+
+def test_single_terminal_output_event_records_unchanged() -> None:
+    records = _record_run_with_events(epoch_events=(_output("solo"),))
+
+    assert _observation_events(records, 1) == [
+        {"type": "terminal.output", "data": {"chunk": "solo"}}
+    ]
+
+
+def test_terminal_output_events_without_exact_chunk_shape_pass_through() -> None:
+    records = _record_run_with_events(
+        epoch_events=(
+            _output("a"),
+            Event("terminal.output", {"chunk": "b", "extra": 1}),
+            _output("c"),
+            Event("terminal.output", {"chunk": 5}),
+            Event("terminal.output", "raw"),
+            _output("d"),
+        )
+    )
+
+    assert _observation_events(records, 1) == [
+        {"type": "terminal.output", "data": {"chunk": "a"}},
+        {"type": "terminal.output", "data": {"chunk": "b", "extra": 1}},
+        {"type": "terminal.output", "data": {"chunk": "c"}},
+        {"type": "terminal.output", "data": {"chunk": 5}},
+        {"type": "terminal.output", "data": "raw"},
+        {"type": "terminal.output", "data": {"chunk": "d"}},
+    ]
+
+
 def test_delivered_tier_receipts_record_delivery() -> None:
     configuration = _configuration()
     constraints = EnforcedConstraints(

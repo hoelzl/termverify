@@ -504,6 +504,14 @@ An `observation` payload has these required members:
   objects;
 - `ui`: an object with the required members below.
 
+Terminal output records read-boundary-free: the recorder merges each run of
+adjacent events whose `type` is `terminal.output` and whose `data` is exactly
+`{"chunk": <string>}` into one event with the chunks concatenated, because
+native read boundaries are OS scheduling noise, not subject behavior
+(issue #195). Any other event passes through unchanged and ends the run of
+adjacency. This is recorder behavior, not codec acceptance: the codec does
+not reject a transcript that was produced without coalescing.
+
 `ui.regions` is an ordered array of objects with non-empty `id` and `role`
 strings and a `bounds` object containing non-negative integer `column` and
 `row` plus positive integer `columns` and `rows`. Region IDs are unique within
