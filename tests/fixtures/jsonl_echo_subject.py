@@ -22,6 +22,11 @@ single-flight epochs for every input kind, and closes runs honestly:
   end-of-stream path; ``"hang"`` never answers, so only the abort
   deadline can end the epoch.
 - ``"boom"`` as text sends ``run.failed`` with a subject error.
+- ``--deaf`` on the command line is the one deliberately hostile mode:
+  negotiation completes honestly and the subject then never reads its
+  stdin again, so the adapter's next write blocks once the pipe buffer
+  fills. It exists for the write-deadline evidence (finding C2) and is
+  reachable only when a test passes the flag.
 
 Determinism: no wall-clock, randomness, or ambient state beyond the
 delivered environment; every observation is a pure function of the
@@ -145,7 +150,7 @@ def main() -> int:
         import time
 
         time.sleep(600)
-        return 5
+        return 6
     # --- epoch loop ---------------------------------------------------------
     while True:
         line = sys.stdin.buffer.readline()

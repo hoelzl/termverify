@@ -24,10 +24,21 @@ Pipes are portable, so this binding runs identically on Windows and POSIX:
   observed exit record of a signal-killed child is the negative signal
   number reported by ``waitpid`` semantics.
 
-A forced close closes the child's stdin first: a cooperative child blocked
-on input observes end-of-stream and may exit on its own, but containment
-(job object / process-group kill) is what guarantees the tree dies, and
-the binding never waits on cooperation. ``exit_status`` is captured from
+A forced close terminates first and releases the child's stdin second:
+containment (job object / process-group kill) is what guarantees the tree
+dies, and the binding never waits on cooperation. The order matters and is
+not cosmetic — releasing the buffered writer flushes it, so against a child
+that is not draining its stdin that release blocks until the child dies
+anyway (finding C2, issue #217). A cooperative child therefore observes
+end-of-stream only as a consequence of its own termination on this path,
+not as an invitation to exit first.
+
+Disclosed limit on that guarantee: interrupting a blocked read or write
+requires containment to reach whoever holds the other end of the pipe. A
+descendant started inside the containment window, or any descendant of a
+child that exited before assignment, is outside it — if such a process
+holds the child's stdout write end or stdin read end, the corresponding
+teardown step can still block (issue #213). ``exit_status`` is captured from
 the real process only — a release-only close of a live child records no
 exit status, never a fabricated one, and is refused outright because
 silently abandoning a live pipe child has no honest reading.

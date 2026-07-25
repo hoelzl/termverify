@@ -595,6 +595,45 @@ def test_a_write_failure_after_the_deadline_fired_is_not_blamed_on_the_peer() ->
     assert _details(failure)["abort-deadline-ms"] == 60_000
 
 
+def test_a_deadline_during_the_hello_write_is_a_handshake_timeout() -> None:
+    """The hello write is the first armed operation, so it can abort too.
+
+    A subject that never reads its stdin cannot even be told the
+    configuration. That is the deadline's case, not a spawn failure, and it
+    is unreachable through a real binding — `session.hello` is far smaller
+    than any pipe buffer — so the fake child is the only way to pin it.
+    """
+    child = FakeChild([_hello_reply()], write_error=True)
+    adapter, _, _ = _adapter(child, watchdog=FiringWatchdog())
+
+    result = adapter.start(_RUN_ID, _config())
+
+    assert isinstance(result, StartFailed)
+    details = _details(result.failure)
+    assert details["failure"] == "handshake-timeout"
+    assert details["during"] == "write"
+    assert details["phase"] == "handshake"
+
+
+def test_a_deadline_during_the_stop_write_is_attributed_to_the_deadline() -> None:
+    """`input.stop` is a wire write like any other, and can abort like one."""
+    child = FakeChild([_hello_reply()])
+    watchdog = AimedWatchdog()
+    adapter, _, _ = _adapter(child, watchdog=watchdog)
+    assert isinstance(adapter.start(_RUN_ID, _config()), Started)
+
+    watchdog.fire_next = True
+    child._write_error = True  # noqa: SLF001 - the forced close's observable effect
+    result = adapter.stop(Stop(at_ms=ManualTime(0)))
+
+    outcome = result.outcome
+    assert isinstance(outcome, RunFailed)
+    details = _details(outcome.failure)
+    assert details["failure"] == "epoch-timeout"
+    assert details["phase"] == "stop"
+    assert details["during"] == "write"
+
+
 def test_dispatch_rejects_excessive_epoch_diagnostics() -> None:
     diagnostics = [
         json.dumps(

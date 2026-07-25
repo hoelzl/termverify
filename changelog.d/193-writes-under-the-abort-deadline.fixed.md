@@ -16,5 +16,17 @@
   *before* it could kill the tree, which would have left the new write deadline
   unable to fire. Killing first makes the flush fail fast against a dead reader.
   Measured on the regression test: the non-reading-subject case went from
-  blocking for 601 s — until the subject exited on its own — to a structured
-  `epoch-timeout` in 14 s.
+  blocking until the subject exited on its own (601 s, its own sleep) to a
+  structured `epoch-timeout` at the configured deadline — 5.0 s for the 5 s
+  deadline the test uses.
+- **Disclosed: ConPTY conin writes remain outside the abort deadline.** The
+  mechanism above does not port to the ConPTY binding — `pty.write` hands the
+  bytes to pywinpty, which owns the conin handle, so nothing can cancel it to
+  interrupt a blocked write, and a write cannot move to another thread because
+  a concurrent `pty.write` against a blocked `pty.read` wedges the native
+  pseudoconsole. Reaching the handle requires TermVerify's own ConPTY binding,
+  which is the raw-byte read path's conclusion too (finding R7).
+  `src/termverify/_conpty.py` now states the theoretical bound: if a subject
+  stops draining conin and the console input buffer fills, the write blocks
+  and the deadline cannot end it. Not observed on the verified matrix; stated
+  rather than measured. (Refs #193, #217.)

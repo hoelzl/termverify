@@ -47,9 +47,13 @@ Readiness and quiescence are defined only by protocol messages:
   diagnostic.
 - Wall-clock silence is never evidence. The only wall-clock input is the
   mandatory, explicitly configured abort deadline: a watchdog armed
-  before each blocking read force-closes the binding when it expires,
-  which always produces a structured failure disclosing the deadline
-  policy and never a successful epoch.
+  around each blocking wire operation — every read and, since finding
+  C2, every write — force-closes the binding when it expires, which
+  produces a structured failure disclosing the deadline policy and
+  never a successful epoch. Disclosed limit: interrupting a blocked
+  operation depends on the binding's containment actually reaching the
+  process holding the other end of the pipe; a descendant outside that
+  containment can still hold it (see ``_jsonl_pipe`` and issue #213).
 """
 
 from __future__ import annotations
@@ -536,11 +540,20 @@ class JsonlAdapter:
     ) -> Callable[[], None]:
         """Arm the abort deadline around one blocking wire operation.
 
-        Shared by the read and write paths so the two cannot drift: the
-        same expiry sets ``expired``, force-closes the binding to interrupt
+        Shared by the read and write paths so the *expiry* cannot drift:
+        one closure sets ``expired``, force-closes the binding to interrupt
         the blocked syscall, and records ``_deadline_closed`` so a failure
         arriving after a late close is attributed to the deadline rather
-        than to the peer. Returns the disarm callable.
+        than to the peer. Returns the disarm callable. Aftermath handling
+        stays per-call-site and is not unified by this helper: the read
+        paths also re-check ``expired`` after a *successful* operation,
+        which a write cannot meaningfully do.
+
+        ``_deadline_closed`` is deliberately sticky and never reset. The
+        invariant that keeps it from misattributing a later, unrelated
+        failure is that every observation of a fired deadline drives the
+        run to ``terminal``, after which no further wire operation is
+        accepted — so a stale ``True`` has nothing left to mislabel.
         """
 
         def expire() -> None:
@@ -619,14 +632,33 @@ class JsonlAdapter:
             ),
         )
 
-    def _deadline_abort(self, at_ms: ManualTime, phase: str) -> TerminalResult:
+    def _deadline_abort(
+        self, at_ms: ManualTime, phase: str, during: str = "read"
+    ) -> TerminalResult:
+        """Build the structured deadline failure for one aborted operation.
+
+        ``during`` is recorded evidence, not decoration: this message and
+        these details are written verbatim into the transcript, and "the
+        closing message never arrived" and "the input could never be
+        delivered" are different facts about the subject. A reader must be
+        able to tell them apart from the record alone.
+        """
         code = _HANDSHAKE_TIMEOUT if phase == "handshake" else _EPOCH_TIMEOUT
+        reached = (
+            "before the message could be written to the child"
+            if during == "write"
+            else "before the closing message was observed"
+        )
         return self._fail_runtime(
             at_ms,
             code,
-            "the abort deadline expired before the closing message was"
-            " observed; the deadline is host abort policy, not evidence",
-            {"abort-deadline-ms": self._abort_deadline_ms, "phase": phase},
+            f"the abort deadline expired {reached}; the deadline is host"
+            " abort policy, not evidence",
+            {
+                "abort-deadline-ms": self._abort_deadline_ms,
+                "phase": phase,
+                "during": during,
+            },
         )
 
     def _observed_exit_status(self) -> ExitStatus | None:
@@ -907,7 +939,7 @@ class JsonlAdapter:
                 # The deadline fired during the write: a non-reading subject
                 # is the abort policy's case, not a peer-lifecycle event, and
                 # the read path already classifies its aftermath this way.
-                return self._deadline_abort(at_ms, phase)
+                return self._deadline_abort(at_ms, phase, during="write")
             return self._fail_runtime(
                 at_ms,
                 _PEER_LIFECYCLE,
@@ -1089,9 +1121,11 @@ class JsonlAdapter:
                 return start_failed(
                     _HANDSHAKE_TIMEOUT,
                     "the abort deadline expired before session.hello could be"
-                    " written to the child",
+                    " written to the child; the deadline is host abort policy,"
+                    " not evidence",
                     {
                         "abort-deadline-ms": self._abort_deadline_ms,
+                        "phase": "handshake",
                         "during": "write",
                     },
                 )
@@ -1381,7 +1415,7 @@ class JsonlAdapter:
             )
         except Exception:
             if stop_expired.is_set() or self._deadline_closed:
-                return self._deadline_abort(at_ms, "stop")
+                return self._deadline_abort(at_ms, "stop", during="write")
             return self._fail_runtime(
                 at_ms,
                 _PEER_LIFECYCLE,
