@@ -16,17 +16,24 @@ machinery, but the control protocol's lifecycle is the transcript
 lifecycle made interactive, member for member: negotiation → readiness →
 single-flight epochs → terminal.
 
-This document is the normative specification of the protocol: it states
-the rules a subject must obey and is what an adapter author reads. The
-strict codec in `src/termverify/control.py` is the authoritative runtime
-acceptance, and on any disagreement **the codec wins** — per `AGENTS.md`,
-executable checks outrank prose. A disagreement is a defect either way,
-so report it: by default it is repaired on this document's side in the
-same change that finds it, and code-side through an ordinary test-first
-slice when the codec is the wrong one. This polarity is tied to the
-prototyping stage (owner decision 2026-07-24) and is revisited at the
-re-freeze boundary, where doc-as-contract becomes a defensible choice for
-a protocol that third-party subjects implement.
+This document is the protocol's normative specification — normative for
+*intent*, not for acceptance: it states the rules a subject must obey and
+is what a subject or adapter author reads to implement one. Acceptance
+belongs to the strict codec in `src/termverify/control.py`, and on any
+disagreement **the codec wins** — per `AGENTS.md`, executable checks
+outrank prose, so a message the codec rejects is rejected however this
+document reads. (The split mirrors the transcript protocol's schema-versus-
+validator split: a structural aid does not decide conformance.)
+
+A disagreement is a defect either way, so file it as an issue rather than
+working around it. By default it is repaired on this document's side, in
+the same change that finds it and with the same rationale note any
+protocol-prose change carries; when the codec is the wrong one, it is
+repaired code-side through an ordinary test-first slice. This polarity is
+tied to the prototyping stage (owner decision 2026-07-24, decision 5 in
+[`prototyping-stage-protocol-governance.md`](../agent/design/prototyping-stage-protocol-governance.md))
+and is revisited when that stage ends, where doc-as-contract becomes a
+defensible choice for a protocol third-party subjects implement.
 
 The protocol is **unfrozen**: it may change in place, including
 incompatibly, under the repository's prototyping-stage governance (owner
