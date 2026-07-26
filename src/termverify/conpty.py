@@ -190,10 +190,17 @@ READINESS_MARKER_PREFIX_DEFAULT: Final = "<<termverify.ready:"
 #: a host configures.
 READINESS_MARKER_TERMINATOR: Final = ">>"
 
-#: Longest legal marker token. Also bounds how much of a partial candidate
-#: the scanner will hold: past this, no terminator can still close a legal
-#: token, so the candidate is not a marker and is dropped.
+#: Longest legal marker token.
 _MAX_MARKER_TOKEN: Final = 64
+
+#: Longest a complete marker can be after its prefix: the token plus the
+#: terminator. Bounds both how far the scanner looks for a terminator and how
+#: much of a partial candidate it will hold — past this, no terminator can
+#: still close a legal token, so the candidate was never a marker. The
+#: terminator counts: a candidate holding a maximum-length token and the
+#: first character of a split terminator is still viable, and dropping it
+#: would lose the marker.
+_MAX_MARKER_CANDIDATE: Final = _MAX_MARKER_TOKEN + len(READINESS_MARKER_TERMINATOR)
 
 #: A marker's token must match this: printable, bounded, and free of any
 #: character the console emits while wrapping or repositioning. A candidate
@@ -458,6 +465,18 @@ def _validate_marker_prefix(prefix: object) -> str:
             f" {READINESS_MARKER_TERMINATOR!r}: it would terminate the marker"
             " before its token"
         )
+    if _MARKER_TOKEN.match(prefix):
+        # A prefix made only of token characters can be absorbed into a
+        # neighbouring candidate's token: a stray occurrence followed by the
+        # real marker yields one token spanning both, which is well-formed,
+        # so the genuine token is never recorded and the console's next
+        # repaint of that marker completes another epoch — exactly the
+        # double-honour #232 exists to prevent.
+        raise ValueError(
+            "readiness_marker_prefix must contain a character outside"
+            f" {_MARKER_TOKEN.pattern}, so it cannot be mistaken for part of"
+            " a token"
+        )
     return prefix
 
 
@@ -647,10 +666,15 @@ class ConptyAdapter:
             if index < 0:
                 break
             body = index + len(prefix)
-            end = self._pending.find(READINESS_MARKER_TERMINATOR, body)
+            # Bounded: a terminator further out than a whole marker cannot be
+            # this candidate's, and searching to the end of the buffer for it
+            # is what let one stray prefix borrow a later marker's terminator.
+            end = self._pending.find(
+                READINESS_MARKER_TERMINATOR, body, body + _MAX_MARKER_CANDIDATE
+            )
             if end < 0:
-                if len(self._pending) - body <= _MAX_MARKER_TOKEN:
-                    # The token may still be arriving; keep the candidate.
+                if len(self._pending) - body < _MAX_MARKER_CANDIDATE:
+                    # The rest may still be arriving; keep the candidate.
                     self._pending = self._pending[index:]
                     return False
                 # Too much has arrived after this prefix for any terminator

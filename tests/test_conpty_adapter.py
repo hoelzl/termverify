@@ -194,8 +194,24 @@ def test_native_binding_satisfies_the_binding_port() -> None:
 def test_probe_reports_the_spawn_precondition() -> None:
     import os
 
-    assert _conpty.is_supported() is (os.name == "nt")
-    assert ConptyBinding().is_supported() is (os.name == "nt")
+    expected = os.name == "nt" and _conpty._HAS_PSEUDOCONSOLE
+    assert _conpty.is_supported() is expected
+    assert ConptyBinding().is_supported() is expected
+
+
+def test_probe_reports_unsupported_without_pseudoconsole_entry_points(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Being Windows is not the precondition; having ConPTY is.
+
+    Pseudoconsoles arrived in Windows 10 1809. On an older build the spawn
+    fails closed, so a probe that answered "supported" would let negotiation
+    promise a run that can never start.
+    """
+    monkeypatch.setattr(_conpty, "_HAS_PSEUDOCONSOLE", False)
+
+    assert _conpty.is_supported() is False
+    assert ConptyBinding().is_supported() is False
 
 
 def test_native_binding_delegates_the_probe(

@@ -565,9 +565,19 @@ if sys.platform == "win32":
             # Before the buffer: the destructor takes this lock, so an
             # allocation failure below must not leave it unset.
             self._lock = threading.Lock()
+            #: Held across ``ResizePseudoConsole`` and by whoever closes the
+            #: pseudoconsole, so the handle cannot be freed mid-resize
+            #: without the reader ever waiting on a resize. Always taken
+            #: before ``_lock``, never after.
+            self._resize_lock = threading.Lock()
             self._closed = False
+            self._stalled = False
             self._drain: threading.Thread | None = None
             self._buffer = ctypes.create_string_buffer(_READ_BUFFER_BYTES)
+            # Last: until this is set the session is not fully built, and the
+            # destructor must not release handles whose ownership still sits
+            # with the caller that is constructing it.
+            self._constructed = True
 
         @property
         def pid(self) -> int:
@@ -595,12 +605,21 @@ if sys.platform == "win32":
             return int(code.value)
 
         def set_size(self, columns: int, rows: int) -> None:
-            # The native call stays inside the lock. Releasing it first would
-            # let the end-of-stream path hand the pseudoconsole to the drain
-            # thread, which closes it, between the read of the field and the
-            # resize — a resize on a freed handle.
-            with self._lock:
-                pseudoconsole = self._pseudoconsole
+            """Resize the pseudoconsole, on a handle that cannot be freed.
+
+            Guarded by ``_resize_lock`` rather than by ``_lock``. The handle
+            must not be closed underneath this native call, but holding the
+            session lock across it would let a resize block the *reader*:
+            the reader is what calls :meth:`_release_pseudoconsole` when the
+            child exits, and a blocked reader stops draining conout, which is
+            what the console host may be waiting on to finish the resize —
+            a circular wait with no bound, on the one operation that has to
+            stay responsive. Only whoever actually closes the handle takes
+            this lock, so the reader never waits here.
+            """
+            with self._resize_lock:
+                with self._lock:
+                    pseudoconsole = self._pseudoconsole
                 if pseudoconsole is None:
                     raise ConptyClosedError(
                         "the pseudoconsole is no longer owned by this session"
@@ -708,11 +727,13 @@ if sys.platform == "win32":
             cancel_event = self._cancel_event
             read_event = self._read_event
             if cancel_event is None or read_event is None:
-                raise self._abandon_read(
-                    handle,
-                    overlapped,
-                    ConptyClosedError("the ConPTY session is closed"),
-                )
+                # Deliberately does *not* cancel: reaching here means close
+                # already unpublished the events, so it has closed or is
+                # about to close these handle values. Cancelling a recycled
+                # handle would reach unrelated I/O, and waiting on a closed
+                # event returns at once without the read having drained —
+                # the opposite of the guarantee cancelling is meant to give.
+                raise ConptyClosedError("the ConPTY session is closed")
             process_handle = self._process_handle
             waited_out_child = process_handle is None
             while True:
@@ -781,6 +802,10 @@ if sys.platform == "win32":
             thread lets the read keep draining until the host exits and the
             write end drops, which is the end-of-stream signal this whole
             path exists to produce.
+
+            The reader never blocks here: it only unpublishes the handle and
+            starts the thread. Waiting for any in-flight resize to finish
+            with it is that thread's job, not the reader's.
             """
             with self._lock:
                 pseudoconsole = self._pseudoconsole
@@ -788,12 +813,17 @@ if sys.platform == "win32":
                     return
                 self._pseudoconsole = None
                 self._drain = threading.Thread(
-                    target=_close_pseudoconsole,
+                    target=self._close_pseudoconsole_when_idle,
                     args=(pseudoconsole,),
                     name=f"termverify-conpty-drain-{self._pid}",
                     daemon=True,
                 )
                 self._drain.start()
+
+        def _close_pseudoconsole_when_idle(self, pseudoconsole: int) -> None:
+            """Close the pseudoconsole once no resize is using its handle."""
+            with self._resize_lock:
+                _close_pseudoconsole(pseudoconsole)
 
         def cancel_io(self) -> None:
             """Wake any in-flight read so ``close`` can proceed.
@@ -841,26 +871,35 @@ if sys.platform == "win32":
             if conout_read is not None:
                 _kernel32.CloseHandle(conout_read)
             if pseudoconsole is not None:
-                _close_pseudoconsole(pseudoconsole)
-            stalled = False
+                self._close_pseudoconsole_when_idle(pseudoconsole)
             if drain is not None:
                 drain.join(_PSEUDOCONSOLE_DRAIN_JOIN_SECONDS)
-                stalled = drain.is_alive()
+                # Recorded, not raised. This runs inside ``ConptyChild.close``'s
+                # cleanup, where raising would replace whatever sent it there —
+                # a child that would not die outranks a leaked handle — and
+                # would skip the remaining teardown. The caller reads
+                # :attr:`stalled` once the close has otherwise finished.
+                self._stalled = drain.is_alive()
             for handle in handles[1:]:
                 if handle is not None:
                     _kernel32.CloseHandle(handle)
-            if stalled:
-                # The console host never finished closing. Say so: the
-                # pseudoconsole handle and that thread are both still held,
-                # and a close that returned silently would be claiming a
-                # release it did not make.
-                raise OSError(
-                    f"the pseudoconsole for child {self._pid} did not close"
-                    f" within {_PSEUDOCONSOLE_DRAIN_JOIN_SECONDS:.0f}s; its"
-                    " handle and closing thread are still held"
-                )
+
+        @property
+        def stalled(self) -> bool:
+            """Whether the pseudoconsole never finished closing.
+
+            When true, its handle and the thread closing it are both still
+            held: a close that reported success without saying so would be
+            claiming a release it did not make.
+            """
+            return self._stalled
 
         def __del__(self) -> None:  # pragma: no cover - refcount backstop only
+            if not getattr(self, "_constructed", False):
+                # A part-built session never owned these handles; the code
+                # constructing it still does, and closing them here would
+                # make its own cleanup a double close.
+                return
             with contextlib.suppress(Exception):
                 self.close()
 
@@ -1257,6 +1296,7 @@ class ConptyChild:
             self._job = None
             self._process_handle = None
         child_exited = True
+        stalled = False
         try:
             try:
                 if force and pty.isalive():
@@ -1291,6 +1331,7 @@ class ConptyChild:
                         # handles can be released here and now rather than
                         # whenever the last traceback holding them unwinds.
                         pty.close()
+                        stalled = pty.stalled
                     finally:
                         del pty
             if not force and process_handle is not None:
@@ -1307,6 +1348,15 @@ class ConptyChild:
         if not child_exited:
             raise OSError(
                 f"child process {self._pid} did not terminate after handle release"
+            )
+        if stalled:
+            # Reported only once everything else succeeded, so it can never
+            # displace a failure that matters more — a child that would not
+            # die, or a teardown step this close still owed.
+            raise OSError(
+                f"the pseudoconsole for child {self._pid} did not close within"
+                f" {_PSEUDOCONSOLE_DRAIN_JOIN_SECONDS:.0f}s; its handle and the"
+                " thread closing it are still held"
             )
 
     def _cancel_pending_io(self, pty: Any) -> None:

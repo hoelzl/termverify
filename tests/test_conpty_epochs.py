@@ -61,6 +61,7 @@ from termverify.adapter import (
 )
 from termverify.conpty import (
     _FIXED_RECORD_STRING_BYTES,
+    _MAX_MARKER_TOKEN,
     _MAX_UTF8_BYTES_PER_CELL,
     READINESS_MARKER_PREFIX_DEFAULT,
     READINESS_MARKER_TERMINATOR,
@@ -444,6 +445,10 @@ def test_constructor_validates_the_readiness_marker_prefix() -> None:
     # token, so every marker would carry an empty one.
     with pytest.raises(ValueError):
         _adapter(_FakeBinding(), readiness_marker_prefix="<<ready>>")
+    # A prefix of nothing but token characters can be absorbed into a
+    # neighbouring token, which would silently reopen the double-honour bug.
+    with pytest.raises(ValueError):
+        _adapter(_FakeBinding(), readiness_marker_prefix="ready.")
 
 
 # --- start: readiness ------------------------------------------------------
@@ -477,6 +482,50 @@ def test_start_spawns_and_reaches_marker_readiness() -> None:
     assert binding.child.closes == []
 
 
+@pytest.mark.parametrize("length", [1, 2, 63, _MAX_MARKER_TOKEN])
+def test_a_token_of_any_legal_length_survives_a_split_terminator(
+    length: int,
+) -> None:
+    """The terminator arriving in a later read must not drop the marker.
+
+    The scanner drops a candidate that has outrun the longest marker it
+    could still become. That bound has to count the terminator: a candidate
+    holding a maximum-length token and the first ``>`` of a split ``>>`` is
+    still viable, and a bound one character short loses it — silently, as a
+    deadline abort against a subject that cooperated correctly. A 64-character
+    token is not hypothetical; it is what a hex digest looks like.
+    """
+    marker = (
+        f"{READINESS_MARKER_PREFIX_DEFAULT}{'a' * length}{READINESS_MARKER_TERMINATOR}"
+    )
+    binding = _FakeBinding(_FakeChild(["out" + marker[:-1], marker[-1:]]))
+    adapter = _adapter(binding)
+
+    result = adapter.start("run-conpty", _configuration())
+
+    assert type(result) is Started, result
+
+
+def test_a_token_past_the_legal_length_is_not_honoured() -> None:
+    """The bound is a bound: one character over is not a marker."""
+    marker = (
+        f"{READINESS_MARKER_PREFIX_DEFAULT}{'a' * (_MAX_MARKER_TOKEN + 1)}"
+        f"{READINESS_MARKER_TERMINATOR}"
+    )
+    good = _marker()
+    binding = _FakeBinding(_FakeChild([marker, good]))
+    adapter = _adapter(binding)
+
+    result = adapter.start("run-conpty", _configuration())
+
+    assert type(result) is Started, result
+    # Readiness came from the well-formed marker, not the oversized one.
+    assert [event.data for event in result.observation.events] == [
+        {"chunk": marker},
+        {"chunk": good},
+    ]
+
+
 @pytest.mark.parametrize("split", range(1, len(_MARKER_SHAPE)))
 def test_start_finds_a_marker_split_at_any_point_across_chunks(split: int) -> None:
     """One marker, cut at every point: prefix, token, and terminator alike."""
@@ -494,6 +543,30 @@ def test_start_finds_a_marker_split_at_any_point_across_chunks(split: int) -> No
         {"chunk": chunks[1]},
     ]
     assert factory.created[0].fed == chunks
+
+
+def test_an_empty_decode_is_not_retained_as_evidence() -> None:
+    """A read landing inside a codepoint decodes to nothing; record nothing.
+
+    Since the binding took over decoding (#197) an empty read is ordinary,
+    not hypothetical. Retaining one would put a ``terminal.output`` event in
+    the observation asserting the child emitted nothing, and replaying it
+    feeds the normalizer nothing. The bytes are not lost — they arrive on
+    the read that completes the character.
+    """
+    marker = _marker()
+    binding = _FakeBinding(_FakeChild(["", "", "out", "", marker]))
+    factory = _NormalizerFactory()
+    adapter = _adapter(binding, normalizer_factory=factory)
+
+    result = adapter.start("run-conpty", _configuration())
+
+    assert type(result) is Started, result
+    assert [event.data for event in result.observation.events] == [
+        {"chunk": "out"},
+        {"chunk": marker},
+    ]
+    assert factory.created[0].fed == ["out", marker]
 
 
 def test_a_repainted_marker_does_not_complete_a_later_epoch() -> None:
@@ -563,9 +636,10 @@ def test_a_stray_prefix_does_not_swallow_the_next_real_marker() -> None:
     result = adapter.dispatch(TextInput(ManualTime(0), "x\r"))
 
     assert type(result) is EpochCompleted
-    assert [event.data for event in result.observation.events][-1] == {
-        "chunk": "answer" + good
-    }
+    assert [event.data for event in result.observation.events] == [
+        {"chunk": f"log: {READINESS_MARKER_PREFIX_DEFAULT} oops\r\n"},
+        {"chunk": "answer" + good},
+    ]
 
 
 def test_an_unterminated_candidate_is_dropped_rather_than_retained() -> None:
@@ -583,8 +657,10 @@ def test_an_unterminated_candidate_is_dropped_rather_than_retained() -> None:
     result = adapter.dispatch(TextInput(ManualTime(0), "x\r"))
 
     assert type(result) is EpochCompleted
-    # The buffer kept only what could still begin a marker, not the burst.
-    assert len(adapter._pending) < len(READINESS_MARKER_PREFIX_DEFAULT)
+    assert [event.data for event in result.observation.events] == [
+        {"chunk": READINESS_MARKER_PREFIX_DEFAULT + "x" * 5_000},
+        {"chunk": "answer" + good},
+    ]
 
 
 def test_start_with_the_default_vt_normalizer_renders_the_marker() -> None:
