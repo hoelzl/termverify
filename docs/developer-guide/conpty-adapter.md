@@ -98,16 +98,26 @@ kilobytes to spare. The adapter refuses because an epoch that can record a
 frame but no output is not a useful epoch, and admitting it would mean
 discovering the problem only when the transcript is serialized.
 
-**Rows are a second geometry limit, and cells do not express it.** A frame
-is recorded as one collection item per row, and the protocol caps a
-collection at 16,384 items, so a terminal taller than **16,384 rows** is
-unrecordable at any cell count — a 20,000×10 terminal is only 200,000 cells,
-well under the threshold above, and still cannot be recorded. The adapter
-refuses it the same way and with the same failure class, naming the axis
-that bound: `budget: "geometry"` with `terminal-rows` rather than
-`terminal-cells`. Columns have no matching bound because the equivalent
-limit — a single frame line of 262,144 four-byte cells — is out of reach of
-the pseudoconsole's 16-bit dimensions, while 16,385 rows is not.
+**Rows and columns are limits of their own, and cells express neither.** The
+frame meets three ceilings in three different units, so the adapter checks
+three axes and the failure details name the one that bound:
+
+| Axis | Ceiling | Limit | Detail key |
+| --- | --- | --- | --- |
+| rows | one collection item per frame line | 16,384 rows | `terminal-rows` |
+| columns | one line is one string, at 4 bytes per cell | 262,144 columns | `terminal-columns` |
+| cells | the frame's aggregate bytes against the record | 523,264 cells | `terminal-cells` |
+
+Neither of the first two is implied by the third. A terminal 10 columns wide
+and 20,000 rows tall is only 200,000 cells — well under the threshold above —
+and still cannot be recorded, because its frame is 20,000 collection items. A
+terminal 262,145 columns wide and 1 row tall is 262,145 cells and still
+cannot be recorded, because that one line is a 1 MiB string. Only a single-row
+terminal can reach the column limit without the cell limit firing first: at
+two rows, any width past 262,144 is already past 523,264 cells.
+
+All three refuse the run the same way, with `budget: "geometry"`, as soon as
+an epoch begins and before any read.
 
 Do **not** try to fit inside the bound by emitting extra readiness markers
 inside one epoch: the contract is exactly one marker per processed input, and
@@ -115,10 +125,13 @@ a surplus marker ends an epoch early and shifts every later epoch's output
 onto the wrong input. Produce less output between inputs instead.
 
 The bound covers the adapter's own retention; the codec still owns
-recordability and enforces further ceilings — notably a canonical-line limit
-that ESC-dense output reaches much sooner, since RFC 8785 escapes every
-control byte — so a transcript can still be rejected for size after an epoch
-the adapter accepted.
+recordability and enforces further ceilings, so a transcript can still be
+rejected for size after epochs the adapter accepted. Two are worth naming:
+a canonical-line limit that ESC-dense output reaches much sooner, since
+RFC 8785 escapes every control byte; and a **32 MiB ceiling on the whole
+transcript**, which no per-epoch bound can model because it accumulates
+across epochs — a large frame that is individually recordable still reaches
+it within a couple of dozen epochs, since every epoch records a full frame.
 
 ## What the delivered tier means
 

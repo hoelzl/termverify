@@ -265,26 +265,40 @@ the per-collection ceiling with under 100 KB of payload — and the adapter had
 to abort a cooperative subject to stay honest. Recorder-side coalescing
 removes the axis rather than the symptom, so the bound went with it.
 
-**Amendment (issue #226, round-7 review of this slice).** Deleting the
+**Amendment (issue #226, rounds 7–8 of this slice's review).** Deleting the
 chunk-count budget retired the collection ceiling as an *output* axis, not
-as an axis. The frame reaches the record as one collection item per **row**,
-so a terminal above 16,384 rows is unrecordable whatever it contains, and
-the byte budget cannot see this: it multiplies rows by columns, and a
-20,000×10 terminal is 200,000 cells — two-and-a-half times below the
-523,264-cell threshold — yet the codec rejects every record it produces.
-The gate therefore checks rows against the collection ceiling before
-computing the byte budget, in the same `budget: "geometry"` failure class,
-with `terminal-rows` naming the axis that bound instead of `terminal-cells`.
+as an axis. The frame meets three v1 ceilings in three different units, and
+the byte budget models only one of them, so `_geometry_failure` now checks
+all three before an epoch may read — rows against the collection ceiling
+(one item per frame line, 16,384), columns against the per-string ceiling
+(one line is one string, 262,144 at four bytes per cell), and cells through
+the byte budget itself (523,264). All three are the same `budget:
+"geometry"` failure class; the details name the axis that bound.
 
-Columns get no matching check, and the asymmetry is deliberate rather than an
-omission: the equivalent column limit is a single frame **line** of 262,144
-four-byte cells, which the pseudoconsole's 16-bit `COORD` cannot request,
-while 16,385 rows sits comfortably inside that same range and was confirmed
-to create a real pseudoconsole and spawn into it on the Windows dev host.
-Reachability, not symmetry, is what earns a check. The general lesson is the
-one this slice keeps re-learning in new clothes: **a bound expressed in one
-unit does not cover a ceiling charged in another** — cells did not cover
-bytes (round 4), and bytes do not cover collection items (round 7).
+Neither of the first two follows from the third, which is why one check
+could not serve. A 10-column, 20,000-row terminal is 200,000 cells —
+two-and-a-half times below the cell threshold — and the codec rejects every
+observation record it produces, for collection size. A 262,145-column,
+1-row terminal is 262,145 cells and is rejected for string size. Only a
+single-row terminal reaches the column limit at all: at two rows, any width
+past 262,144 is already past 523,264 cells.
+
+**The rejected alternative is worth recording, because it was shipped for a
+round.** The first fix checked rows only and argued columns needed no check,
+because a 262,144-column frame line is out of reach of a 16-bit `COORD`.
+Measured on the Windows dev host, that argument is false in both halves:
+`PTY()` range-checks nothing, and 262,145x1, 1,048,577x1 and 10x100,000 all
+create a pseudoconsole and spawn into it. The review then drove a
+single-row, 262,145-column run end to end through the real normalizer,
+recorder and codec and got the admit-then-reject this slice exists to
+prevent. A check that costs one comparison should not be gated on an
+argument about what a host can request — the argument is where the defect
+lives, and it is cheaper to check the axis than to be right about it.
+
+The general lesson is the one this slice keeps re-learning in new clothes:
+**a bound expressed in one unit does not cover a ceiling charged in
+another.** Cells did not cover bytes (round 4), and bytes cover neither
+collection items nor per-string length (rounds 7–8).
 
 Ordering note, worth keeping: #195 merged first and silently invalidated this
 byte budget in the *unsafe* direction. Deriving it from the per-record string
@@ -356,9 +370,9 @@ input as a normal epoch, which ends in `TerminalResult` via end-of-stream).
 | Injected port reports unsupported | negotiation | `StartUnsupported` at that constraint |
 | Spawn failure (`FileNotFoundError`, `OSError`, containment failure) | initialize | `StartFailed`, `adapter-start-failed` |
 | End-of-stream before initial marker | initialize | `StartTerminated` with observed exit (subject exit only) |
-| Deadline abort, invariant violation, native error | initialize | `StartFailed`, `adapter-start-failed` |
+| Deadline abort (`bound` names which fired, as on the dispatch row), invariant violation, native error | initialize | `StartFailed`, `adapter-start-failed` |
 | Retained-output budget exhausted (`budget: "bytes"`) | initialize | `StartFailed`, `adapter-start-failed` |
-| Geometry admits no recordable epoch (`budget: "geometry"`, naming the axis that bound: `terminal-cells` or `terminal-rows`) | initialize | `StartFailed`, `adapter-start-failed` |
+| Geometry admits no recordable epoch (`budget: "geometry"`, naming the axis that bound: `terminal-rows`, `terminal-columns`, or `terminal-cells`) | initialize | `StartFailed`, `adapter-start-failed` |
 | End-of-stream during epoch | dispatch/advance | `TerminalResult`, `RunFinished` with observed exit |
 | Deadline abort | dispatch/advance | `TerminalResult`, `RunFailed` (`adapter-runtime-failed`, deadline disclosed, `observation=None` — no quiescent snapshot exists at abort, and none is fabricated; `bound` names which deadline fired — `"read"` for one stalled read, `"epoch"` for a subject that kept producing output without reaching readiness) |
 | Retained-output budget exhausted, or geometry admits no recordable epoch | dispatch/advance | `TerminalResult`, `RunFailed` (`adapter-runtime-failed`); the geometry leg is reachable here because `dispatch(Resize(...))` moves the geometry between epochs |

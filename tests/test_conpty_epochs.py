@@ -753,38 +753,50 @@ def test_a_terminal_too_large_for_its_own_frame_fails_on_geometry(
     assert "no room for output" in result.failure.message
 
 
+#: The widest frame line that meets the per-string ceiling at UTF-8's worst
+#: case per cell. Only a *single-row* terminal reaches it without the cell
+#: threshold firing first: at two rows any width above it is already past
+#: 523,264 cells.
+_MAX_FRAME_COLUMNS = _MAX_STRING_BYTES // _MAX_UTF8_BYTES_PER_CELL
+
+
 @pytest.mark.parametrize(
-    ("rows", "starts"),
+    ("columns", "rows", "starts", "axis"),
     [
-        (_MAX_COLLECTION_ITEMS, True),
-        (_MAX_COLLECTION_ITEMS + 1, False),
-        # The tallest geometry the real binding can request: `COORD` is 16-bit,
-        # so this is the far end of the reachable range, not a fake-only value.
-        (32_767, False),
+        (10, _MAX_COLLECTION_ITEMS, True, None),
+        (10, _MAX_COLLECTION_ITEMS + 1, False, "terminal-rows"),
+        (10, 50_000, False, "terminal-rows"),
+        (_MAX_FRAME_COLUMNS, 1, True, None),
+        (_MAX_FRAME_COLUMNS + 1, 1, False, "terminal-columns"),
+        (400_000, 1, False, "terminal-columns"),
     ],
 )
-def test_a_terminal_with_more_rows_than_a_frame_may_carry_fails_on_geometry(
-    rows: int, starts: bool
+def test_a_frame_ceiling_bytes_cannot_express_refuses_the_geometry(
+    columns: int, rows: int, starts: bool, axis: str | None
 ) -> None:
-    """Rows are a second geometry axis, and bytes do not model it.
+    """Rows and columns are ceilings of their own, in units bytes lack.
 
     The byte budget reserves `4 * rows * columns` and refuses when nothing is
-    left for output. That is a *cell* model, and the frame has a second cost
-    the codec charges separately: `frame.lines` is one collection item per
-    row, so above the v1 collection ceiling no epoch is recordable at any
-    cell count. Ten columns keeps the cell product an order of magnitude
-    below the 523,264-cell threshold, so only the row axis can refuse these.
+    left for output. That is a *cell* model, and the frame meets two further
+    ceilings the cell product cannot express: `frame.lines` is one collection
+    item per row, and one line is a single string of `columns` code points.
+    Every case here sits below the 523,264-cell threshold, asserted rather
+    than assumed, so only the axis under test can refuse it.
 
-    Reachable, not hypothetical: `TerminalConfiguration` requires a positive
-    int and nothing more, and a 20,000-row pseudoconsole was created and
-    spawned into on the Windows dev host. Round 7, finding 1.
+    The refused geometries are requestable, not hypothetical.
+    `TerminalConfiguration` requires a positive int and nothing more, and an
+    earlier revision of this slice excused the column axis by arguing a
+    16-bit `COORD` put it out of reach. Measured on the Windows dev host,
+    `PTY()` range-checks nothing: 262,145x1, 1,048,577x1 and 10x100,000 all
+    create a pseudoconsole and spawn into it. A cheap check beats an
+    argument about what a host can ask for (round 7 finding 1; round 8
+    finding B1).
     """
-    columns = 10
     assert (
         rows * columns
         < (_MAX_RECORD_STRING_BYTES - _FIXED_RECORD_STRING_BYTES)
         // _MAX_UTF8_BYTES_PER_CELL
-    ), "the cell threshold would refuse these anyway"
+    ), "the cell threshold would refuse this case anyway"
 
     binding = _FakeBinding(_FakeChild([_MARKER]))
     adapter = _adapter(
@@ -801,17 +813,33 @@ def test_a_terminal_with_more_rows_than_a_frame_may_carry_fails_on_geometry(
 
     if starts:
         assert type(result) is Started
-        # The admitted end of the boundary is proved recordable by the real
-        # recorder and the real codec, not by restating the ceiling here.
+        # Both admitted ends of both boundaries are proved recordable by the
+        # real recorder and the real codec, not by restating a ceiling here.
         _recorded_transcript(result, configuration)
         return
     assert type(result) is StartFailed
-    assert result.failure.details == {"budget": "geometry", "terminal-rows": rows}
-    assert "more rows" in result.failure.message
+    assert result.failure.details == {
+        "budget": "geometry",
+        axis: rows if axis == "terminal-rows" else columns,
+    }
 
 
-def test_a_resize_past_the_threshold_cannot_slip_through_a_buffered_marker() -> None:
-    """An epoch that never reads must still honor the geometry bound.
+@pytest.mark.parametrize(
+    ("columns", "rows", "details"),
+    [
+        (32_767, 16, {"budget": "geometry", "terminal-cells": 16 * 32_767}),
+        (10, 20_000, {"budget": "geometry", "terminal-rows": 20_000}),
+        (
+            _MAX_FRAME_COLUMNS + 1,
+            1,
+            {"budget": "geometry", "terminal-columns": _MAX_FRAME_COLUMNS + 1},
+        ),
+    ],
+)
+def test_a_resize_past_a_threshold_cannot_slip_through_a_buffered_marker(
+    columns: int, rows: int, details: Mapping[str, object]
+) -> None:
+    """An epoch that never reads must honor every geometry bound.
 
     `_read_epoch_chunks` returns early when the marker is already buffered,
     so while the check lived inside the read loop a resize past the
@@ -820,6 +848,11 @@ def test_a_resize_past_the_threshold_cannot_slip_through_a_buffered_marker() -> 
     end. That is the admit-then-reject failure this budget exists to
     prevent, reached at a geometry the guide calls unrecordable (round 6,
     finding 1).
+
+    Every axis is parametrized here, not only the one that was reported.
+    With cells alone, moving the row or column check back below the early
+    return — the round-6 defect, one axis over — passed the whole suite
+    (round 8, finding M2).
     """
     # Two markers in one read: the second stays buffered in `_pending`, so
     # the resize epoch finds readiness without reading.
@@ -829,19 +862,45 @@ def test_a_resize_past_the_threshold_cannot_slip_through_a_buffered_marker() -> 
     assert type(started) is Started
     reads_before_resize = binding.child.reads_served
 
-    result = adapter.dispatch(Resize(ManualTime(0), columns=32_767, rows=16))
+    result = adapter.dispatch(Resize(ManualTime(0), columns=columns, rows=rows))
+
+    assert type(result) is TerminalResult
+    outcome = result.outcome
+    assert type(outcome) is RunFailed
+    assert outcome.failure.details == details
+    # No read was consumed by the resize epoch: it never entered the loop.
+    # `reads == []` would not say this — the script is popped as it is served,
+    # so it is empty on every path, including one that did read (round 7).
+    assert binding.child.reads_served == reads_before_resize
+
+
+def test_stop_refuses_an_unrecordable_geometry_it_did_not_read_its_way_into() -> None:
+    """The record-emitting path `stop()` takes is gated too, not just argued.
+
+    `stop()` calls `_observation` directly: it never runs the pre-read gate,
+    and is protected only by the invariant that a bad geometry always fails
+    its own epoch first and so leaves the adapter non-idle. The invariant
+    holds through the public API — which is why this test has to reach behind
+    it — but an unchecked argument on a record-emitting path is precisely
+    what rounds 6 and 8 each found walkable. Set the geometry directly and
+    `stop()` must produce a structured failure, not an unrecordable record
+    (round 8, finding m4).
+    """
+    binding = _FakeBinding(_FakeChild([_MARKER], exit_status=0))
+    adapter = _adapter(binding, watchdog=_FakeWatchdog())
+    assert type(adapter.start("run-conpty", _configuration())) is Started
+
+    adapter._rows = _MAX_COLLECTION_ITEMS + 1
+
+    result = adapter.stop(Stop(ManualTime(0)))
 
     assert type(result) is TerminalResult
     outcome = result.outcome
     assert type(outcome) is RunFailed
     assert outcome.failure.details == {
         "budget": "geometry",
-        "terminal-cells": 16 * 32_767,
+        "terminal-rows": _MAX_COLLECTION_ITEMS + 1,
     }
-    # No read was consumed by the resize epoch: it never entered the loop.
-    # `reads == []` would not say this — the script is popped as it is served,
-    # so it is empty on every path, including one that did read (round 7).
-    assert binding.child.reads_served == reads_before_resize
 
 
 def test_a_stalled_read_that_wins_the_close_race_is_not_relabelled() -> None:
