@@ -21,18 +21,13 @@ decoder across every chunk of a child's lifetime so splits heal.
 
 Process-tree containment uses a Windows job object created per spawn with
 ``JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`` and neither breakaway limit, so every
-descendant the child starts inherits membership and cannot leave. Forced
+descendant the child starts inherits membership and cannot leave. The child
+is created with ``CREATE_SUSPENDED`` and assigned to the job before its main
+thread resumes (issue #235), so no descendant can predate the membership:
+containment is a property of the spawn, not a near-certainty. Forced
 close terminates the whole tree atomically with ``TerminateJobObject``;
 releasing the binding closes the job handle, which makes the OS sweep any
-survivors even if this process dies abruptly. Disclosed boundary: the child
-is assigned to the job immediately after ``CreateProcess`` returns, so a
-process the child manages to start within that microseconds-wide window
-would fall outside the job; the binding does not claim pre-start assignment.
-That window used to be unavoidable, because ``pywinpty`` owned the spawn.
-It no longer is — this module now calls ``CreateProcessW`` itself, so
-``CREATE_SUSPENDED``, assign, ``ResumeThread`` would close it outright — and
-it remains open only because closing it is a containment change outside the
-scope of the slice that took ownership (issue #235).
+survivors even if this process dies abruptly.
 
 I/O is single-flight by contract: at most one native read or write may be in
 flight, and overlap fails fast with ``ConptyConcurrentIOError``. The native
@@ -195,6 +190,10 @@ if sys.platform == "win32":
     _EXTENDED_STARTUPINFO_PRESENT = 0x0008_0000
     _STARTF_USESTDHANDLES = 0x0000_0100
     _CREATE_UNICODE_ENVIRONMENT = 0x0000_0400
+    #: The child starts frozen and is assigned to its containment job before
+    #: its main thread resumes, so no descendant can predate the membership
+    #: (issue #235).
+    _CREATE_SUSPENDED = 0x0000_0004
     _PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = 0x0002_0016
     #: One native read never returns more than this many bytes. The value only
     #: caps a single ``ReadFile``; the pipe delivers whatever is available.
@@ -304,6 +303,8 @@ if sys.platform == "win32":
     _kernel32.SetInformationJobObject.restype = wintypes.BOOL
     _kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
     _kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+    _kernel32.ResumeThread.argtypes = [wintypes.HANDLE]
+    _kernel32.ResumeThread.restype = wintypes.DWORD
     _kernel32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
     _kernel32.TerminateJobObject.restype = wintypes.BOOL
     _kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
@@ -465,6 +466,11 @@ if sys.platform == "win32":
         if not _kernel32.AssignProcessToJobObject(job, process_handle):
             raise OSError(f"AssignProcessToJobObject failed: {ctypes.get_last_error()}")
 
+    def _resume_main_thread(thread_handle: int) -> None:
+        """Resume a child spawned with ``CREATE_SUSPENDED`` (issue #235)."""
+        if _kernel32.ResumeThread(wintypes.HANDLE(thread_handle)) == 0xFFFFFFFF:
+            raise OSError(f"ResumeThread failed: {ctypes.get_last_error()}")
+
     def _terminate_job(job: int, exit_code: int) -> None:
         if not _kernel32.TerminateJobObject(job, exit_code):
             raise OSError(f"TerminateJobObject failed: {ctypes.get_last_error()}")
@@ -555,6 +561,7 @@ if sys.platform == "win32":
             conout_read: int,
             conin_write: int,
             process_handle: int,
+            thread_handle: int | None,
             pid: int,
             read_event: int,
             cancel_event: int,
@@ -563,6 +570,7 @@ if sys.platform == "win32":
             self._conout_read: int | None = conout_read
             self._conin_write: int | None = conin_write
             self._process_handle: int | None = process_handle
+            self._thread_handle: int | None = thread_handle
             self._read_event: int | None = read_event
             self._cancel_event: int | None = cancel_event
             self._pid = pid
@@ -586,6 +594,35 @@ if sys.platform == "win32":
         @property
         def pid(self) -> int:
             return self._pid
+
+        def resume_main_thread(self) -> None:
+            """Resume the ``CREATE_SUSPENDED`` main thread exactly once (#235).
+
+            The caller resumes only after the containment job holds the
+            child. The session owns the thread handle until the resume
+            succeeds and closes it immediately after, so the handle is
+            released on every path — a failed resume leaves it owned here,
+            for :meth:`close` during the caller's teardown.
+            """
+            handle = self._thread_handle
+            if handle is None:
+                raise ConptyClosedError("the main thread was already resumed")
+            _resume_main_thread(handle)
+            self._thread_handle = None
+            _kernel32.CloseHandle(handle)
+
+        def terminate_child(self, exit_code: int) -> None:
+            """Terminate the child through the handle this session owns.
+
+            The spawn's containment-setup failure paths call this before
+            releasing anything: a suspended child cannot die of handle or
+            pseudoconsole closes, and it is not in a job yet, so an
+            unconditional terminate is the only path that cannot leak a
+            frozen orphan (issue #235 review).
+            """
+            handle = self._process_handle
+            if handle is not None:
+                _kernel32.TerminateProcess(handle, exit_code)
 
         def isalive(self) -> bool:
             handle = self._process_handle
@@ -863,12 +900,14 @@ if sys.platform == "win32":
                     self._conout_read,
                     self._conin_write,
                     self._process_handle,
+                    self._thread_handle,
                     self._read_event,
                     self._cancel_event,
                 ]
                 self._conout_read = None
                 self._conin_write = None
                 self._process_handle = None
+                self._thread_handle = None
                 self._read_event = None
                 self._cancel_event = None
             conout_read = handles[0]
@@ -917,6 +956,10 @@ if sys.platform == "win32":
     ) -> _PseudoConsoleSession:
         """Create a pseudoconsole and start ``argv`` attached to it.
 
+        The child is created ``CREATE_SUSPENDED`` (#235): the returned
+        session's main thread is frozen, and the caller owns resuming it
+        exactly once via :meth:`_PseudoConsoleSession.resume_main_thread` —
+        after containment is established — or tearing the session down.
         Every handle created here is closed on any failure before the error
         escapes: a partially built session is never returned and never leaks.
         """
@@ -934,6 +977,7 @@ if sys.platform == "win32":
         opened: list[int] = []
         pseudoconsole: int | None = None
         attributes: Any = None
+        spawned: int | None = None
         try:
             conin_read = wintypes.HANDLE()
             conin_write = wintypes.HANDLE()
@@ -1014,7 +1058,9 @@ if sys.platform == "win32":
                 None,
                 None,
                 False,
-                _EXTENDED_STARTUPINFO_PRESENT | _CREATE_UNICODE_ENVIRONMENT,
+                _EXTENDED_STARTUPINFO_PRESENT
+                | _CREATE_UNICODE_ENVIRONMENT
+                | _CREATE_SUSPENDED,
                 block,
                 cwd if cwd is not None else os.getcwd(),
                 ctypes.byref(startup),
@@ -1024,9 +1070,17 @@ if sys.platform == "win32":
                     f"ConPTY spawn failed for {command}:"
                     f" CreateProcessW reported {ctypes.get_last_error()}"
                 )
-            _kernel32.CloseHandle(information.hThread)
-            process_handle = int(information.hProcess or 0)
-            opened.append(process_handle)
+            # The child starts suspended (issue #235): the caller assigns it
+            # to its containment job before resuming its main thread, so no
+            # descendant can predate the membership. The thread handle is
+            # the only resume path and stays owned until then. `spawned` is
+            # captured first so the teardown below terminates the child on
+            # any failure from here on (#235 review: the bookkeeping
+            # statements must not form an unguarded window).
+            spawned = int(information.hProcess or 0)
+            process_handle = spawned
+            thread_handle = int(information.hThread or 0)
+            opened.extend((process_handle, thread_handle))
             read_event = _kernel32.CreateEventW(None, True, False, None)
             if not read_event:
                 raise _last_error("CreateEventW")
@@ -1040,6 +1094,7 @@ if sys.platform == "win32":
                 conout_read=conout_read,
                 conin_write=int(conin_write.value or 0),
                 process_handle=process_handle,
+                thread_handle=thread_handle,
                 pid=int(information.dwProcessId),
                 read_event=int(read_event),
                 cancel_event=int(cancel_event),
@@ -1048,7 +1103,13 @@ if sys.platform == "win32":
             # not close what it now owns.
             opened.clear()
             pseudoconsole = None
+            spawned = None
         except BaseException:
+            if spawned is not None:
+                # A suspended child cannot die of handle or pseudoconsole
+                # closes — terminate it or the failed spawn leaks a frozen
+                # orphan (issue #235).
+                _kernel32.TerminateProcess(spawned, FORCED_TERMINATION_EXIT_CODE)
             for owned in opened:
                 _kernel32.CloseHandle(owned)
             if pseudoconsole is not None:
@@ -1073,6 +1134,9 @@ else:
         raise _unsupported()
 
     def _assign_to_job(job: int, process_handle: int) -> None:
+        raise _unsupported()
+
+    def _resume_main_thread(thread_handle: int) -> None:
         raise _unsupported()
 
     def _terminate_job(job: int, exit_code: int) -> None:
@@ -1143,10 +1207,11 @@ class ConptyChild:
     ) -> ConptyChild:
         """Spawn a contained child on a ConPTY pseudoconsole.
 
-        The child is assigned to a fresh kill-on-close job object before the
-        binding is returned. If containment cannot be established, the child
-        is terminated and the spawn fails closed: no uncontained session is
-        ever handed out.
+        The child is created suspended and assigned to a fresh kill-on-close
+        job object before its main thread resumes, so no descendant can
+        predate the job membership (issue #235). If containment cannot be
+        established, the child is terminated — never resumed — and the spawn
+        fails closed: no uncontained session is ever handed out.
 
         ``env_overlay`` variables are overlaid onto this process's ambient
         environment at spawn time; an overlay variable always wins over an
@@ -1163,16 +1228,29 @@ class ConptyChild:
         pty = _open_session(
             argv, rows=rows, columns=columns, env_overlay=env_overlay, cwd=cwd
         )
-        pid = int(pty.pid)
+        # The child exists — suspended — from here on. Every statement
+        # after this point, including the pid bookkeeping itself, runs
+        # inside the guard: an exception anywhere in the window must reach
+        # the terminate-and-release teardown (#235 review round 3).
+        pid: int | None = None
         job: int | None = None
         process_handle: int | None = None
         try:
+            pid = int(pty.pid)
             job = _create_containment_job()
             process_handle = _open_containment_handle(pid)
             _assign_to_job(job, process_handle)
-        except OSError as error:
+            pty.resume_main_thread()
+        except BaseException as error:
+            # Terminate unconditionally, through the handle the session
+            # owns: the child is suspended, so it cannot die of the handle
+            # and pseudoconsole closes below, and on the paths where the
+            # job or the containment handle could not be established it is
+            # in no job — anything less leaks a frozen orphan. The teardown
+            # runs for BaseException, not just OSError: a KeyboardInterrupt
+            # in this window must not leak the child either (#235 review).
+            pty.terminate_child(FORCED_TERMINATION_EXIT_CODE)
             if process_handle is not None:
-                _terminate_process(process_handle, FORCED_TERMINATION_EXIT_CODE)
                 _close_handle(process_handle)
             if job is not None:
                 _close_handle(job)
@@ -1181,9 +1259,11 @@ class ConptyChild:
             # traceback cannot pin what is left of it.
             pty.close()
             del pty
-            raise OSError(
-                f"failed to contain ConPTY child {pid} in a job object"
-            ) from error
+            if isinstance(error, OSError):
+                raise OSError(
+                    f"failed to contain ConPTY child {pid} in a job object"
+                ) from error
+            raise
         return cls(pty, pid, job, process_handle)
 
     @property

@@ -81,9 +81,12 @@ A subject's process tree is contained by a kill-on-close job object on Windows
 and by a process group on POSIX. **Neither is escape-proof, and TermVerify does
 not claim otherwise.** A process can leave the containment in a known way on
 each platform: on POSIX by starting a new session (`setsid`), which no
-process-group signal reaches; on Windows by being started inside the disclosed
-microseconds-wide window between `CreateProcess` and job assignment, or by
-descending from a child that exited before it could be assigned at all.
+process-group signal reaches; on Windows by descending from a child that
+exited before it could be assigned at all. The ConPTY binding closes the
+other historical Windows escape — a descendant started between `CreateProcess`
+and job assignment — by spawning its child `CREATE_SUSPENDED` and assigning
+before the main thread resumes (issue #235); the JSONL transport's Windows
+spawn does not own `CreateProcess` and retains that window.
 
 Such a survivor is **not reaped**. Reaping it portably would require cgroups or
 a subreaper — horizontal platform machinery, rejected as out of scope by
