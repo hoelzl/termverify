@@ -658,6 +658,20 @@ def test_spawn_containment_failure_terminates_child_and_fails_closed(
 
 def _spy_spawned_pids(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     """Record the pid of every child the binding creates (issue #235)."""
+    pids: list[int] = []
+    _spy_spawned(monkeypatch, pids=pids)
+    return pids
+
+
+def _spy_spawned(
+    monkeypatch: pytest.MonkeyPatch, *, pids: list[int] | None = None
+) -> list[Any]:
+    """Record (pid, thread handle, creation flags) for every spawned child.
+
+    The returned list — and *pids* when given — are live: the spy appends
+    as children are created, so callers observe spawns that happen after
+    this helper returns.
+    """
     import termverify._conpty as conpty_module
 
     # The kernel handle and the process structure exist only in the nt
@@ -666,7 +680,7 @@ def _spy_spawned_pids(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     native: Any = conpty_module
     kernel32 = native._kernel32
     real_create_process = kernel32.CreateProcessW
-    created: list[int] = []
+    spawned: list[Any] = []
 
     def recording_create_process(*args):  # type: ignore[no-untyped-def]
         result = real_create_process(*args)
@@ -674,11 +688,29 @@ def _spy_spawned_pids(monkeypatch: pytest.MonkeyPatch) -> list[int]:
             information = ctypes.cast(
                 args[9], ctypes.POINTER(native._ProcessInformation)
             ).contents
-            created.append(int(information.dwProcessId))
+            pid = int(information.dwProcessId)
+            spawned.append((pid, int(information.hThread), int(args[5])))
+            if pids is not None:
+                pids.append(pid)
         return result
 
     monkeypatch.setattr(kernel32, "CreateProcessW", recording_create_process)
-    return created
+    return spawned
+
+
+def _handle_is_open(handle: int) -> bool:
+    """Ask the OS whether a handle value is still valid (issue #235 review).
+
+    Deterministic counterpart to spying on ``CloseHandle``: no dependence
+    on handle-value coincidences in the close stream.
+    """
+    import termverify._conpty as conpty_module
+
+    # The kernel handle exists only in the nt branch, so off-Windows mypy
+    # cannot resolve it on the module; callers are Windows-only (skipif).
+    native: Any = conpty_module
+    flags = ctypes.wintypes.DWORD()
+    return bool(native._kernel32.GetHandleInformation(handle, ctypes.byref(flags)))
 
 
 def _assert_os_terminated(pid: int) -> None:
@@ -708,16 +740,14 @@ def test_spawn_assigns_the_containment_job_before_the_child_may_run(
     import termverify._conpty as conpty_module
 
     events: list[str] = []
-    flags_seen: list[int] = []
     real_assign = conpty_module._assign_to_job
     real_resume = conpty_module._resume_main_thread
-    # The kernel handle, the creation flag, and the process structure exist
-    # only in the nt branch, so off-Windows mypy cannot resolve them on the
-    # module; these tests are Windows-only at runtime (skipif above).
+    # The kernel handle and the creation flag exist only in the nt branch,
+    # so off-Windows mypy cannot resolve them on the module; these tests
+    # are Windows-only at runtime (skipif above).
     native: Any = conpty_module
-    kernel32 = native._kernel32
     create_suspended: int = native._CREATE_SUSPENDED
-    real_create_process = kernel32.CreateProcessW
+    spawned = _spy_spawned(monkeypatch)
 
     def recording_assign(job: int, process_handle: int) -> None:
         events.append("assign")
@@ -727,23 +757,79 @@ def test_spawn_assigns_the_containment_job_before_the_child_may_run(
         events.append("resume")
         real_resume(thread_handle)
 
-    def recording_create_process(*args):  # type: ignore[no-untyped-def]
-        flags_seen.append(int(args[5]))
-        return real_create_process(*args)
-
     monkeypatch.setattr(conpty_module, "_assign_to_job", recording_assign)
     monkeypatch.setattr(conpty_module, "_resume_main_thread", recording_resume)
-    monkeypatch.setattr(kernel32, "CreateProcessW", recording_create_process)
 
     child = _spawn(_BLOCKING_CHILD)
     try:
         assert events == ["assign", "resume"]
-        assert flags_seen, "CreateProcessW was never observed"
-        assert all(flags & create_suspended for flags in flags_seen), (
+        assert spawned, "CreateProcessW was never observed"
+        assert all(flags & create_suspended for _, _, flags in spawned), (
             "the child was not created suspended"
+        )
+        _, thread_handle, _ = spawned[0]
+        assert not _handle_is_open(thread_handle), (
+            "the thread handle leaked after the successful resume"
         )
     finally:
         child.close(force=True)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_a_failure_reading_the_child_pid_still_terminates_the_suspended_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Issue #235 review round 3: no bookkeeping statement may sit unguarded.
+
+    The child exists — suspended — from the moment ``_open_session``
+    returns. Any exception before the containment ``try`` (a signal landing
+    on the bookkeeping statements, here simulated at the ``pid`` read) must
+    still run the terminate-and-release teardown, not leak a frozen orphan.
+    """
+    import termverify._conpty as conpty_module
+
+    created_pid = _spy_spawned_pids(monkeypatch)
+
+    def exploding_pid(self):  # type: ignore[no-untyped-def]
+        raise KeyboardInterrupt("injected pre-try failure")
+
+    monkeypatch.setattr(
+        conpty_module._PseudoConsoleSession, "pid", property(exploding_pid)
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        _spawn(_BLOCKING_CHILD)
+    assert created_pid, "the injected failure fired before the child existed"
+    _assert_os_terminated(created_pid[0])
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_a_resume_failure_terminates_the_child_and_closes_the_thread_handle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Issue #235 review: the thread handle is closed on every path.
+
+    A failed resume must still terminate the suspended child — it is the
+    only resume path — and the teardown close must sweep the thread handle
+    rather than leak one handle per failed spawn.
+    """
+    import termverify._conpty as conpty_module
+
+    spawned = _spy_spawned(monkeypatch)
+
+    def failing_resume(thread_handle: int) -> None:
+        raise OSError("injected resume failure")
+
+    monkeypatch.setattr(conpty_module, "_resume_main_thread", failing_resume)
+
+    with pytest.raises(OSError, match="failed to contain ConPTY child"):
+        _spawn(_BLOCKING_CHILD)
+    assert spawned, "the injected failure fired before the child existed"
+    pid, thread_handle, _ = spawned[0]
+    assert not _handle_is_open(thread_handle), (
+        "the thread handle leaked on the teardown"
+    )
+    _assert_os_terminated(pid)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")

@@ -952,6 +952,10 @@ if sys.platform == "win32":
     ) -> _PseudoConsoleSession:
         """Create a pseudoconsole and start ``argv`` attached to it.
 
+        The child is created ``CREATE_SUSPENDED`` (#235): the returned
+        session's main thread is frozen, and the caller owns resuming it
+        exactly once via :meth:`_PseudoConsoleSession.resume_main_thread` —
+        after containment is established — or tearing the session down.
         Every handle created here is closed on any failure before the error
         escapes: a partially built session is never returned and never leaks.
         """
@@ -1065,11 +1069,14 @@ if sys.platform == "win32":
             # The child starts suspended (issue #235): the caller assigns it
             # to its containment job before resuming its main thread, so no
             # descendant can predate the membership. The thread handle is
-            # the only resume path and stays owned until then.
-            process_handle = int(information.hProcess or 0)
+            # the only resume path and stays owned until then. `spawned` is
+            # captured first so the teardown below terminates the child on
+            # any failure from here on (#235 review: the bookkeeping
+            # statements must not form an unguarded window).
+            spawned = int(information.hProcess or 0)
+            process_handle = spawned
             thread_handle = int(information.hThread or 0)
             opened.extend((process_handle, thread_handle))
-            spawned = process_handle
             read_event = _kernel32.CreateEventW(None, True, False, None)
             if not read_event:
                 raise _last_error("CreateEventW")
@@ -1217,10 +1224,15 @@ class ConptyChild:
         pty = _open_session(
             argv, rows=rows, columns=columns, env_overlay=env_overlay, cwd=cwd
         )
-        pid = int(pty.pid)
+        # The child exists — suspended — from here on. Every statement
+        # after this point, including the pid bookkeeping itself, runs
+        # inside the guard: an exception anywhere in the window must reach
+        # the terminate-and-release teardown (#235 review round 3).
+        pid: int | None = None
         job: int | None = None
         process_handle: int | None = None
         try:
+            pid = int(pty.pid)
             job = _create_containment_job()
             process_handle = _open_containment_handle(pid)
             _assign_to_job(job, process_handle)

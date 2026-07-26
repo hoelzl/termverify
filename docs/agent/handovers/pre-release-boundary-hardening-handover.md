@@ -595,8 +595,11 @@ OS-observed terminated. The job-assignment
 window this slice disclosed — a descendant started between `CreateProcess`
 and the assignment — is closed as of 2026-07-26 (issue #235): the child is
 created `CREATE_SUSPENDED` and assigned before its main thread resumes, so
-no descendant can predate the membership, and every failure path between
-creation and resume terminates the suspended child rather than leaking it.
+no descendant can predate the membership, and every exception raised by
+the spawn's own statements between creation and resume terminates the
+suspended child rather than leaking it (a signal in the few bytecodes
+between `CreateProcessW`'s return and the handle capture is the disclosed
+residual).
 Cancellation/recovery taxonomy, dimensions receipts,
 enforcement receipts, and evidence normalization remain unproven and
 fail-closed.
