@@ -3,13 +3,15 @@
 Everything here runs cross-platform against fake bindings, fake normalizers,
 and a fake watchdog trigger: the readiness-marker protocol, the epoch loop,
 the failure-classification matrix, watchdog-driven deadline aborts, and forced
-stop teardown. Nothing here claims ConPTY passes the private-OSC marker
-default through; that evidence lives in the Windows integration module
-(`test_conpty_integration.py`).
+stop teardown. Nothing here claims anything about how ConPTY actually delivers
+a marker — that evidence lives in the Windows integration module
+(`test_conpty_integration.py`), including why the marker is printable and
+carries a per-emission token (#232).
 """
 
 from __future__ import annotations
 
+import itertools
 import os
 import threading
 from collections.abc import Callable, Mapping, Sequence
@@ -60,7 +62,8 @@ from termverify.adapter import (
 from termverify.conpty import (
     _FIXED_RECORD_STRING_BYTES,
     _MAX_UTF8_BYTES_PER_CELL,
-    READINESS_MARKER_DEFAULT,
+    READINESS_MARKER_PREFIX_DEFAULT,
+    READINESS_MARKER_TERMINATOR,
     ConptyAdapter,
     ConptyChildPort,
     TimerWatchdog,
@@ -73,7 +76,23 @@ from termverify.transcript import (
 )
 from termverify.vt import ScreenSnapshot, VtNormalizationError
 
-_MARKER = READINESS_MARKER_DEFAULT
+_marker_tokens = itertools.count(1)
+
+
+def _marker() -> str:
+    """A readiness marker whose token no earlier marker in this run used.
+
+    The adapter honours a marker only once, because ConPTY re-emits screen
+    state on every repaint and a constant marker would otherwise complete
+    epochs its input never caused (#232). Tests that need two markers to be
+    the *same* marker must hold on to one of these.
+    """
+    return (
+        f"{READINESS_MARKER_PREFIX_DEFAULT}{next(_marker_tokens)}"
+        f"{READINESS_MARKER_TERMINATOR}"
+    )
+
+
 _DEADLINE_MS = 60_000
 
 #: Minimal valid replay subject, so budget evidence can be pushed through the
@@ -354,7 +373,7 @@ def _adapter(
     *,
     normalizer_factory: _NormalizerFactory | None = None,
     watchdog: _FakeWatchdog | None = None,
-    readiness_marker: str = _MARKER,
+    readiness_marker_prefix: str = READINESS_MARKER_PREFIX_DEFAULT,
     abort_deadline_ms: int = _DEADLINE_MS,
     monotonic: Callable[[], float] | None = None,
 ) -> ConptyAdapter:
@@ -368,7 +387,7 @@ def _adapter(
             if normalizer_factory is not None
             else _NormalizerFactory()
         ),
-        readiness_marker=readiness_marker,
+        readiness_marker_prefix=readiness_marker_prefix,
         watchdog=watchdog if watchdog is not None else _FakeWatchdog(),
         abort_deadline_ms=abort_deadline_ms,
     )
@@ -411,18 +430,23 @@ def test_constructor_requires_an_explicit_abort_deadline() -> None:
         _adapter(_FakeBinding(), abort_deadline_ms=0)
 
 
-def test_constructor_validates_the_readiness_marker() -> None:
+def test_constructor_validates_the_readiness_marker_prefix() -> None:
     with pytest.raises(TypeError):
-        _adapter(_FakeBinding(), readiness_marker=cast("str", b"ready"))
+        _adapter(_FakeBinding(), readiness_marker_prefix=cast("str", b"ready"))
     with pytest.raises(ValueError):
-        _adapter(_FakeBinding(), readiness_marker="")
+        _adapter(_FakeBinding(), readiness_marker_prefix="")
+    # A prefix containing the terminator would close the marker before its
+    # token, so every marker would carry an empty one.
+    with pytest.raises(ValueError):
+        _adapter(_FakeBinding(), readiness_marker_prefix="<<ready>>")
 
 
 # --- start: readiness ------------------------------------------------------
 
 
 def test_start_spawns_and_reaches_marker_readiness() -> None:
-    binding = _FakeBinding(_FakeChild(["hello" + _MARKER]))
+    ready = "hello" + _marker()
+    binding = _FakeBinding(_FakeChild([ready]))
     factory = _NormalizerFactory()
     watchdog = _FakeWatchdog()
     adapter = _adapter(binding, normalizer_factory=factory, watchdog=watchdog)
@@ -435,22 +459,22 @@ def test_start_spawns_and_reaches_marker_readiness() -> None:
     assert observation.at_ms == 0
     assert observation.state == {"terminal": {"columns": 80, "rows": 24}}
     assert [event.type for event in observation.events] == ["terminal.output"]
-    assert observation.events[0].data == {"chunk": "hello" + _MARKER}
+    assert observation.events[0].data == {"chunk": ready}
     assert observation.process is None
     assert observation.frame is not None
     assert observation.frame.columns == 80
     assert observation.frame.rows == 24
     assert observation.ui.cursor == Cursor(column=0, row=0, visible=True)
     assert observation.ui.regions == ()
-    assert factory.created[0].fed == ["hello" + _MARKER]
+    assert factory.created[0].fed == [ready]
     assert watchdog.arms == [_DEADLINE_MS]
     assert watchdog.disarms == 1
     assert binding.child.closes == []
 
 
 def test_start_finds_a_marker_split_across_chunks() -> None:
-    split = len(_MARKER) // 2
-    chunks = ["hi" + _MARKER[:split], _MARKER[split:]]
+    split = len(_marker()) // 2
+    chunks = ["hi" + _marker()[:split], _marker()[split:]]
     binding = _FakeBinding(_FakeChild(chunks))
     factory = _NormalizerFactory()
     adapter = _adapter(binding, normalizer_factory=factory)
@@ -465,8 +489,16 @@ def test_start_finds_a_marker_split_across_chunks() -> None:
     assert factory.created[0].fed == chunks
 
 
-def test_start_with_the_default_vt_normalizer_consumes_the_osc_marker() -> None:
-    binding = _FakeBinding(_FakeChild(["hi" + _MARKER]))
+def test_start_with_the_default_vt_normalizer_renders_the_marker() -> None:
+    """The marker is rendered text, so the real normalizer puts it on screen.
+
+    It reaches the adapter through the renderer precisely so that it is
+    ordered against the output it bounds (#232), and the cost of that is
+    exactly this: it occupies cells. What must not appear is an escape
+    sequence — the marker is printable throughout.
+    """
+    marker = _marker()
+    binding = _FakeBinding(_FakeChild(["hi" + marker]))
     adapter = ConptyAdapter(
         ("subject",),
         binding=binding,
@@ -480,25 +512,25 @@ def test_start_with_the_default_vt_normalizer_consumes_the_osc_marker() -> None:
     assert type(result) is Started
     frame = result.observation.frame
     assert frame is not None
-    assert frame.lines[0].startswith("hi ")
+    assert frame.lines[0].startswith("hi" + marker)
     assert "\x1b" not in frame.lines[0]
 
 
-def test_start_honors_a_configured_printable_marker() -> None:
-    binding = _FakeBinding(_FakeChild(["banner<<READY>>"]))
+def test_start_honors_a_configured_marker_prefix() -> None:
+    binding = _FakeBinding(_FakeChild(["banner<<READY:1>>"]))
     factory = _NormalizerFactory()
     adapter = _adapter(
-        binding, normalizer_factory=factory, readiness_marker="<<READY>>"
+        binding, normalizer_factory=factory, readiness_marker_prefix="<<READY:"
     )
 
     result = adapter.start("run-conpty", _configuration())
 
     assert type(result) is Started
-    assert factory.created[0].fed == ["banner<<READY>>"]
+    assert factory.created[0].fed == ["banner<<READY:1>>"]
 
 
 def test_marker_scanning_survives_long_marker_free_chunks() -> None:
-    binding = _FakeBinding(_FakeChild(["x" * 200, "y" * 200, _MARKER]))
+    binding = _FakeBinding(_FakeChild(["x" * 200, "y" * 200, _marker()]))
     adapter = _adapter(binding)
 
     result = adapter.start("run-conpty", _configuration())
@@ -656,7 +688,7 @@ def test_a_chatty_epoch_within_the_deadline_still_succeeds() -> None:
     the end, and a clock that never reaches the epoch deadline.
     """
     reads = ["line\r\n"] * 4000
-    reads.append(_MARKER)
+    reads.append(_marker())
     binding = _FakeBinding(_FakeChild(reads))
     adapter = _adapter(binding, watchdog=_FakeWatchdog())
 
@@ -725,7 +757,7 @@ def test_a_terminal_too_large_for_its_own_frame_fails_on_geometry(
     assert threshold == 523_264, "the documented threshold moved"
     assert (rows * columns < threshold) is starts, "case does not straddle it"
 
-    binding = _FakeBinding(_FakeChild([_MARKER]))
+    binding = _FakeBinding(_FakeChild([_marker()]))
     adapter = _adapter(
         binding,
         watchdog=_FakeWatchdog(),
@@ -803,7 +835,7 @@ def test_a_frame_ceiling_bytes_cannot_express_refuses_the_geometry(
         // _MAX_UTF8_BYTES_PER_CELL
     ), "the cell threshold would refuse this case anyway"
 
-    binding = _FakeBinding(_FakeChild([_MARKER]))
+    binding = _FakeBinding(_FakeChild([_marker()]))
     adapter = _adapter(
         binding,
         watchdog=_FakeWatchdog(),
@@ -868,7 +900,7 @@ def test_a_resize_past_a_threshold_cannot_slip_through_a_buffered_marker(
     """
     # Two markers in one read: the second stays buffered in `_pending`, so
     # the resize epoch finds readiness without reading.
-    binding = _FakeBinding(_FakeChild([_MARKER + _MARKER]))
+    binding = _FakeBinding(_FakeChild([_marker() + _marker()]))
     adapter = _adapter(binding, watchdog=_FakeWatchdog())
     started = adapter.start("run-conpty", _configuration())
     assert type(started) is Started
@@ -904,7 +936,7 @@ def test_stop_refuses_an_unrecordable_geometry_it_did_not_read_its_way_into() ->
     against an ungated `stop()` and pin guard ordering rather than the harm
     (round 9, finding F4).
     """
-    binding = _FakeBinding(_FakeChild([_MARKER], exit_status=0))
+    binding = _FakeBinding(_FakeChild([_marker()], exit_status=0))
     adapter = _adapter(binding, watchdog=_FakeWatchdog())
     assert type(adapter.start("run-conpty", _configuration())) is Started
 
@@ -934,7 +966,7 @@ def test_a_stalled_read_that_wins_the_close_race_is_not_relabelled() -> None:
     # Fires after the first read returns: the read won the race with expiry.
     watchdog = _FakeWatchdog(fire_at_disarm=1)
     clock = _SteppingClock(_DEADLINE_MS / 1000, every=1)
-    binding = _FakeBinding(_FakeChild(["." * 8, _MARKER]))
+    binding = _FakeBinding(_FakeChild(["." * 8, _marker()]))
     adapter = _adapter(binding, watchdog=watchdog, monotonic=clock)
 
     result = adapter.start("run-conpty", _configuration())
@@ -955,7 +987,7 @@ def test_the_byte_budget_counts_the_marker_bearing_chunk_too() -> None:
     """
     filler = "x" * 64 * 1024
     reads = [filler] * (_MAX_RECORD_STRING_BYTES // len(filler) - 1)
-    reads.append("x" * 512 * 1024 + _MARKER)
+    reads.append("x" * 512 * 1024 + _marker())
     binding = _FakeBinding(_FakeChild(reads))
     adapter = _adapter(binding, watchdog=_FakeWatchdog())
 
@@ -1017,7 +1049,7 @@ def test_the_largest_admitted_epoch_records_as_a_valid_transcript(
         """Start one epoch carrying `payload_bytes` across several chunks."""
         whole, tail = divmod(payload_bytes, step)
         chunks = ["y" * step] * whole + (["y" * tail] if tail else [])
-        binding = _FakeBinding(_FakeChild([*chunks, _MARKER]))
+        binding = _FakeBinding(_FakeChild([*chunks, _marker()]))
         adapter = _adapter(
             binding,
             watchdog=_FakeWatchdog(),
@@ -1066,7 +1098,7 @@ def test_a_chunk_flood_is_bounded_by_bytes_alone() -> None:
     test would leave the deletion pinned by nothing.
     """
     flood = ["W"] * (_MAX_COLLECTION_ITEMS + 1)
-    binding = _FakeBinding(_FakeChild([*flood, _MARKER]))
+    binding = _FakeBinding(_FakeChild([*flood, _marker()]))
     adapter = _adapter(binding, watchdog=_FakeWatchdog())
 
     result = adapter.start("run-conpty", _configuration())
@@ -1081,7 +1113,7 @@ def test_a_chunk_flood_is_bounded_by_bytes_alone() -> None:
 def test_the_epoch_deadline_also_bounds_a_dispatch_epoch() -> None:
     """The epoch bound is not a start-only guard."""
     clock = _SteppingClock(_DEADLINE_MS / 1000 / 4)
-    binding = _FakeBinding(_FakeChild([_MARKER, *(["."] * 40)]))
+    binding = _FakeBinding(_FakeChild([_marker(), *(["."] * 40)]))
     adapter = _adapter(binding, watchdog=_FakeWatchdog(), monotonic=clock)
     assert type(adapter.start("run-conpty", _configuration())) is Started
 
@@ -1100,7 +1132,7 @@ def test_a_budget_abort_in_a_dispatch_epoch_is_a_runtime_failure() -> None:
     """Every other budget test drives `start()`; dispatch must match."""
     chunk = "x" * 64 * 1024
     flood = [chunk] * (_MAX_RECORD_STRING_BYTES // len(chunk) + 2)
-    adapter, binding, _, _ = _started([_MARKER, *flood])
+    adapter, binding, _, _ = _started([_marker(), *flood])
 
     result = adapter.dispatch(TextInput(at_ms=ManualTime(0), text="go"))
 
@@ -1159,7 +1191,7 @@ def test_start_normalizer_feed_failure_is_start_failed() -> None:
 
 
 def test_start_snapshot_failure_is_start_failed() -> None:
-    binding = _FakeBinding(_FakeChild([_MARKER]))
+    binding = _FakeBinding(_FakeChild([_marker()]))
     factory = _NormalizerFactory(snapshot_error=RuntimeError("snapshot exploded"))
     adapter = _adapter(binding, normalizer_factory=factory)
 
@@ -1170,7 +1202,7 @@ def test_start_snapshot_failure_is_start_failed() -> None:
 
 
 def test_start_frame_dimension_disagreement_is_start_failed() -> None:
-    binding = _FakeBinding(_FakeChild([_MARKER]))
+    binding = _FakeBinding(_FakeChild([_marker()]))
     factory = _NormalizerFactory(frame_dimensions=(10, 40))
     adapter = _adapter(binding, normalizer_factory=factory)
 
@@ -1185,25 +1217,25 @@ def test_start_frame_dimension_disagreement_is_start_failed() -> None:
 
 
 def test_text_dispatch_writes_and_completes_an_epoch() -> None:
-    adapter, binding, factory, watchdog = _started(["ready" + _MARKER])
-    binding.child.reads.append("echo" + _MARKER)
+    ready = "ready" + _marker()
+    echo = "echo" + _marker()
+    adapter, binding, factory, watchdog = _started([ready])
+    binding.child.reads.append(echo)
 
     result = adapter.dispatch(TextInput(ManualTime(0), "x\r"))
 
     assert type(result) is EpochCompleted
     assert binding.child.written == ["x\r"]
-    assert [event.data for event in result.observation.events] == [
-        {"chunk": "echo" + _MARKER}
-    ]
+    assert [event.data for event in result.observation.events] == [{"chunk": echo}]
     assert result.observation.at_ms == 0
     assert result.observation.process is None
-    assert factory.created[0].fed == ["ready" + _MARKER, "echo" + _MARKER]
+    assert factory.created[0].fed == [ready, echo]
     assert watchdog.arms == [_DEADLINE_MS, _DEADLINE_MS]
     assert watchdog.disarms == 2
 
 
 def test_dispatch_requires_the_current_manual_time() -> None:
-    adapter, _, _, _ = _started([_MARKER])
+    adapter, _, _, _ = _started([_marker()])
 
     with pytest.raises(ValueError):
         adapter.dispatch(TextInput(ManualTime(5), "x"))
@@ -1229,23 +1261,23 @@ def test_dispatch_requires_the_current_manual_time() -> None:
 def test_encodable_key_dispatch_writes_registry_bytes_once_and_runs_an_epoch(
     keys: tuple[str, ...], expected: str
 ) -> None:
-    adapter, binding, factory, watchdog = _started([_MARKER])
-    binding.child.reads.append("reacted" + _MARKER)
+    ready = _marker()
+    reacted = "reacted" + _marker()
+    adapter, binding, factory, watchdog = _started([ready])
+    binding.child.reads.append(reacted)
 
     result = adapter.dispatch(KeyInput(ManualTime(0), keys))
 
     assert type(result) is EpochCompleted
     assert binding.child.written == [expected]
-    assert [event.data for event in result.observation.events] == [
-        {"chunk": "reacted" + _MARKER}
-    ]
-    assert factory.created[0].fed == [_MARKER, "reacted" + _MARKER]
+    assert [event.data for event in result.observation.events] == [{"chunk": reacted}]
+    assert factory.created[0].fed == [ready, reacted]
     assert watchdog.arms == [_DEADLINE_MS, _DEADLINE_MS]
     assert watchdog.disarms == 2
 
 
 def test_unencodable_key_dispatch_fails_closed_before_any_child_write() -> None:
-    adapter, binding, _, _ = _started([_MARKER])
+    adapter, binding, _, _ = _started([_marker()])
 
     result = adapter.dispatch(KeyInput(ManualTime(0), ("Control", "Enter")))
 
@@ -1265,7 +1297,7 @@ def test_unencodable_key_dispatch_fails_closed_before_any_child_write() -> None:
 
 def test_key_dispatch_write_failure_uses_the_structured_runtime_path() -> None:
     adapter, binding, _, _ = _started(
-        [_MARKER], write_error=RuntimeError("write refused")
+        [_marker()], write_error=RuntimeError("write refused")
     )
 
     result = adapter.dispatch(KeyInput(ManualTime(0), ("ArrowUp",)))
@@ -1277,8 +1309,8 @@ def test_key_dispatch_write_failure_uses_the_structured_runtime_path() -> None:
 
 
 def test_resize_dispatch_resizes_child_and_normalizer() -> None:
-    adapter, binding, factory, _ = _started([_MARKER])
-    binding.child.reads.append("repainted" + _MARKER)
+    adapter, binding, factory, _ = _started([_marker()])
+    binding.child.reads.append("repainted" + _marker())
 
     result = adapter.dispatch(Resize(ManualTime(0), columns=100, rows=30))
 
@@ -1293,7 +1325,9 @@ def test_resize_dispatch_resizes_child_and_normalizer() -> None:
 
 
 def test_resize_failure_is_a_runtime_failure() -> None:
-    adapter, binding, _, _ = _started([_MARKER], resize_error=OSError("resize failed"))
+    adapter, binding, _, _ = _started(
+        [_marker()], resize_error=OSError("resize failed")
+    )
 
     result = adapter.dispatch(Resize(ManualTime(0), columns=100, rows=30))
 
@@ -1304,7 +1338,7 @@ def test_resize_failure_is_a_runtime_failure() -> None:
 
 
 def test_write_failure_is_a_runtime_failure() -> None:
-    adapter, binding, _, _ = _started([_MARKER], write_error=OSError("write failed"))
+    adapter, binding, _, _ = _started([_marker()], write_error=OSError("write failed"))
 
     result = adapter.dispatch(TextInput(ManualTime(0), "x"))
 
@@ -1314,7 +1348,7 @@ def test_write_failure_is_a_runtime_failure() -> None:
 
 
 def test_dispatch_end_of_stream_finishes_the_run() -> None:
-    adapter, binding, _, _ = _started([_MARKER], exit_status=0)
+    adapter, binding, _, _ = _started([_marker()], exit_status=0)
     binding.child.reads.extend(["bye", ConptyEndOfStreamError("end of stream")])
 
     result = adapter.dispatch(TextInput(ManualTime(0), "quit\r"))
@@ -1332,7 +1366,7 @@ def test_dispatch_end_of_stream_finishes_the_run() -> None:
 
 
 def test_dispatch_deadline_abort_has_no_observation() -> None:
-    binding = _FakeBinding(_FakeChild([_MARKER]))
+    binding = _FakeBinding(_FakeChild([_marker()]))
     watchdog = _FakeWatchdog(fire_at_arm=2)
     adapter = _adapter(binding, watchdog=watchdog)
     started = adapter.start("run-conpty", _configuration())
@@ -1351,7 +1385,7 @@ def test_dispatch_deadline_abort_has_no_observation() -> None:
 
 
 def test_expire_close_failure_still_classifies_the_deadline_abort() -> None:
-    child = _FakeChild([_MARKER], close_error=OSError("close failed"))
+    child = _FakeChild([_marker()], close_error=OSError("close failed"))
     binding = _FakeBinding(child)
     watchdog = _FakeWatchdog(fire_at_arm=2)
     adapter = _adapter(binding, watchdog=watchdog)
@@ -1372,7 +1406,7 @@ def test_expire_close_failure_still_classifies_the_deadline_abort() -> None:
 
 
 def test_deadline_expiry_racing_a_successful_read_still_aborts() -> None:
-    binding = _FakeBinding(_FakeChild([_MARKER, "echo" + _MARKER]))
+    binding = _FakeBinding(_FakeChild([_marker(), "echo" + _marker()]))
     watchdog = _FakeWatchdog(fire_at_disarm=2)
     adapter = _adapter(binding, watchdog=watchdog)
     started = adapter.start("run-conpty", _configuration())
@@ -1390,7 +1424,9 @@ def test_deadline_expiry_racing_a_successful_read_still_aborts() -> None:
 
 
 def test_deadline_expiry_with_failed_close_never_yields_success() -> None:
-    child = _FakeChild([_MARKER, "late" + _MARKER], close_error=OSError("close failed"))
+    child = _FakeChild(
+        [_marker(), "late" + _marker()], close_error=OSError("close failed")
+    )
     binding = _FakeBinding(child)
     watchdog = _FakeWatchdog(fire_at_arm=2)
     adapter = _adapter(binding, watchdog=watchdog)
@@ -1411,7 +1447,7 @@ def test_deadline_expiry_with_failed_close_never_yields_success() -> None:
 
 def test_close_failure_after_exit_is_a_runtime_failure() -> None:
     adapter, binding, _, _ = _started(
-        [_MARKER], exit_status=0, close_error=OSError("close failed")
+        [_marker()], exit_status=0, close_error=OSError("close failed")
     )
     binding.child.reads.append(ConptyEndOfStreamError("end of stream"))
 
@@ -1424,7 +1460,7 @@ def test_close_failure_after_exit_is_a_runtime_failure() -> None:
 
 def test_native_error_with_close_failure_disclosed_together() -> None:
     adapter, _, _, _ = _started(
-        [_MARKER, OSError("native read failed")],
+        [_marker(), OSError("native read failed")],
         close_error=OSError("close failed"),
     )
 
@@ -1436,7 +1472,7 @@ def test_native_error_with_close_failure_disclosed_together() -> None:
 
 
 def test_snapshot_failure_at_exit_is_a_runtime_failure() -> None:
-    adapter, binding, factory, _ = _started([_MARKER], exit_status=0)
+    adapter, binding, factory, _ = _started([_marker()], exit_status=0)
     binding.child.reads.append(ConptyEndOfStreamError("end of stream"))
     factory.created[0].snapshot_error = RuntimeError("snapshot exploded")
 
@@ -1449,7 +1485,7 @@ def test_snapshot_failure_at_exit_is_a_runtime_failure() -> None:
 
 
 def test_invalid_exit_record_is_a_runtime_failure() -> None:
-    adapter, binding, _, _ = _started([_MARKER], exit_status="weird")
+    adapter, binding, _, _ = _started([_marker()], exit_status="weird")
     binding.child.reads.append(ConptyEndOfStreamError("end of stream"))
 
     result = adapter.dispatch(TextInput(ManualTime(0), "x"))
@@ -1460,7 +1496,7 @@ def test_invalid_exit_record_is_a_runtime_failure() -> None:
 
 
 def test_buffered_marker_completes_the_next_epoch_without_reading() -> None:
-    adapter, binding, _, _ = _started(["a" + _MARKER + "b" + _MARKER])
+    adapter, binding, _, _ = _started(["a" + _marker() + "b" + _marker()])
 
     result = adapter.dispatch(TextInput(ManualTime(0), "x"))
 
@@ -1473,8 +1509,8 @@ def test_buffered_marker_completes_the_next_epoch_without_reading() -> None:
 
 
 def test_advance_clock_reads_to_the_marker_without_writing() -> None:
-    adapter, binding, _, _ = _started([_MARKER])
-    binding.child.reads.extend(["tick" + _MARKER, "tock" + _MARKER])
+    adapter, binding, _, _ = _started([_marker()])
+    binding.child.reads.extend(["tick" + _marker(), "tock" + _marker()])
 
     result = adapter.advance_clock(ClockAdvance(ManualTime(5), delta_ms=5))
 
@@ -1488,7 +1524,7 @@ def test_advance_clock_reads_to_the_marker_without_writing() -> None:
 
 
 def test_advance_clock_must_move_the_manual_time() -> None:
-    adapter, _, _, _ = _started([_MARKER])
+    adapter, _, _, _ = _started([_marker()])
 
     with pytest.raises(ValueError):
         adapter.advance_clock(ClockAdvance(ManualTime(3), delta_ms=5))
@@ -1498,7 +1534,7 @@ def test_advance_clock_must_move_the_manual_time() -> None:
 
 
 def test_stop_forces_teardown_and_records_the_exit() -> None:
-    adapter, binding, _, _ = _started([_MARKER], exit_status=15)
+    adapter, binding, _, _ = _started([_marker()], exit_status=15)
 
     result = adapter.stop(Stop(ManualTime(0)))
 
@@ -1521,7 +1557,7 @@ def test_stop_forces_teardown_and_records_the_exit() -> None:
 
 
 def test_stop_missing_exit_record_is_a_runtime_failure() -> None:
-    adapter, _, _, _ = _started([_MARKER], exit_status=None)
+    adapter, _, _, _ = _started([_marker()], exit_status=None)
 
     result = adapter.stop(Stop(ManualTime(0)))
 
@@ -1533,7 +1569,7 @@ def test_stop_missing_exit_record_is_a_runtime_failure() -> None:
 
 def test_stop_close_failure_is_a_runtime_failure() -> None:
     adapter, _, _, _ = _started(
-        [_MARKER], exit_status=15, close_error=OSError("close failed")
+        [_marker()], exit_status=15, close_error=OSError("close failed")
     )
 
     result = adapter.stop(Stop(ManualTime(0)))
@@ -1544,14 +1580,14 @@ def test_stop_close_failure_is_a_runtime_failure() -> None:
 
 
 def test_stop_requires_the_current_manual_time() -> None:
-    adapter, _, _, _ = _started([_MARKER])
+    adapter, _, _, _ = _started([_marker()])
 
     with pytest.raises(ValueError):
         adapter.stop(Stop(ManualTime(9)))
 
 
 def test_stop_snapshot_failure_is_a_runtime_failure() -> None:
-    adapter, _, factory, _ = _started([_MARKER], exit_status=15)
+    adapter, _, factory, _ = _started([_marker()], exit_status=15)
     factory.created[0].snapshot_error = RuntimeError("snapshot exploded")
 
     result = adapter.stop(Stop(ManualTime(0)))
@@ -1562,7 +1598,7 @@ def test_stop_snapshot_failure_is_a_runtime_failure() -> None:
 
 
 def test_invalid_exit_record_at_stop_is_a_runtime_failure() -> None:
-    adapter, _, _, _ = _started([_MARKER], exit_status="weird")
+    adapter, _, _, _ = _started([_marker()], exit_status="weird")
 
     result = adapter.stop(Stop(ManualTime(0)))
 

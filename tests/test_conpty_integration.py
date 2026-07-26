@@ -6,10 +6,12 @@ accepted terminal-adapter decision — as scoped by the ConPTY adapter design
 Windows-matrix CI evidence on the real path: default ``ConptyBinding``,
 native ``ConptyChild``, and the real ``VtScreenNormalizer``.
 
-- **Marker passthrough:** ConPTY relays the private-use OSC readiness marker
-  verbatim through the output pipe, so the provisional OSC default holds and
-  the design needs no printable-default amendment. A host-configured
-  printable marker works identically and appears in frames.
+- **Marker ordering (#232):** ConPTY relays a private-use OSC verbatim but
+  *ahead of* rendered text written before it, because pass-through OSC and
+  the renderer are different paths. An OSC readiness marker therefore does
+  not bound the output it follows, which is why the marker is printable and
+  carries a per-emission token; both properties have evidence here, as does
+  a host-configured prefix.
 - **Cooperative fixture child:** a subject that honors the design's
   cooperation contract — an explicit readiness marker after startup and
   after processing each input, including a detected resize. A resize
@@ -102,7 +104,12 @@ from termverify.adapter import (
     TextInput,
 )
 from termverify.comparator import compare_transcripts
-from termverify.conpty import READINESS_MARKER_DEFAULT, ConptyAdapter, ConptyBinding
+from termverify.conpty import (
+    READINESS_MARKER_PREFIX_DEFAULT,
+    READINESS_MARKER_TERMINATOR,
+    ConptyAdapter,
+    ConptyBinding,
+)
 from termverify.cooperation import CooperationConstraintPorts, RealDirectoryProbe
 from termverify.recorder import run_scripted
 from termverify.vt import VtScreenNormalizer
@@ -124,7 +131,8 @@ _SAFE_DEADLINE_MS: Final = 120_000
 #: expiry timing is not load-sensitive.
 _ABORT_DEADLINE_MS: Final = 20_000
 
-_PRINTABLE_MARKER: Final = "<<TV-READY>>"
+#: A host-chosen marker prefix, to prove the prefix really is configurable.
+_CONFIGURED_PREFIX: Final = "<<TV-READY:"
 
 # Cooperative fixture subject implementing the design's cooperation
 # contract: one readiness marker after startup and after processing each
@@ -140,13 +148,24 @@ import sys
 import threading
 import time
 
-MARKER = {marker!r}
+MARKER_PREFIX = {prefix!r}
+MARKER_TERMINATOR = {terminator!r}
 
 lock = threading.Lock()
+answered = [0]
 
 def emit(text):
+    # One marker per processed input, each carrying a token this subject has
+    # not used before: the console re-emits screen state on every repaint, so
+    # a constant marker would arrive again in later epochs.
     with lock:
-        sys.stdout.write(text + MARKER)
+        answered[0] += 1
+        token = str(answered[0])
+        # Newline-closed so the marker stands on its own line: see the
+        # marker-protocol notes in termverify.conpty.
+        sys.stdout.write(
+            text + MARKER_PREFIX + token + MARKER_TERMINATOR + "\\r\\n"
+        )
         sys.stdout.flush()
 
 def size():
@@ -194,27 +213,47 @@ sys.stdout.write("TV_AFTER")
 sys.stdout.flush()
 """
 
+# Ordering fixture for #232. Two properties make the measurement decisive
+# rather than racy: it settles first, so the console host has finished its
+# initial render and what follows is steady-state behaviour; and it writes
+# the sentinels and the marker in a *single* write, so the renderer is never
+# given a gap in which it could flush the leading text on its own.
+_ORDERING_CHILD: Final = """\
+import sys
+import time
+
+sys.stdout.write("TV_SETTLE\\r\\n")
+sys.stdout.flush()
+time.sleep(1.0)
+sys.stdout.write("TV_BEFORE" + {marker!r} + "TV_AFTER")
+sys.stdout.flush()
+"""
+
 
 def _argv(script: str) -> list[str]:
     return [sys.executable, "-I", "-u", "-c", script]
 
 
-def _cooperative_argv(marker: str = READINESS_MARKER_DEFAULT) -> list[str]:
-    return _argv(_COOPERATIVE_CHILD_TEMPLATE.format(marker=marker))
+def _cooperative_argv(prefix: str = READINESS_MARKER_PREFIX_DEFAULT) -> list[str]:
+    return _argv(
+        _COOPERATIVE_CHILD_TEMPLATE.format(
+            prefix=prefix, terminator=READINESS_MARKER_TERMINATOR
+        )
+    )
 
 
 def _adapter(
     argv: Sequence[str],
     *,
     abort_deadline_ms: int = _SAFE_DEADLINE_MS,
-    readiness_marker: str = READINESS_MARKER_DEFAULT,
+    readiness_marker_prefix: str = READINESS_MARKER_PREFIX_DEFAULT,
 ) -> ConptyAdapter:
     return ConptyAdapter(
         argv,
         binding=ConptyBinding(),
         abort_deadline_ms=abort_deadline_ms,
         constraint_ports=_EnforcingPorts(),
-        readiness_marker=readiness_marker,
+        readiness_marker_prefix=readiness_marker_prefix,
     )
 
 
@@ -282,16 +321,54 @@ def _assert_replay_reproduces(
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY integration evidence")
-def test_conpty_relays_private_osc_marker_verbatim() -> None:
-    """The provisional OSC readiness default survives ConPTY unmodified.
+def test_conpty_emits_passthrough_osc_ahead_of_the_text_before_it() -> None:
+    """A pass-through OSC overtakes rendered text written before it (#232).
 
-    The adapter design disclosed that no repository evidence showed ConPTY
-    relaying a private OSC sequence verbatim. This is that evidence: the
-    exact ``OSC 7791;ready ST`` byte sequence a child emits arrives
-    unmodified in the raw output stream, between the surrounding printable
-    sentinels, so the marker scan and the design's OSC default are sound.
+    This test once claimed the opposite conclusion from the same fixture: it
+    observed ConPTY relaying a private ``OSC 7791;ready ST`` verbatim and
+    read that as licence to use an OSC readiness marker. Relaying it
+    verbatim is true and not sufficient — ConPTY renders text on one path and
+    passes OSC through on another, and the OSC path is ahead, so a marker
+    written *after* some output can arrive *before* it. The old reading held
+    only because the previous binding's reads were slow enough that the
+    renderer had already flushed; the raw-byte read path sees the gap.
+
+    This is why the readiness marker is printable: rendered text is ordered
+    against other rendered text, and nothing else here is.
     """
-    script = _OSC_EMITTING_CHILD.format(marker=READINESS_MARKER_DEFAULT)
+    script = _ORDERING_CHILD.format(marker="\x1b]7791;ready\x1b\\")
+    child = ConptyChild.spawn(
+        _argv(script), rows=_INITIAL_ROWS, columns=_INITIAL_COLUMNS
+    )
+    chunks: list[str] = []
+    try:
+        while True:
+            chunks.append(child.read())
+    except ConptyEndOfStreamError:
+        pass
+    finally:
+        child.close(force=True)
+
+    combined = "".join(chunks)
+    osc = combined.find("\x1b]7791;ready\x1b\\")
+    rendered = combined.find("TV_BEFORE")
+    assert osc >= 0, repr(combined[-300:])
+    assert rendered >= 0, repr(combined[-300:])
+    # The child wrote TV_BEFORE, the OSC, and TV_AFTER in one write, after
+    # settling. The OSC nevertheless arrives first.
+    assert osc < rendered, (
+        "the OSC no longer overtakes rendered text; if ConPTY has changed,"
+        " revisit the printable-marker rationale in termverify.conpty"
+    )
+    assert child.exit_status == 0
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY integration evidence")
+def test_conpty_relays_a_printable_marker_in_stream_order() -> None:
+    """The printable readiness marker arrives in the order it was written."""
+    script = _OSC_EMITTING_CHILD.format(
+        marker=f"{READINESS_MARKER_PREFIX_DEFAULT}1{READINESS_MARKER_TERMINATOR}"
+    )
     child = ConptyChild.spawn(
         _argv(script), rows=_INITIAL_ROWS, columns=_INITIAL_COLUMNS
     )
@@ -306,7 +383,7 @@ def test_conpty_relays_private_osc_marker_verbatim() -> None:
 
     combined = "".join(chunks)
     before = combined.find("TV_BEFORE")
-    marker = combined.find(READINESS_MARKER_DEFAULT)
+    marker = combined.find(READINESS_MARKER_PREFIX_DEFAULT)
     after = combined.find("TV_AFTER")
     assert 0 <= before < marker < after, repr(combined[-300:])
     assert child.exit_status == 0
@@ -337,14 +414,20 @@ def test_full_verified_run_start_text_resize_and_subject_exit() -> None:
             "terminal": {"columns": _INITIAL_COLUMNS, "rows": _INITIAL_ROWS}
         }
         raw = "".join(_chunks(observation))
-        assert READINESS_MARKER_DEFAULT in raw
+        assert READINESS_MARKER_PREFIX_DEFAULT in raw
         initial_text = _frame_text(observation)
         assert re.search(r"TV_PID:\d+", initial_text)
         assert f"TV_SIZE:{_INITIAL_COLUMNS}x{_INITIAL_ROWS}" in initial_text
-        # The OSC marker is consumed by string-sequence semantics, not
-        # stripped: it is present in the raw evidence above and absent from
-        # the frame.
-        assert "7791" not in initial_text
+        # The marker is rendered text, so it occupies screen cells and shows
+        # up in the frame. That is the acknowledged cost of having it travel
+        # the same path as the output it bounds (#232), and it is what makes
+        # the ordering above observable at all: the marker is behind
+        # TV_PID/TV_SIZE here, which is exactly what an OSC marker failed to
+        # guarantee.
+        assert READINESS_MARKER_PREFIX_DEFAULT in initial_text
+        assert initial_text.index("TV_PID") < initial_text.index(
+            READINESS_MARKER_PREFIX_DEFAULT
+        )
         assert observation.ui.cursor.visible is True
 
         result = adapter.dispatch(TextInput(ManualTime(0), "hello\r\n"))
@@ -388,23 +471,24 @@ def test_full_verified_run_start_text_resize_and_subject_exit() -> None:
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY integration evidence")
-def test_printable_marker_appears_in_frames_and_replays_identically() -> None:
-    """A host-configured printable marker renders in frames, as designed.
+def test_host_configured_marker_prefix_appears_in_frames_and_replays() -> None:
+    """A host-configured prefix works exactly as the default one does.
 
-    The design claims a printable marker appears in frames and in replays
-    identically — the mitigation path had OSC passthrough failed. The
-    fixture emits the printable marker, readiness is still observed, the
-    marker text is part of the frame, and the replay reproduces it.
+    The prefix is the configurable half of the marker; the token and
+    terminator are the protocol's. A host that chooses its own prefix still
+    gets readiness observed, the marker text in the frame, and a replay that
+    reproduces it.
     """
     adapter = _adapter(
-        _cooperative_argv(_PRINTABLE_MARKER), readiness_marker=_PRINTABLE_MARKER
+        _cooperative_argv(_CONFIGURED_PREFIX),
+        readiness_marker_prefix=_CONFIGURED_PREFIX,
     )
     with _reaped(adapter):
         started = adapter.start("run-conpty-printable", _configuration())
         assert type(started) is Started, started
         observation = started.observation
-        assert _PRINTABLE_MARKER in "".join(_chunks(observation))
-        assert _PRINTABLE_MARKER in _frame_text(observation)
+        assert _CONFIGURED_PREFIX in "".join(_chunks(observation))
+        assert _CONFIGURED_PREFIX in _frame_text(observation)
         _assert_replay_reproduces(
             [observation], rows=_INITIAL_ROWS, columns=_INITIAL_COLUMNS
         )
@@ -534,10 +618,21 @@ import os
 import sys
 import time
 
-MARKER = {marker!r}
+MARKER_PREFIX = {prefix!r}
+MARKER_TERMINATOR = {terminator!r}
+answered = [0]
+
+def marker():
+    # A token this subject has not used before: the console re-emits screen
+    # state on every repaint, so a constant marker reappears later.
+    answered[0] += 1
+    # Closed with a newline so the marker stands on its own line: it is
+    # rendered text now, so without this the next output would continue on
+    # the same row, and a long marker could be split by a line wrap.
+    return MARKER_PREFIX + str(answered[0]) + MARKER_TERMINATOR + "\\r\\n"
 
 def emit(text):
-    sys.stdout.write(text + MARKER)
+    sys.stdout.write(text + marker())
     sys.stdout.flush()
 
 names = {names!r}
@@ -561,7 +656,9 @@ for line in sys.stdin:
 def _delivery_echo_argv() -> list[str]:
     return _argv(
         _DELIVERY_ECHO_CHILD_TEMPLATE.format(
-            marker=READINESS_MARKER_DEFAULT, names=_DELIVERED_VARIABLES
+            prefix=READINESS_MARKER_PREFIX_DEFAULT,
+            terminator=READINESS_MARKER_TERMINATOR,
+            names=_DELIVERED_VARIABLES,
         )
     )
 
@@ -693,10 +790,21 @@ def test_first_fully_successful_verified_run_with_cooperation_ports(
 _REPEAT_ECHO_CHILD_TEMPLATE: Final = """\
 import sys
 
-MARKER = {marker!r}
+MARKER_PREFIX = {prefix!r}
+MARKER_TERMINATOR = {terminator!r}
+answered = [0]
+
+def marker():
+    # A token this subject has not used before: the console re-emits screen
+    # state on every repaint, so a constant marker reappears later.
+    answered[0] += 1
+    # Closed with a newline so the marker stands on its own line: it is
+    # rendered text now, so without this the next output would continue on
+    # the same row, and a long marker could be split by a line wrap.
+    return MARKER_PREFIX + str(answered[0]) + MARKER_TERMINATOR + "\\r\\n"
 
 def emit(text):
-    sys.stdout.write(text + MARKER)
+    sys.stdout.write(text + marker())
     sys.stdout.flush()
 
 emit("TV_READY\\r\\n")
@@ -743,7 +851,12 @@ def test_repeat_runs_reach_an_equivalent_comparator_verdict(tmp_path: Path) -> N
         sandbox = tmp_path / "sandbox"
         sandbox.mkdir(exist_ok=True)
         adapter = ConptyAdapter(
-            _argv(_REPEAT_ECHO_CHILD_TEMPLATE.format(marker=READINESS_MARKER_DEFAULT)),
+            _argv(
+                _REPEAT_ECHO_CHILD_TEMPLATE.format(
+                    prefix=READINESS_MARKER_PREFIX_DEFAULT,
+                    terminator=READINESS_MARKER_TERMINATOR,
+                )
+            ),
             binding=ConptyBinding(),
             abort_deadline_ms=_SAFE_DEADLINE_MS,
             constraint_ports=CooperationConstraintPorts({"fixture-root": str(sandbox)}),
@@ -876,7 +989,16 @@ import ctypes
 import os
 import sys
 
-MARKER = {marker!r}
+MARKER_PREFIX = {prefix!r}
+MARKER_TERMINATOR = {terminator!r}
+answered = [0]
+
+def marker():
+    answered[0] += 1
+    # Closed with a newline so the marker stands on its own line: it is
+    # rendered text now, so without this the next output would continue on
+    # the same row, and a long marker could be split by a line wrap.
+    return MARKER_PREFIX + str(answered[0]) + MARKER_TERMINATOR + "\\r\\n"
 
 kernel32 = ctypes.windll.kernel32
 handle = kernel32.GetStdHandle(-10)
@@ -886,7 +1008,7 @@ set_mode = kernel32.SetConsoleMode(handle, (mode.value & ~0x7) | 0x200)
 sys.stdout.write(
     "TV_PID:" + str(os.getpid())
     + " TV_RAWMODE:" + str(got_mode) + ":" + str(set_mode)
-    + "\\r\\n" + MARKER
+    + "\\r\\n" + marker()
 )
 sys.stdout.flush()
 
@@ -923,7 +1045,7 @@ while True:
         sys.stdout.write("TV_EXIT\\r\\n")
         sys.stdout.flush()
         sys.exit(0)
-    sys.stdout.write("TV_KEY:" + chord.hex() + "\\r\\n" + MARKER)
+    sys.stdout.write("TV_KEY:" + chord.hex() + "\\r\\n" + marker())
     sys.stdout.flush()
 """
 
@@ -955,7 +1077,12 @@ _KEY_EVIDENCE_CHORDS: Final = (
 
 
 def _key_evidence_argv() -> list[str]:
-    return _argv(_KEY_EVIDENCE_CHILD_TEMPLATE.format(marker=READINESS_MARKER_DEFAULT))
+    return _argv(
+        _KEY_EVIDENCE_CHILD_TEMPLATE.format(
+            prefix=READINESS_MARKER_PREFIX_DEFAULT,
+            terminator=READINESS_MARKER_TERMINATOR,
+        )
+    )
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY integration evidence")

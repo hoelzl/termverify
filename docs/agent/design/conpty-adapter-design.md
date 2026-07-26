@@ -156,24 +156,44 @@ A real child is asynchronous, so quiescence needs an observable signal.
 **Readiness marker.** A verified terminal subject must cooperate by emitting
 an explicit readiness marker when it reaches quiescence: after startup
 (initial readiness) and after processing each input. The marker is a
-configurable exact string with a private-use OSC default,
-`"\x1b]7791;ready\x1b\\"` (OSC … ST). The adapter scans for it in the decoded
-output stream independently of the normalizer; raw chunks are always fed to
-the normalizer **unmodified**, so replaying the normalizer over the raw
-evidence sees exactly what the adapter fed it. With the OSC default the
-marker is absent from frames because a compliant screen model does not render
-unknown OSC sequences — an outcome of screen-model semantics, not an adapter
-stripping operation; a host-configured printable marker appears in frames and
-in replays identically. **Disclosed assumption, resolved 2026-07-18 (issue
-#121):** at design time the repository had passthrough evidence only for
-printable markers, so the OSC default was provisional with a printable
-fallback. The Windows integration slice produced the required evidence: a
-durable Windows-matrix test observes the exact `OSC 7791;ready ST` byte
-sequence a child emits arriving verbatim in the raw output stream between
-printable sentinels, and the end-to-end run drives every epoch's readiness
-through that default. The OSC default is therefore no longer provisional;
-the marker remains configurable, and the printable path retains its own
-frame-visibility and replay evidence. One consequence of the same evidence:
+configurable printable prefix, a token the subject has not used before in the
+run, and a fixed terminator — by default `<<termverify.ready:7>>` and so on.
+The adapter scans for it in the decoded output stream independently of the
+normalizer; raw chunks are always fed to the normalizer **unmodified**, so
+replaying the normalizer over the raw evidence sees exactly what the adapter
+fed it.
+
+**Amended 2026-07-26 (issue #232): the OSC default was wrong, and a constant
+marker is wrong.** This paragraph previously specified a private-use OSC
+default, `"\x1b]7791;ready\x1b\\"`, on the strength of a Windows-matrix test
+observing ConPTY relay that exact sequence verbatim between printable
+sentinels. Relaying it verbatim is true and was never sufficient: ConPTY
+renders text on one path and passes OSC through on another, and the OSC path
+is *ahead*. Measured after the raw-byte read path (#197) made the gap
+observable, a subject's single atomic write of `TV_BEFORE` + marker +
+`TV_AFTER` arrives as the marker alone, then the text — so an OSC marker does
+not bound the output it follows, and the adapter would end an epoch and
+report a frame missing that output. The original evidence held only because
+the previous binding's reads were slow enough that the renderer had already
+flushed.
+
+Two properties follow, and neither is optional:
+
+1. **The marker is printable**, so it travels the renderer's path and is
+   ordered against the output it bounds. The cost is that it occupies screen
+   cells and appears in frames — no longer a host's opt-in but the default,
+   and the reason subjects should emit it on its own newline-terminated line.
+2. **Each marker carries a fresh token.** Rendered text is screen state and
+   ConPTY re-emits screen state on every repaint, so a constant marker
+   reappears in later epochs; without per-emission tokens an epoch completes
+   on a marker its input never caused, which is how this was found. The
+   adapter honours each token once. A token must match
+   `[0-9A-Za-z._-]{1,64}`; anything else is not a marker, which makes a
+   wrapped marker fail closed on the epoch deadline rather than be honoured
+   with a mangled token.
+
+The prefix remains configurable and has its own frame-visibility and replay
+evidence. One consequence of the original evidence still stands:
 a resize delivers no bytes to a Windows console client's stdin, so
 marker-after-resize cooperation requires the subject to detect the new
 dimensions itself (the fixture subject watches the reported terminal size);

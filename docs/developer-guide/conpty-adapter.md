@@ -186,10 +186,41 @@ an unknown root id or a path that is not an existing directory as
 
 ## Subject cooperation contract
 
-A verified subject emits the configured readiness marker after startup and
-after processing each input, detects resizes itself (a resize delivers no
-stdin bytes to a Windows console client), and reads its constraints from the
+A verified subject emits a readiness marker after startup and after
+processing each input, detects resizes itself (a resize delivers no stdin
+bytes to a Windows console client), and reads its constraints from the
 delivered environment variables.
+
+A marker is the configured prefix (`READINESS_MARKER_PREFIX_DEFAULT` by
+default), a **token the subject has not used before in this run**, and
+`READINESS_MARKER_TERMINATOR` — for example
+`<<termverify.ready:7>>`. A counter is the obvious way to produce the token;
+nothing depends on its value, only on its novelty. Tokens may use
+`0-9 A-Z a-z . _ -`, up to 64 characters.
+
+Both properties are forced by how ConPTY delivers output, and getting either
+wrong produces a wrong run rather than an error (issue #232):
+
+- **The marker is printable, and must stay printable.** ConPTY passes OSC
+  sequences through on a different path from rendered text, ahead of it, so a
+  marker written as an escape sequence can arrive *before* the output it was
+  meant to bound — the adapter would then end the epoch and report a frame
+  missing that output. Only rendered text is ordered against rendered text.
+- **The token must be new every time.** Rendered text is screen state, and
+  ConPTY re-emits screen state whenever it repaints — after a scroll, a
+  resize, or teardown. A constant marker therefore reappears in later
+  epochs, and an epoch would complete on a marker its input never caused.
+  The adapter honours each token once and ignores the rest.
+
+Emit the marker on its own line, terminated by a newline. Two reasons: the
+marker occupies screen cells, so without a newline the next output continues
+on the same row; and a marker split across a line wrap has a malformed token
+and is not honoured, which fails the epoch closed on its deadline.
+
+Do **not** try to fit inside the retention bound by emitting extra readiness
+markers inside one epoch: the contract is exactly one marker per processed
+input, and a surplus marker ends an epoch early and shifts every later
+epoch's output onto the wrong input.
 
 ## Key input encoding
 
