@@ -37,10 +37,22 @@ It bounds an epoch two ways, not one. A watchdog around each blocking read
 force-closes the child when a *single read* exceeds the deadline. That alone
 would not bound the epoch — a subject trickling output just under the
 deadline never exceeds any single read's deadline — so the same value is
-**also** applied to the epoch as a whole, checked between reads. Worst case
-is therefore up to twice the configured deadline. The failure details name
-which bound fired: `bound: "read"` means one read stalled, `bound: "epoch"`
-means the subject kept producing output but never reached readiness.
+**also** applied to the epoch as a whole, checked between reads. An epoch's
+worst case in its **read** phase is therefore up to twice the configured
+deadline. The failure details name which bound fired: `bound: "read"` means
+one read stalled, `bound: "epoch"` means the subject kept producing output
+but never reached readiness.
+
+That covers reading, not writing. An input epoch writes to the pseudoconsole
+input buffer before the read phase begins, and that write is under no
+watchdog: if the buffer fills because the subject never reads its input, the
+write blocks and the abort deadline cannot end it. No backpressure was
+observed on the verified matrix, so this is a disclosed boundary rather than
+a measured one, and it closes only when TermVerify owns the conin handle —
+see the `termverify._conpty` module docstring and
+[issue #193](https://github.com/hoelzl/termverify/issues/193). Budget the
+deadline for the read phase and do not read the 2x figure as a bound on
+`dispatch` as a whole.
 
 **This can abort runs that previously passed.** Budget the deadline above
 the longest single epoch a real subject needs, output included. An ordinary
@@ -81,10 +93,38 @@ geometry and the run fails with `budget: "geometry"` as soon as an epoch
 begins, before any read.
 
 That threshold is where the *adapter* stops, not where the record does: a
-523,264-cell frame still fits one record with a few kilobytes to spare. The
-adapter refuses because an epoch that can record a frame but no output is
-not a useful epoch, and admitting it would mean discovering the problem
-only when the transcript is serialized.
+523,264-cell frame that also stays inside the row and column limits below
+still fits one record with a few kilobytes to spare. The adapter refuses
+because an epoch that can record a frame but no output is not a useful
+epoch, and admitting it would mean discovering the problem only when the
+transcript is serialized.
+
+**Rows and columns are limits of their own, and cells express neither.** The
+frame meets three ceilings in three different units, so the adapter checks
+three axes and the failure details name the one that bound:
+
+| Axis | Ceiling | Largest admitted | Detail key |
+| --- | --- | --- | --- |
+| rows | one collection item per frame line | 16,384 rows | `terminal-rows` |
+| columns | one line is one string, at 4 bytes per cell | 262,144 columns | `terminal-columns` |
+| cells | the frame's aggregate bytes against the record | 523,263 cells | `terminal-cells` |
+
+Neither of the first two is implied by the third. A terminal 10 columns wide
+and 20,000 rows tall is only 200,000 cells — well under the threshold above —
+and still cannot be recorded, because its frame is 20,000 collection items. A
+terminal 262,145 columns wide and 1 row tall is 262,145 cells and still
+cannot be recorded, because that one line is 1 MiB plus four bytes, and one
+string may be 1 MiB. Only a single-row terminal can reach the column limit
+without the cell limit firing first: at two rows, any width past 262,144 is
+already past 523,264 cells.
+
+Nor does either imply the other, so a frame at the cell threshold is not
+automatically recordable — 523,264 columns on a single row is one row and
+523,264 cells, and its one line is just under 2 MiB, where one string may
+be 1 MiB.
+
+All three refuse the run the same way, with `budget: "geometry"`, as soon as
+an epoch begins and before any read.
 
 Do **not** try to fit inside the bound by emitting extra readiness markers
 inside one epoch: the contract is exactly one marker per processed input, and
@@ -92,10 +132,13 @@ a surplus marker ends an epoch early and shifts every later epoch's output
 onto the wrong input. Produce less output between inputs instead.
 
 The bound covers the adapter's own retention; the codec still owns
-recordability and enforces further ceilings — notably a canonical-line limit
-that ESC-dense output reaches much sooner, since RFC 8785 escapes every
-control byte — so a transcript can still be rejected for size after an epoch
-the adapter accepted.
+recordability and enforces further ceilings, so a transcript can still be
+rejected for size after epochs the adapter accepted. Two are worth naming:
+a canonical-line limit that ESC-dense output reaches much sooner, since
+RFC 8785 escapes every control byte; and a **32 MiB ceiling on the whole
+transcript**, which no per-epoch bound can model because it accumulates
+across epochs — a large frame that is individually recordable still reaches
+it within a couple of dozen epochs, since every epoch records a full frame.
 
 ## What the delivered tier means
 

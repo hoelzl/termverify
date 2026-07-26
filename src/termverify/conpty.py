@@ -136,7 +136,11 @@ from termverify.adapter import (
     UiObservation,
     _validate_run_id,
 )
-from termverify.transcript import _MAX_RECORD_STRING_BYTES, _MAX_STRING_BYTES
+from termverify.transcript import (
+    _MAX_COLLECTION_ITEMS,
+    _MAX_RECORD_STRING_BYTES,
+    _MAX_STRING_BYTES,
+)
 from termverify.vt import ScreenSnapshot, TerminalOutputNormalizer, VtScreenNormalizer
 
 __all__ = [
@@ -641,6 +645,17 @@ class ConptyAdapter:
         chunks: Sequence[str],
         process: ProcessObservation | None,
     ) -> Observation:
+        # Defense in depth, and cheap: the pre-read gate in
+        # `_read_epoch_chunks` is what gives the "refused before any read"
+        # property, but it does not sit on *every* path that emits a record.
+        # `stop()` reaches here directly, protected only by the argument that
+        # a bad geometry always failed its epoch first and so left the adapter
+        # non-idle. That argument holds today, and an argument is exactly what
+        # this slice has twice shipped in place of a check (rounds 6 and 8).
+        # Every caller already classifies `_EpochFailure`.
+        geometry_failure = self._geometry_failure()
+        if geometry_failure is not None:
+            raise geometry_failure
         snapshot = self._snapshot()
         return Observation(
             at_ms,
@@ -681,25 +696,82 @@ class ConptyAdapter:
         UTF-8 bytes, and the screen model puts any character at or above
         U+00A0 into a cell one-for-one, so box drawing costs three bytes per
         cell and an emoji four. Reserving one byte per cell under-reserved by
-        up to 3x — enough for an ordinary box-drawn TUI at 100x30 to be
-        admitted and then rejected by the codec (adversarial review of this
-        PR, round 4). Four bytes per cell is UTF-8's worst case per code
-        point, so the reserve cannot be short.
+        up to 4x (adversarial review of this PR, round 4). Four bytes per
+        cell is UTF-8's worst case per code point, so the reserve cannot be
+        short.
 
-        Bounded here: the frame's *aggregate* cost against the per-record
-        sum. Not bounded here: a single frame **line**, which is one string
-        of ``columns`` code points and meets the per-string ceiling on its
-        own. Like the aggregate, that limit depends on what the screen
-        contains — 262,144 columns for a 4-byte-per-cell frame, 1,048,576
-        for an ASCII one. Unreachable through the real binding, whose
-        ``COORD`` dimensions are 16-bit, and at two rows or more the
-        geometry bound above fires first; disclosed rather than checked.
+        That under-reserve is only observable where the per-record sum is the
+        binding ceiling, which is above ~261,000 cells: below it the
+        per-string ceiling binds and the frame reserve is entirely slack. The
+        witness is therefore a large 4-byte-per-cell frame — 800x400 of
+        emoji, which the tests exercise — not an ordinary TUI. An earlier
+        revision of this docstring cited a box-drawn 100x30, which was true
+        of the budget shape round 4 rejected and which #195 and the ``min()``
+        below then made false (round 7, finding 3).
+
+        Bounded here: the frame's *aggregate* byte cost against the
+        per-record sum. Bounded by ``_geometry_failure``, because bytes
+        cannot express them, are the frame's other two costs: its row count
+        against the record's collection ceiling, and one frame **line** —
+        a single string of ``columns`` code points — against the per-string
+        ceiling.
         """
         frame_bytes = _MAX_UTF8_BYTES_PER_CELL * self._rows * self._columns
         record_budget = (
             _MAX_RECORD_STRING_BYTES - frame_bytes - _FIXED_RECORD_STRING_BYTES
         )
         return min(_MAX_STRING_BYTES, record_budget)
+
+    def _geometry_failure(self) -> _EpochFailure | None:
+        """Why this geometry admits no recordable epoch, or ``None``.
+
+        The frame meets three v1 ceilings, in three different units, and one
+        check cannot serve all three. Each axis gets its own, and the failure
+        details name the axis that bound rather than a single number the host
+        would have to reverse-engineer:
+
+        - **rows** against the record's collection ceiling. `frame.lines` is
+          one item per row, so above it no epoch is recordable at any cell
+          count — a ten-column terminal reaches it at 163,850 cells, a third
+          of the cell threshold.
+        - **columns** against the per-string ceiling, which one frame line
+          meets on its own at ``4 * columns`` bytes. Only a single-row
+          terminal can reach this without the cell bound firing first: at two
+          rows, any width over 262,144 already exceeds the cell threshold.
+        - **cells**, through the byte budget, which is the aggregate case.
+
+        The row and column checks replaced an argument that they were
+        unreachable through the real binding because ``COORD`` is 16-bit.
+        Measured on the Windows dev host, that is simply false: ``PTY()``
+        range-checks nothing, and 262,145x1, 1,048,577x1, 10x100,000 and
+        10x32,768 all create a pseudoconsole and spawn into it. A geometry
+        that is cheap to check is not worth an argument about whether a host
+        can request it (round 8, finding B1).
+        """
+        if self._rows > _MAX_COLLECTION_ITEMS:
+            return _EpochFailure(
+                "the requested terminal has more rows than one observation"
+                " record's frame may carry, so no epoch can be recorded at"
+                " this geometry",
+                {"budget": "geometry", "terminal-rows": self._rows},
+            )
+        if self._columns > _MAX_STRING_BYTES // _MAX_UTF8_BYTES_PER_CELL:
+            return _EpochFailure(
+                "the requested terminal is wider than one line of its own"
+                " frame may be, so no epoch can be recorded at this geometry",
+                {"budget": "geometry", "terminal-columns": self._columns},
+            )
+        if self._epoch_output_budget() <= 0:
+            return _EpochFailure(
+                "the requested terminal leaves an observation record no room"
+                " for output once its own frame is reserved, so no epoch can"
+                " be recorded at this geometry",
+                {
+                    "budget": "geometry",
+                    "terminal-cells": self._rows * self._columns,
+                },
+            )
+        return None
 
     def _read_epoch_chunks(
         self, child: ConptyChildPort, chunks: list[str], expired: threading.Event
@@ -737,20 +809,15 @@ class ConptyAdapter:
         # Before the marker scan, not inside the read loop. The geometry is
         # fixed for the whole epoch (only `dispatch(Resize(...))` moves it,
         # between epochs), and an epoch whose marker is already buffered
-        # returns below without ever reading — which let a resize past this
+        # returns below without ever reading — which let a resize past the
         # threshold complete an epoch that the codec then rejected, losing
-        # the run's evidence at the end (round 6, finding 1).
+        # the run's evidence at the end (round 6, finding 1). Every axis is
+        # checked here for that reason, and `_geometry_failure` owns which
+        # axes those are.
+        geometry_failure = self._geometry_failure()
+        if geometry_failure is not None:
+            raise geometry_failure
         budget = self._epoch_output_budget()
-        if budget <= 0:
-            raise _EpochFailure(
-                "the requested terminal leaves an observation record no room"
-                " for output once its own frame is reserved, so no epoch can"
-                " be recorded at this geometry",
-                {
-                    "budget": "geometry",
-                    "terminal-cells": self._rows * self._columns,
-                },
-            )
         if self._scan_for_marker():
             return
         epoch_deadline_at = self._monotonic() + self._abort_deadline_ms / 1000

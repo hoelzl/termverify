@@ -30,22 +30,23 @@
   and too large at 80x24, where it aborted epochs that recorded fine. The
   frame reserve counts **UTF-8 bytes per cell, not cells**: the codec measures
   bytes, and a box-drawn or CJK screen costs three to four bytes per cell, so
-  counting cells under-reserved by up to 3x and a box-drawn TUI at 100x30 was
-  admitted and then rejected. At 523,264 cells or more the frame reserve
-  leaves an observation record no room for output at all, and the run now
-  fails with `budget: "geometry"` as soon as an epoch begins — before any
-  read, so a resize past the threshold cannot slip through an epoch whose
-  readiness marker was already buffered — rather than as a phantom output
-  flood.
+  counting cells under-reserved by up to 4x — observable above roughly 261,000
+  cells, where the per-record sum is the binding ceiling and a large emoji
+  frame was admitted and then rejected. At 523,264 cells or more the frame
+  reserve leaves an observation record no room for output at all, and the
+  run now fails with `budget: "geometry"` as soon as an epoch begins —
+  before any read, so a resize past the threshold cannot slip through an
+  epoch whose readiness marker was already buffered — rather than as a
+  phantom output flood.
   Disclosed limit: the codec still owns recordability and enforces ceilings no
   budget can model, notably a canonical-line limit ESC-dense output reaches far
   sooner.
-- **Dropped the separate chunk-count budget**, which #195 made unreachable.
-  While every chunk was its own event, a subject redrawing in place could
-  exhaust the protocol's per-collection ceiling with under 100 KB of output in
-  seconds, and the adapter had to abort it. Coalescing removes the axis: no
-  number of native reads can reach that ceiling, so a spinner is now bounded
-  by the bytes it writes and nothing else.
+- **No chunk-count bound ships.** An earlier revision of this fix carried one;
+  #195 made it unreachable and it was removed before merge. While every chunk
+  was its own event, a subject redrawing in place could exhaust the protocol's
+  per-collection ceiling with under 100 KB of output in seconds. Coalescing
+  removes the axis: no number of native reads can reach that ceiling, so a
+  spinner is bounded by the bytes it writes and nothing else.
 - **Rejected a read-count budget on measurement.** A count low enough to bound
   a trickle also aborts a cooperative subject: real ConPTY barely coalesces
   (635 reads for a 2,000-line scroll), so a 1024-read budget failed a plain
