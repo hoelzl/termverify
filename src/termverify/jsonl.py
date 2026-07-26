@@ -213,9 +213,23 @@ class JsonlBinding:
 
     A thin delegate to ``termverify._jsonl_pipe.PipeJsonlChild`` — the
     pipe-only generalization of the ConPTY binding's containment patterns:
-    a kill-on-close job object on Windows, a process group on POSIX, with
-    identical observable outcomes on every platform (real exit record,
-    forced-termination record, no survivors).
+    a kill-on-close job object on Windows, a process group on POSIX.
+
+    Every platform produces the **same failure classification**: a run
+    ends in a structured result carrying a real exit record or a real
+    forced-termination record, never a fabricated one and never a hang.
+    Containment *strength* is not identical, and the difference is
+    disclosed rather than averaged away. A process can leave the
+    containment on either platform — a ``setsid()`` descendant on POSIX,
+    a process started inside the disclosed assignment window on Windows —
+    and such a survivor is not reaped; no portable mechanism to reap it
+    is in scope. What does hold everywhere is that a survivor can no
+    longer hold the verifier hostage: the POSIX binding interrupts its
+    own blocked reads and writes through a self-pipe, so a descendant
+    holding a pipe end outlives the run without stalling its teardown.
+    Recorded in ``docs/knowledge/architecture.md``; the earlier claim of
+    "identical observable outcomes on every platform (no survivors)" was
+    an overstatement on both halves.
     """
 
     def spawn(

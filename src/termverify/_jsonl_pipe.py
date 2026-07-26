@@ -24,31 +24,49 @@ Pipes are portable, so this binding runs identically on Windows and POSIX:
   observed exit record of a signal-killed child is the negative signal
   number reported by ``waitpid`` semantics.
 
-A forced close terminates first and releases the child's stdin second:
-containment (job object / process-group kill) is what guarantees the tree
-dies, and the binding never waits on cooperation. The order matters and is
-not cosmetic — releasing the buffered writer flushes it, so against a child
-that is not draining its stdin that release blocks until the child dies
-anyway (finding C2, issue #217). A cooperative child therefore observes
-end-of-stream only as a consequence of its own termination on this path,
-not as an invitation to exit first.
+Interrupting blocked I/O is where the two platforms genuinely differ, and
+the difference is a mechanism difference, not a strength claim:
 
-Disclosed limit on that guarantee: interrupting a blocked read or write
-requires containment to reach whoever holds the other end of the pipe. A
-descendant started inside the containment window, or any descendant of a
-child that exited before assignment, is outside it — if such a process
-holds the child's stdout write end or stdin read end, the corresponding
-teardown step can still block (issue #213). ``exit_status`` is captured from
-the real process only — a release-only close of a live child records no
-exit status, never a fabricated one, and is refused outright because
-silently abandoning a live pipe child has no honest reading.
+- **POSIX** owns both pipes as raw descriptors and waits on ``select``
+  over the descriptor *and* a self-pipe, so any close wakes a blocked
+  read or write outright. This does not depend on reaching whoever holds
+  the other end, which is what makes it answer review finding R4: a
+  ``setsid()`` descendant escapes ``killpg`` and can hold the child's
+  stdout write end open forever, and the reader still ends — as a closed
+  binding, promptly, with the run classified honestly.
+- **Windows** cannot: ``select`` does not work on anonymous pipe handles.
+  There the child's death closes its stdout write end, and that remains
+  the interruption, so a forced close terminates the tree first. A holder
+  outside the job — a process started inside the disclosed assignment
+  window, or a descendant of a child that exited before assignment — is
+  not swept and can still stall the teardown's pipe release (issue #213).
+
+A forced close terminates the tree and releases the child's stdin second.
+On POSIX the wake-up precedes both, so a write blocked against a child
+that stopped draining its stdin ends without waiting for anything; the
+old ordering argument for that case (kill first so the flush fails fast)
+belonged to the buffered writer, which POSIX no longer uses at teardown
+at all. On Windows the buffered writer stands, and ``detach`` flushes it
+(issue #217): the ordering is what keeps that flush bounded, and it is
+bounded *because the tree is already dead*, which is the honest statement
+of it.
+
+``exit_status`` is captured from the real process only — a release-only
+close of a live child records no exit status, never a fabricated one, and
+is refused outright because silently abandoning a live pipe child has no
+honest reading.
+
+Disclosed on every platform: a process that has left the containment is
+**not reaped**. Reaping it portably would need cgroups or a subreaper,
+rejected as horizontal platform machinery. What the binding guarantees is
+narrower and true — such a survivor cannot stall the run's teardown on
+POSIX, and cannot make the run report anything it did not observe.
 
 I/O is single-flight by contract, matching the adapter's lifecycle: at
 most one read and one write are ever in flight, and ``close`` is the one
-concurrent-safe operation. A blocked ``read_line`` ends when the pipes are
-closed underneath it by a concurrent forced close (the watchdog path);
-that interruption surfaces as ``JsonlChildClosedError``, never as
-end-of-stream, because close may have abandoned buffered output.
+concurrent-safe operation. An interrupted ``read_line`` surfaces as
+``JsonlChildClosedError``, never as end-of-stream, because close may have
+abandoned buffered output.
 """
 
 from __future__ import annotations
