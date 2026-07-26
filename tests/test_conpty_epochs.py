@@ -451,6 +451,26 @@ def test_constructor_validates_the_readiness_marker_prefix() -> None:
         _adapter(_FakeBinding(), readiness_marker_prefix="ready.")
 
 
+def test_the_marker_prefix_must_be_printable() -> None:
+    """A non-printable prefix recreates the passthrough-marker defect (#232).
+
+    The marker is printable so it travels the console's renderer path and is
+    ordered against the output it bounds. A prefix containing control
+    characters lets a host configure the marker back onto a pass-through
+    path — ``"\\x1b]7791;"`` is an OSC opener, and ConPTY relays OSC *ahead*
+    of rendered text, which is exactly the ordering defect the printable
+    marker exists to fix (#233 review, finding 2). A line break inside the
+    prefix likewise breaks the one-line marker the subject contract builds
+    on. Printable non-ASCII is fine: it renders.
+    """
+    for prefix in ("\x1b]7791;", "\x1b[", "\r\n", "\x07", "a\x00b", "sp ace\x7f"):
+        with pytest.raises(ValueError, match="printable"):
+            _adapter(_FakeBinding(), readiness_marker_prefix=prefix)
+    # Printable characters, including spaces and non-ASCII, stay legal.
+    _adapter(_FakeBinding(), readiness_marker_prefix="sp ace:")
+    _adapter(_FakeBinding(), readiness_marker_prefix="«ready»:")
+
+
 # --- start: readiness ------------------------------------------------------
 
 

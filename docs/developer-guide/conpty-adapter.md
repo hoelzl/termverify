@@ -194,9 +194,12 @@ delivered environment variables.
 A marker is the configured prefix (`READINESS_MARKER_PREFIX_DEFAULT` by
 default), a **token the subject has not used before in this run**, and
 `READINESS_MARKER_TERMINATOR` — for example
-`<<termverify.ready:7>>`. A counter is the obvious way to produce the token;
-nothing depends on its value, only on its novelty. Tokens may use
-`0-9 A-Z a-z . _ -`, up to 64 characters.
+`<<termverify.ready:7>>`. A counter is the obvious way to produce the token.
+Two things depend on how you choose it: novelty within the run (the adapter
+honours each token once) and stability across runs — repeat-run transcript
+comparison treats the marker text as evidence, so non-deterministic tokens
+diverge runs that are otherwise identical. A per-run counter satisfies both.
+Tokens may use `0-9 A-Z a-z . _ -`, up to 64 characters.
 
 Both properties are forced by how ConPTY delivers output, and getting either
 wrong produces a wrong run rather than an error (issue #232):
@@ -212,10 +215,37 @@ wrong produces a wrong run rather than an error (issue #232):
   epochs, and an epoch would complete on a marker its input never caused.
   The adapter honours each token once and ignores the rest.
 
-Emit the marker on its own line, terminated by a newline. Two reasons: the
-marker occupies screen cells, so without a newline the next output continues
-on the same row; and a marker split across a line wrap has a malformed token
-and is not honoured, which fails the epoch closed on its deadline.
+Emit the marker on its own line, terminated by a newline, because the marker
+occupies screen cells: without the newline the next output continues on the
+same row. A line *wrap* is not a hazard — wrapping is screen-buffer layout,
+not stream content, so a marker wider than the terminal arrives contiguous
+and is honoured. What the token charset guards is a marker whose screen
+cells are disturbed *mid-emission*: a renderer that patches cells with
+cursor-addressed rewrites can interleave console artefacts into the token,
+and the mangled candidate is not honoured, which fails the epoch closed on
+its deadline. Emit the marker with one contiguous write and this cannot
+happen.
+
+The marker is identified by its text alone, so **nothing but markers may
+contain the marker text.** Each of these forges readiness with a fresh
+token and silently shifts every later epoch's output onto the wrong input
+(measured in the #233 review):
+
+- **Ordinary output.** Help text, log lines, or a transcript echo that
+  quotes a marker — the first forgery ends the current epoch early, the
+  genuine marker then ends the *next* epoch without its input being
+  processed, and the cascade continues. Never print the configured prefix
+  outside a real marker.
+- **Console input echo.** With `ENABLE_ECHO_INPUT` set, conhost renders
+  dispatched input into the output stream; a verifier-sent text containing
+  the marker arrives *before* the subject's own processing and completes
+  the epoch on the verifier's own input. Cooperative raw-mode input (below,
+  for key delivery) is therefore also a marker-integrity requirement.
+- **Escape-sequence payloads.** The marker scan is escape-blind: marker
+  text inside a pass-through payload — an OSC window title, for instance —
+  is honoured, and pass-through paths run *ahead* of rendered text, which
+  re-creates the very ordering defect the printable marker exists to fix.
+  Never place the marker text inside an escape sequence.
 
 Do **not** try to fit inside the retention bound by emitting extra readiness
 markers inside one epoch: the contract is exactly one marker per processed

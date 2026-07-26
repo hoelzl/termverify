@@ -203,6 +203,23 @@ evidence and therefore cannot complete a verified terminal run — by design,
 not by accident. The marker string is part of the run's explicit
 configuration, recorded in evidence, and must be replay-stable.
 
+> **Correction (2026-07-26, issue #233 review).** The marker protocol's
+> adversarial review measured two claims above and found them wrong.
+> First, the wrap mechanism: a marker wider than the terminal is delivered
+> contiguous and *honoured* — wrapping is screen-buffer layout, not stream
+> content — so the fail-closed skip defends against cursor-addressed
+> mid-emission corruption of the marker's cells, not wraps. The integration
+> suite pins the measured behaviour
+> (`test_a_wrapped_marker_is_delivered_contiguous_and_honoured`). Second,
+> "recorded in evidence": the configured prefix appears in no transcript
+> record; it is recoverable only from the marker text the frames and raw
+> chunks carry. The review also disclosed three marker-forgery channels the
+> subject cooperation contract now names — stray prefix emission in
+> ordinary output, console input echo, and escape-sequence payloads (see
+> the developer guide) — and `_validate_marker_prefix` now rejects
+> non-printable prefixes, which had allowed a host to configure the marker
+> back onto the OSC pass-through path this amendment removed.
+
 **Epoch algorithm** (identical for initialize, dispatch, and advance_clock,
 except for the write step):
 

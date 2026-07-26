@@ -58,6 +58,7 @@ import re
 import sys
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import Final, cast
 
@@ -387,6 +388,31 @@ def test_conpty_relays_a_printable_marker_in_stream_order() -> None:
     after = combined.find("TV_AFTER")
     assert 0 <= before < marker < after, repr(combined[-300:])
     assert child.exit_status == 0
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY integration evidence")
+def test_a_wrapped_marker_is_delivered_contiguous_and_honoured() -> None:
+    """A marker wider than the terminal still bounds its epoch (#233 review).
+
+    Wrapping is screen-buffer layout, not stream content: ConPTY delivers a
+    contiguously written marker contiguous whatever the geometry, so a
+    wrapped marker is honoured — the token charset's fail-closed skip defends
+    against cursor-addressed mid-emission corruption, not wraps. This pins
+    the measured behaviour the docs once stated backwards ("a marker split
+    across a line wrap has a malformed token and is not honoured").
+    """
+    columns = 20  # the default 22-character marker cannot fit one row
+    configuration = replace(
+        _configuration(),
+        terminal=TerminalConfiguration(columns=columns, rows=24, capabilities=()),
+    )
+    adapter = _adapter(_cooperative_argv())
+    with _reaped(adapter):
+        started = adapter.start("run-conpty-wrapped-marker", configuration)
+        assert type(started) is Started, started
+        assert READINESS_MARKER_PREFIX_DEFAULT in _frame_text(started.observation)
+        stopped = adapter.stop(Stop(ManualTime(0)))
+    assert type(stopped) is TerminalResult
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY integration evidence")

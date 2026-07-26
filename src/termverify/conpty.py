@@ -65,10 +65,15 @@ Readiness and quiescence are defined only by observable evidence:
      is what distinguishes a new marker from a redrawn old one.
 
   The cost is that markers occupy screen cells and appear in frame
-  evidence. Subjects should emit them where that is harmless — on their own
-  line — which also keeps a marker from being split across a line wrap; a
-  wrapped marker has a malformed token and is not honoured, so the epoch
-  fails closed on its deadline instead of completing wrongly.
+  evidence. Subjects should emit them where that is harmless — on their
+  own newline-terminated line. A line *wrap* is not a hazard: wrapping is
+  screen-buffer layout, not stream content, so a marker wider than the
+  terminal arrives contiguous and is honoured (measured on the Windows
+  host, issue #233 review). What the token charset defends against is a
+  marker whose screen cells are disturbed mid-emission — a TUI patching
+  cells with cursor-addressed rewrites interleaves console artefacts into
+  the token — and such a candidate is skipped, so the epoch fails closed
+  on its deadline instead of completing wrongly.
 - Native end-of-stream plus the observed native exit record ends the run
   truthfully; a missing exit record is a structured failure, never a
   fabricated exit.
@@ -203,11 +208,11 @@ _MAX_MARKER_TOKEN: Final = 64
 _MAX_MARKER_CANDIDATE: Final = _MAX_MARKER_TOKEN + len(READINESS_MARKER_TERMINATOR)
 
 #: A marker's token must match this: printable, bounded, and free of any
-#: character the console emits while wrapping or repositioning. A candidate
-#: whose token does not match is not a marker, so a marker split across a
-#: line wrap fails closed into the epoch deadline rather than being honoured
-#: with a mangled token — see the marker-protocol notes in the module
-#: docstring.
+#: character the console emits between the cells it renders. A candidate
+#: whose token does not match is not a marker, so a marker whose screen
+#: cells were disturbed mid-emission (a cursor-addressed rewrite) fails
+#: closed into the epoch deadline rather than being honoured with a mangled
+#: token — see the marker-protocol notes in the module docstring.
 _MARKER_TOKEN = re.compile(rf"[0-9A-Za-z._-]{{1,{_MAX_MARKER_TOKEN}}}\Z")
 
 #: UTF-8's worst case for one screen cell. The screen model stores any
@@ -459,6 +464,17 @@ def _validate_marker_prefix(prefix: object) -> str:
         raise TypeError("readiness_marker_prefix must be a string")
     if not prefix:
         raise ValueError("readiness_marker_prefix must be non-empty")
+    if not all(char.isprintable() for char in prefix):
+        # The marker is printable so it travels the renderer's path, ordered
+        # against the output it bounds (#232). A control character puts it
+        # back on a pass-through path: "\x1b]7791;" is an OSC opener, and
+        # ConPTY relays OSC *ahead* of rendered text — the exact ordering
+        # defect the printable marker exists to fix (#233 review).
+        raise ValueError(
+            "readiness_marker_prefix must be printable: a control character"
+            " would route the marker through a console pass-through path"
+            " that overtakes the output the marker bounds"
+        )
     if READINESS_MARKER_TERMINATOR in prefix:
         raise ValueError(
             "readiness_marker_prefix must not contain"
@@ -644,9 +660,10 @@ class ConptyAdapter:
         already been honoured — the console repaints screen state, so a
         marker's text reappears in the stream whenever the viewport is
         redrawn — or when the token is malformed, which is what a marker
-        split across a line wrap looks like. Skipping is the fail-closed
-        direction: the epoch runs on to its deadline and reports a structured
-        failure, rather than completing on output the subject never sent.
+        whose screen cells were disturbed mid-emission looks like. Skipping
+        is the fail-closed direction: the epoch runs on to its deadline and
+        reports a structured failure, rather than completing on output the
+        subject never sent.
 
         Without a match, only the shortest tail that could still complete a
         split marker is retained. A candidate that has already outrun the
