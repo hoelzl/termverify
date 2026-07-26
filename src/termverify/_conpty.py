@@ -44,10 +44,14 @@ than risking the crash. ``close`` is the one concurrent-safe operation; it
 cancels in-flight I/O and waits it out before releasing the native object,
 because releasing during a native call is the same crash.
 
-The binding stays deliberately thin: every future adapter behavior above it
-must be testable cross-platform against an injected fake binding, so this
-native boundary is excluded from the coverage ratchet with recorded rationale
-in the developer guide. Cancellation and recovery are evidenced at this
+Every future adapter behavior above this binding must stay testable
+cross-platform against an injected fake binding, so this native boundary is
+excluded from the cross-platform coverage ratchet — the gating floor must
+not depend on the host OS. The binding is no longer thin, though (#197
+roughly tripled it), so the Windows CI legs measure it against the ConPTY
+suites with a supplemental, non-gating report (``conpty-coverage.toml``,
+issue #236) that keeps its gaps visible; the recorded rationale lives in the
+developer guide. Cancellation and recovery are evidenced at this
 binding level only — startup failure fails closed for both a missing command
 and a command the OS refuses to start, forced close recovers from hostile
 children (output flood, busy spin, in-flight write) without leaking threads,

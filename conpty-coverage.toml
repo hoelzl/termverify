@@ -1,0 +1,20 @@
+# Supplemental, non-gating coverage for the native ConPTY binding (#236).
+#
+# The binding executes only on Windows, so it stays omitted from the
+# cross-platform ratchet in pyproject.toml — a gating floor must not depend
+# on the host OS. But the binding is no longer the thin wrapper that omit
+# once assumed (#197 roughly tripled it), and both review rounds of #234
+# found defects in exactly the code the omit makes invisible. This config
+# measures it against the ConPTY suites on the Windows CI legs and reports
+# with missing lines, with no fail_under: the gaps become visible in every
+# Windows-leg log while the gating floor stays OS-independent. Recorded
+# disposition: Slice 8.3 of the 2026-07-24 remediation handover.
+
+[tool.coverage.run]
+branch = true
+include = ["*/termverify/_conpty.py"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+precision = 2

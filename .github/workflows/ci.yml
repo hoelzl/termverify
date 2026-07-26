@@ -29,6 +29,11 @@ jobs:
       - run: uv --no-config sync --all-groups --locked
       - run: uv --no-config run pre-commit run --all-files
       - run: uv --no-config run pytest --cov --cov-report=term-missing
+      - if: matrix.os == 'windows-latest'
+        name: Supplemental _conpty.py coverage (non-gating, #236)
+        run: |
+          uv --no-config run coverage run --rcfile=conpty-coverage.toml -m pytest tests/test_conpty_binding.py tests/test_conpty_epochs.py tests/test_conpty_integration.py -q
+          uv --no-config run coverage report --rcfile=conpty-coverage.toml
       - run: uv --no-config run mypy src tests scripts
 
   package:

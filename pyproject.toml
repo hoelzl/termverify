@@ -59,16 +59,15 @@ testpaths = ["tests"]
 branch = true
 source = ["termverify"]
 # The native ConPTY binding executes only on the Windows CI legs; including it
-# would make the cross-platform ratchet floor depend on the host OS. Its
-# behavior is proven by the Windows-only integration tests, and all adapter
+# would make the cross-platform ratchet floor depend on the host OS. Adapter
 # logic above it must remain fully ratcheted
 # (docs/developer-guide/development.md).
 #
 # It is no longer "deliberately thin", which this rationale used to claim:
-# taking the pseudoconsole over from pywinpty (#197) roughly tripled it, and
-# the omit means the spawn's ownership handover, the read cancellation path,
-# and the teardown are all unmeasured. Issue #236 revisits whether a
-# per-OS supplemental measurement should cover it (see also Slice 8.3).
+# taking the pseudoconsole over from pywinpty (#197) roughly tripled it. It is
+# therefore measured by the supplemental non-gating Windows-leg run
+# (conpty-coverage.toml, #236; disposition: Slice 8.3 of the 2026-07-24
+# remediation handover) while staying out of this gating floor.
 omit = ["*/termverify/_conpty.py"]
 
 [tool.coverage.report]
