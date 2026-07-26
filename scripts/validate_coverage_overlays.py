@@ -8,6 +8,10 @@ the copies, so drift would stay invisible (review finding on #241). This
 validator is the mechanical check: shared keys must match, and each
 overlay's ``exclude_also`` must select exactly its own platform marker.
 
+``conpty-coverage.toml`` (#236) is deliberately out of scope: it is a
+supplemental, non-gating measurement with intentionally different settings,
+not a copy of the gating configuration.
+
 Exits 1 and prints one line per violation on mismatch; exits 0 when clean.
 """
 
