@@ -8,8 +8,8 @@
   (reviewed revision: `main` @ `8f33e6c`).
 - **Owner:** project maintainer
 - **Created:** 2026-07-24
-- **Updated:** 2026-07-25 (checkpoint c: **Phases 1–4 complete**, plus
-  #192 and Slice 5.1; next item is Slice 5.2 / #196, carrying #213 and #217)
+- **Updated:** 2026-07-26 (checkpoint d: **Phases 1–4 complete**, plus #192,
+  Slice 5.1 and **Slice 5.2**; next item is Slice 5.3 / #197)
 - **Review required:** yes — every slice that changes runtime behavior, the
   public API, protocol prose with normative force, or release/security claims
   requires TDD evidence, full validation, and an independent adversarial
@@ -586,6 +586,55 @@ re-deriving them.
   precedent). If read-boundary detail ever proves useful for native-read
   debugging, it may be exposed as a diagnostic side channel, not as
   transcript events.
+- **Slice 5.2 — POSIX containment boundary (R4). [DONE 2026-07-26 — PR #229]**
+  Merged after two adversarial rounds, both REJECT. Shape: the POSIX binding
+  owns **both** pipes as raw descriptors (wider than the issue's text, and
+  what dissolves #217 there rather than describing it away), detached once in
+  the constructor, with reads and writes waiting on `poll` over their
+  descriptor plus a self-pipe; every close that proceeds signals it before
+  terminating anything or touching a descriptor.
+
+  **The red was observed on CI, not locally, and it corrected the story.**
+  This dev host is Windows and the path is POSIX-only, so the test was pushed
+  first and failed on all three Ubuntu legs with *"the blocked read was never
+  woken"* — while `close(force=True)` **returned cleanly**. The
+  `_close_pipes`-blocks-inside-a-`finally` shape #213 and #217 describe was
+  not reached, because the immediate child had already exited. Worth keeping:
+  the defect was a close that reported success and left a thread blocked on a
+  descriptor it had just freed, which is worse than the hang that was
+  predicted. *Prediction is not evidence even when the fix is right.*
+
+  Lessons from the two rounds, both of a kind this handover keeps recording:
+
+  - **A wake-up without an in-flight handshake trades a hang for silent
+    corruption.** Round 1 found the write path had the self-pipe but no
+    `_write_in_flight` tracking, so a close concurrent with a write — the
+    *designed* path, since the watchdog closes from the timer thread — could
+    free the stdin descriptor's number under a live `os.write`. Reads had the
+    handshake; copying half a mechanism is worse than copying none, because
+    the asymmetry ran toward the quieter failure.
+  - **Order the fallible step before the irreversible one.** Round 1's own
+    fail-closed spawn leg leaked both descriptors: it detached the wrappers
+    and only then called the one operation that can fail (`os.pipe`), so the
+    release path — which works through those wrappers — closed nothing, on a
+    path whose trigger is descriptor exhaustion. Round 2 caught it.
+  - **A test that pins the wrong half passes against the code it was written
+    for.** The new write test asserted only that *something* raised, which
+    also accepts the `EBADF` the defect itself produces. Assert the type.
+  - **`# pragma: no cover` is static, not conditional.** A pragma on a `def`
+    excludes that body on *every* platform, so the whole POSIX
+    implementation is unratcheted on Linux too — deleting `_write_all`'s body
+    would keep the gate green. The round-1 sentence claiming otherwise was
+    *less* true than the one it replaced. Filed as **#230**; it is the third
+    finding this cycle where a measurement was believed to cover something it
+    did not.
+
+  **Still open, deliberately:** #213 and #217 are POSIX-resolved only and were
+  reopened/annotated to say so. Windows has no equivalent mechanism —
+  `poll`/`select` do not work on anonymous pipe handles — so a pipe-end holder
+  outside the job can still stall a teardown there. Also filed: **#228** (the
+  ConPTY terminal receipt claims `tier: "os"` for geometries the console
+  silently substitutes). Original slice text follows.
 - **Slice 5.2 — POSIX containment boundary (R4).**
   **Owner decision 2026-07-24: harden the reader, disclose the survivor
   (Option C).** Two-part disposition splitting the finding at its natural
@@ -804,6 +853,41 @@ implementation gets its own future handover/boundary, not this one.
   already resolved by PR #183.
 - **Phase 0 complete (2026-07-24):** issues #184–#204 filed under the
   `review-2026-07-24` label (mapping table in Phase 0 above).
+- **Checkpoint 2026-07-26d (fourth session).**
+  - **Merged:** the Slice 4.2 follow-up (PR #227, closes #226) and Slice 5.2
+    (PR #229, closes #196). **Phase 5 has only 5.3 (#197) left.** Working
+    state clean: no open PRs, no worktrees, no local branches.
+  - **A seventh review of the already-merged Slice 4.2 found a MAJOR**, which
+    is the checkpoint's main process result. #194's geometry gate reserved
+    four bytes per cell and refused an epoch when nothing was left for
+    output — a *cell* model that cannot see the ceiling the codec charges
+    per **collection**: a frame is one item per row, capped at 16,384, so a
+    10-column 20,000-row terminal is 200,000 cells (a third of the 523,264
+    threshold) and every record it produced was rejected. Three further
+    rounds followed on #227 itself, and the arc is worth carrying forward:
+    - **Round 8** killed the fix's own rationale. It checked rows only and
+      argued columns needed none because a 262,144-column frame line is out
+      of reach of a 16-bit `COORD`. `PTY()` range-checks nothing — 262,145x1
+      and 1,048,577x1 both create a pseudoconsole and spawn. The remedy was
+      to stop arguing and check all three axes: **a check costing one
+      comparison is not worth an argument about what a host can request.**
+    - **Round 9** found that the defense-in-depth gate added in round 8 had
+      *destroyed the test* for the original gate's placement. Both gates
+      raise identically, so moving the check into the read loop — round 6's
+      defect once more — passed the entire suite. **A redundant guard can
+      silently un-pin the guard it backs up.**
+    - **Round 10** accepted with nits. Net: four rounds, three of them
+      turning on sentences rather than arithmetic.
+  - **New issues:** **#228** (ConPTY receipt claims `tier: "os"` for
+    geometries the console silently truncates — a claim-strength defect of
+    the same family as #190), **#230** (`# pragma: no cover` on platform legs
+    excludes them everywhere, so both platforms' native legs are
+    unratcheted). **#213 and #217 were reopened**, POSIX-resolved only.
+  - **The standing lesson, now with a fourth instance.** Every round above
+    that found something above nit level found a *false statement*, not a
+    broken test — and in three separate cases the fix for one round's false
+    sentence authored the next round's. When implementing: write no sentence
+    whose mechanism you have not just run. When reviewing: run the claim.
 - **Checkpoint 2026-07-25c (third session).**
   - **Merged:** timezone-registry removal (PR #220, closes #192); Slice 4.1
     (PR #221, closes #193); Slice 5.1 (PR #224, closes #195); Slice 4.2
@@ -908,12 +992,23 @@ implementation gets its own future handover/boundary, not this one.
 6. ~~Timezone-registry removal (#192), Slice 4.1 (#193), Slice 5.1 (#195),
    Slice 4.2 (#194)~~ **all done 2026-07-25** — PRs #220, #221, #224, #222.
    **Phases 1–4 are complete.**
-7. **Resume with Slice 5.2 (#196)**, which now carries #213 and #217 as named
-   acceptance scenarios. Then Slice 5.3 (#197), Phase 6 (#198 plus #218),
-   Phase 7 (#199), Phase 8 (#200–#203). Read the Phase 4 lessons above before
-   starting 5.2: it is the last large runtime slice, it spans POSIX and
-   Windows, and three of the six Slice 4.2 review rounds turned on prose that
-   outlived the mechanism it described.
+7. ~~Slice 5.2 (#196)~~ **done 2026-07-26** — PR #229, plus the Slice 4.2
+   follow-up PR #227 (#226) that a round-7 review of the merged #194 produced.
+8. **Resume with Slice 5.3 (#197)** — the raw-byte ConPTY read path with
+   incremental UTF-8 decoding. It is a **design-first** slice: pywinpty's
+   `PTY.read` returns pre-decoded `str`, so the issue must first settle how to
+   obtain raw conout bytes, and the answer may amend
+   `docs/agent/design/terminal-adapter-dependency-decision.md`. That is a
+   recorded owner touchpoint (§4), so surface the mechanism choice before
+   implementing. Note it converges with #228 and with `_conpty.py`'s existing
+   conclusion that the conin-write boundary "closes only when this binding
+   owns its handles" — three findings now point at the same answer, which is
+   worth weighing when sizing the slice.
+
+   Then Phase 6 (#198 plus #218), Phase 7 (#199), Phase 8 (#200–#203, plus
+   **#230**), and the reopened Windows halves of #213/#217 need a home —
+   they are not Phase 5 work any more and belong with a Windows-mechanism
+   slice or an accepted disclosure.
 
 Superseded next-step detail from the previous checkpoint, kept because the
 file survey is still accurate:
