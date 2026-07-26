@@ -121,3 +121,50 @@ def test_a_missing_overlay_is_reported(tmp_path: Path) -> None:
     _write_repository(tmp_path, windows=_overlay("# coverage: exclude-windows"))
     errors = validator.validate_coverage_overlays(tmp_path)
     assert any("coverage-posix.toml" in error for error in errors)
+
+
+def test_a_drifted_base_exclude_also_is_reported(tmp_path: Path) -> None:
+    validator = load_validator()
+    drifted = _PYPROJECT.replace(
+        "exclude_also = ['# coverage: exclude-(posix|windows)']",
+        "exclude_also = ['# coverage: exclude-windows']",
+    )
+    (tmp_path / "pyproject.toml").write_text(drifted, encoding="utf-8")
+    (tmp_path / "coverage-windows.toml").write_text(
+        _overlay("# coverage: exclude-windows"), encoding="utf-8"
+    )
+    (tmp_path / "coverage-posix.toml").write_text(
+        _overlay("# coverage: exclude-posix"), encoding="utf-8"
+    )
+    errors = validator.validate_coverage_overlays(tmp_path)
+    assert any(
+        "exclude_also" in error and "pyproject.toml" in error for error in errors
+    )
+
+
+def test_malformed_toml_is_reported_as_a_violation(tmp_path: Path) -> None:
+    validator = load_validator()
+    (tmp_path / "pyproject.toml").write_text(_PYPROJECT, encoding="utf-8")
+    (tmp_path / "coverage-windows.toml").write_text(
+        _overlay("# coverage: exclude-windows"), encoding="utf-8"
+    )
+    (tmp_path / "coverage-posix.toml").write_text(
+        "[tool.coverage.run\n", encoding="utf-8"
+    )
+    errors = validator.validate_coverage_overlays(tmp_path)
+    assert any("coverage-posix.toml" in error and "TOML" in error for error in errors)
+
+
+def test_an_additive_overlay_key_is_reported(tmp_path: Path) -> None:
+    validator = load_validator()
+    additive = _overlay("# coverage: exclude-windows").replace(
+        'omit = ["*/termverify/_conpty.py"]',
+        'omit = ["*/termverify/_conpty.py"]\nconcurrency = ["thread"]',
+    )
+    _write_repository(
+        tmp_path,
+        windows=additive,
+        posix=_overlay("# coverage: exclude-posix"),
+    )
+    errors = validator.validate_coverage_overlays(tmp_path)
+    assert any("coverage-windows.toml" in error for error in errors)

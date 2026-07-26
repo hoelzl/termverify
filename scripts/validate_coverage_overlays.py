@@ -30,7 +30,10 @@ SHARED_REPORT_KEYS = ("show_missing", "skip_covered", "fail_under", "precision")
 
 
 def _coverage_sections(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
-    document = tomllib.loads(path.read_text(encoding="utf-8"))
+    try:
+        document = tomllib.loads(path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as error:
+        raise ValueError(f"invalid TOML — {error}") from error
     coverage = document.get("tool", {}).get("coverage", {})
     return coverage.get("run", {}), coverage.get("report", {})
 
@@ -40,7 +43,10 @@ def validate_coverage_overlays(repository_root: Path) -> list[str]:
     pyproject_path = repository_root / PYPROJECT
     if not pyproject_path.exists():
         return [f"{PYPROJECT} is missing"]
-    base_run, base_report = _coverage_sections(pyproject_path)
+    try:
+        base_run, base_report = _coverage_sections(pyproject_path)
+    except ValueError as error:
+        return [f"{PYPROJECT}: {error}"]
 
     errors: list[str] = []
     if base_report.get("exclude_also") != [LOCAL_EXCLUDE]:
@@ -53,7 +59,23 @@ def validate_coverage_overlays(repository_root: Path) -> list[str]:
         if not path.exists():
             errors.append(f"{relative} is missing")
             continue
-        overlay_run, overlay_report = _coverage_sections(path)
+        try:
+            overlay_run, overlay_report = _coverage_sections(path)
+        except ValueError as error:
+            errors.append(f"{relative}: {error}")
+            continue
+        if set(overlay_run) != set(base_run):
+            errors.append(
+                f"{relative}: [tool.coverage.run] keys "
+                f"{sorted(set(overlay_run) ^ set(base_run))} are not present "
+                "in both the overlay and pyproject.toml"
+            )
+        if set(overlay_report) != set(base_report):
+            errors.append(
+                f"{relative}: [tool.coverage.report] keys "
+                f"{sorted(set(overlay_report) ^ set(base_report))} are not "
+                "present in both the overlay and pyproject.toml"
+            )
         for key in SHARED_RUN_KEYS:
             if overlay_run.get(key) != base_run.get(key):
                 errors.append(
