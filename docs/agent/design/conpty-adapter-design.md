@@ -279,9 +279,20 @@ Neither of the first two follows from the third, which is why one check
 could not serve. A 10-column, 20,000-row terminal is 200,000 cells —
 two-and-a-half times below the cell threshold — and the codec rejects every
 observation record it produces, for collection size. A 262,145-column,
-1-row terminal is 262,145 cells and is rejected for string size. Only a
-single-row terminal reaches the column limit at all: at two rows, any width
-past 262,144 is already past 523,264 cells.
+1-row terminal is 262,145 cells and is rejected for string size once the
+screen holds four-byte characters. Only a single-row terminal reaches the
+column limit at all: at two rows, any width past 262,144 is already past
+523,264 cells.
+
+The two are not alike in one respect worth stating, because the checks look
+symmetric and are not. The **row** ceiling is content-independent: 16,385
+lines are 16,385 collection items whatever they contain. The **column**
+ceiling is content-dependent, like the cell one — 262,145 columns of ASCII
+record fine, and it is 262,145 columns of four-byte characters that the
+codec rejects. The adapter reserves UTF-8's worst case per cell on both
+content-dependent axes rather than admitting a run and discovering at
+serialization which kind of screen it got, which is the same trade the cell
+threshold already makes and which the guide discloses to hosts.
 
 **The rejected alternative is worth recording, because it was shipped for a
 round.** The first fix checked rows only and argued columns needed no check,
@@ -291,7 +302,8 @@ Measured on the Windows dev host, that argument is false in both halves:
 create a pseudoconsole and spawn into it. The review then drove a
 single-row, 262,145-column run end to end through the real normalizer,
 recorder and codec and got the admit-then-reject this slice exists to
-prevent. A check that costs one comparison should not be gated on an
+prevent — at four bytes per cell, the regime the reserve is sized for.
+A check that costs one comparison should not be gated on an
 argument about what a host can request — the argument is where the defect
 lives, and it is cheaper to check the axis than to be right about it.
 

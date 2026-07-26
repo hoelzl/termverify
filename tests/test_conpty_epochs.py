@@ -751,6 +751,11 @@ def test_a_terminal_too_large_for_its_own_frame_fails_on_geometry(
     # real fixed strings fit with ~3.8 KB to spare. What it cannot do is hold
     # the frame *and* any output once the reserve is taken (round 6, finding 2).
     assert "no room for output" in result.failure.message
+    # Refused before any read, on this axis too. Without it the cells leg
+    # alone could move into the read loop undetected, and a stalled subject
+    # at an unrecordable geometry would wait out the whole abort deadline to
+    # be told `during: "read"` (round 10).
+    assert binding.child.reads_served == 0
 
 
 #: The widest frame line that meets the per-string ceiling at UTF-8's worst
@@ -823,12 +828,11 @@ def test_a_frame_ceiling_bytes_cannot_express_refuses_the_geometry(
         axis: rows if axis == "terminal-rows" else columns,
     }
     # Refused *before any read* — the property the pre-read placement exists
-    # for, and the only test that can pin it. The buffered-marker test below
-    # cannot: on that path no placement causes a read, and `_observation`'s
-    # defense-in-depth gate raises the identical failure, so with the check
-    # moved into the read loop the whole suite stayed green while a host with
-    # an unrecordable geometry got told its subject was too slow (round 9,
-    # finding F1).
+    # for. The buffered-marker test below cannot pin it: on that path no
+    # placement causes a read, and `_observation`'s defense-in-depth gate
+    # raises the identical failure, so with the check moved into the read
+    # loop the whole suite stayed green while a host with an unrecordable
+    # geometry got told its subject was too slow (round 9, finding F1).
     assert binding.child.reads_served == 0
 
 

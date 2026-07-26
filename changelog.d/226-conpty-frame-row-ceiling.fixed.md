@@ -10,9 +10,13 @@
     records the codec rejected for collection size.
   - One frame line is one string of `columns` code points, so a terminal of
     262,145 columns and 1 row — 262,145 cells — produced observation records
-    the codec rejected for string size. Only a single-row terminal can reach
-    this: at two rows, any width past 262,144 is already past the cell
-    threshold.
+    the codec rejected for string size once the screen held four-byte
+    characters, which the shipped normalizer reaches one code point per
+    cell. Unlike the row ceiling, this one is content-dependent: the same
+    geometry records fine while the screen is ASCII, and the adapter
+    reserves the worst case rather than waiting to find out. Only a
+    single-row terminal can reach it at all: at two rows, any width past
+    262,144 is already past the cell threshold.
 
   Both are now refused as the cell case is, in the same `budget: "geometry"`
   failure class, with `terminal-rows` or `terminal-columns` naming the axis

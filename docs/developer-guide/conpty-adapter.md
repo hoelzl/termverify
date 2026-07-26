@@ -120,7 +120,8 @@ already past 523,264 cells.
 
 Nor does either imply the other, so a frame at the cell threshold is not
 automatically recordable — 523,264 columns on a single row is one row and
-523,264 cells, and its one line is 2 MiB.
+523,264 cells, and its one line is just under 2 MiB, where one string may
+be 1 MiB.
 
 All three refuse the run the same way, with `budget: "geometry"`, as soon as
 an epoch begins and before any read.
