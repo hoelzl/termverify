@@ -1,13 +1,23 @@
 """Minimal Windows ConPTY binding boundary for the terminal adapter plan.
 
-This module is the only place that touches ``pywinpty``. It owns the native
-``winpty._winpty.PTY`` object directly instead of ``winpty.PtyProcess``: the
-``PtyProcess`` wrapper routes output through an internal socket-relay reader
-thread that swallows the native end-of-stream signal and can drop buffered
-output once the child exits, and the accepted verification plan rejects
-reader-thread state as evidence. Driving the native object keeps every
-observable — output bytes, end-of-stream, liveness, exit status — a direct
+This module owns the pseudoconsole itself: it creates the conin and conout
+pipes, calls ``CreatePseudoConsole``, starts the child through an
+``STARTUPINFOEX`` attribute list, and reads raw bytes off conout with its own
+``ReadFile`` loop. Nothing stands between the caller and the pipe — no relay
+reader thread whose death could masquerade as end-of-stream — so every
+observable (output bytes, end-of-stream, liveness, exit status) is a direct
 native signal.
+
+It replaced ``pywinpty`` for finding R7. ``PTY.read`` returned pre-decoded
+``str``, and a native read landing mid-codepoint was decoded in isolation:
+the split character became ``U+FFFD`` and was lost outright, irreparably, in
+evidence. A measured 200,000-character burst of ``U+65E5`` through that path
+produced 29 replacement characters across 21 reads and lost 12 characters.
+``pywinpty`` exposes no bytes-returning read and no way to reach the conout
+handle, and the damage cannot be repaired above it, so obtaining raw bytes
+meant owning the pseudoconsole — which means owning the spawn. ``read`` still
+returns ``str``; the decode is now this module's, and it runs one incremental
+decoder across every chunk of a child's lifetime so splits heal.
 
 Process-tree containment uses a Windows job object created per spawn with
 ``JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`` and neither breakaway limit, so every
@@ -22,8 +32,8 @@ would fall outside the job; the binding does not claim pre-start assignment.
 I/O is single-flight by contract: at most one native read or write may be in
 flight, and overlap fails fast with ``ConptyConcurrentIOError``. The native
 layer is not thread-safe for overlapped calls on one pseudoconsole —
-concurrent ``pty.write`` against a blocked ``pty.read`` intermittently
-crashes the interpreter with a native access violation — and the transcript
+concurrent writing against a blocked read intermittently crashes the
+interpreter with a native access violation — and the transcript
 protocol is single-flight anyway, so the binding refuses the overlap rather
 than risking the crash. ``close`` is the one concurrent-safe operation; it
 cancels in-flight I/O and waits it out before releasing the native object,
@@ -42,28 +52,30 @@ the structured failure/abort taxonomy is adapter behavior and remains
 unclaimed here.
 
 Disclosed boundary — conin writes run outside the abort deadline (finding
-C2, issue #193). The JSONL transport now arms that deadline around every
-wire write, and the mechanism does not port here: ``pty.write`` hands the
-bytes to pywinpty, which owns the conin handle, so nothing in this binding
-can cancel or close it to interrupt a blocked write — and the single-flight
-contract above exists precisely because a concurrent ``pty.write`` against
-a blocked ``pty.read`` intermittently wedges the native pseudoconsole, so
-the write cannot be moved to another thread either. Reaching the handle
-means a pywinpty surface that does not exist, or TermVerify's own ConPTY
-binding: the same conclusion the raw-byte read path reached (finding R7).
-The theoretical bound: if a subject stops draining conin and the console
-input buffer fills, ``write`` blocks indefinitely and the adapter's abort
-deadline cannot end it. No such backpressure was observed on the verified
-matrix, and the interactive inputs written here are far smaller than any
-plausible buffer, so this is a stated bound rather than a measured failure
-— but it is real, and it closes only when this binding owns its handles.
+C2, issue #193). The JSONL transport arms that deadline around every wire
+write; the mechanism still does not port here. This binding now owns the
+conin handle, so reaching it is no longer the obstacle it was, but the
+single-flight contract above exists precisely because a concurrent write
+against a blocked read intermittently wedges the native pseudoconsole — so
+the write cannot be moved to another thread, and the deadline still cannot
+end it. Closing that boundary is #193's own work, deliberately not this
+slice's. The bound: if a subject stops draining conin and the console input
+buffer fills, ``write`` blocks and the adapter's abort deadline cannot end
+it. Measured on this matrix, conin sustains roughly 1 MiB/s — the console
+host turns every byte into input records — and the interactive inputs
+written here are far smaller than any plausible buffer, so this remains a
+stated bound rather than an observed failure.
 
 ``write`` intentionally returns ``None``: the ConPTY write return value is not
-a reliable byte-count receipt, and exposing it would fabricate evidence.
+a reliable byte-count receipt, and exposing it would fabricate evidence. It
+does write every byte it was given before returning, which the previous
+binding's single native call did not — a large payload therefore occupies
+the single-flight slot for proportionally longer than it used to.
 """
 
 from __future__ import annotations
 
+import codecs
 import contextlib
 import os
 import shutil
@@ -71,12 +83,26 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from collections.abc import Mapping, Sequence
-from typing import Any, Final
+from typing import Any, Final, cast
 
 _CHILD_EXIT_WAIT_MS = 30_000
 _READ_CANCEL_TIMEOUT_SECONDS = 30.0
 _READ_CANCEL_RETRY_SECONDS = 0.01
+#: Bound on waiting for the thread that closes the pseudoconsole. The close
+#: has normally already returned by then: end-of-stream is only observable
+#: after the console host exited, which is what that thread waits for.
+_PSEUDOCONSOLE_DRAIN_JOIN_SECONDS = 30.0
+
+
+class _NativeEndOfStream(OSError):
+    """Internal: the conout pipe genuinely broke; no more bytes will arrive."""
+
+
+class _NativeReadCancelled(OSError):
+    """Internal: an in-flight native read was ended by ``cancel_io``."""
+
 
 #: Exit code set on every process in the tree by a forced close. The value
 #: keeps parity with the previous single-process termination convention.
@@ -139,6 +165,83 @@ if sys.platform == "win32":
     _WAIT_TIMEOUT = 0x102
     _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
     _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+    _INFINITE = 0xFFFF_FFFF
+    _INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
+    _ERROR_INSUFFICIENT_BUFFER = 122
+    _ERROR_BROKEN_PIPE = 109
+    _ERROR_PIPE_CONNECTED = 535
+    _ERROR_NO_DATA = 232
+    _ERROR_IO_PENDING = 997
+    _ERROR_OPERATION_ABORTED = 995
+    _PIPE_ACCESS_INBOUND = 0x0000_0001
+    _PIPE_TYPE_BYTE = 0x0000_0000
+    _PIPE_READMODE_BYTE = 0x0000_0000
+    _PIPE_WAIT = 0x0000_0000
+    _PIPE_REJECT_REMOTE_CLIENTS = 0x0000_0008
+    _FILE_FLAG_OVERLAPPED = 0x4000_0000
+    _FILE_FLAG_FIRST_PIPE_INSTANCE = 0x0008_0000
+    _GENERIC_WRITE = 0x4000_0000
+    _OPEN_EXISTING = 3
+    _EXTENDED_STARTUPINFO_PRESENT = 0x0008_0000
+    _STARTF_USESTDHANDLES = 0x0000_0100
+    _CREATE_UNICODE_ENVIRONMENT = 0x0000_0400
+    _PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = 0x0002_0016
+    #: One native read never returns more than this many bytes. The value only
+    #: caps a single ``ReadFile``; the pipe delivers whatever is available.
+    _READ_BUFFER_BYTES = 64 * 1024
+    #: Kernel buffer for the conout pipe. Sized well above one screenful
+    #: because a full pipe stalls the console host's renderer, and a stalled
+    #: renderer stops streaming and repaints the viewport instead — which
+    #: re-emits rows this binding already delivered.
+    _CONOUT_PIPE_BUFFER_BYTES = 1024 * 1024
+
+    class _Coord(ctypes.Structure):
+        _fields_ = [("X", wintypes.SHORT), ("Y", wintypes.SHORT)]
+
+    class _Overlapped(ctypes.Structure):
+        _fields_ = [
+            ("Internal", ctypes.c_size_t),
+            ("InternalHigh", ctypes.c_size_t),
+            ("Offset", wintypes.DWORD),
+            ("OffsetHigh", wintypes.DWORD),
+            ("hEvent", wintypes.HANDLE),
+        ]
+
+    class _StartupInfoW(ctypes.Structure):
+        _fields_ = [
+            ("cb", wintypes.DWORD),
+            ("lpReserved", wintypes.LPWSTR),
+            ("lpDesktop", wintypes.LPWSTR),
+            ("lpTitle", wintypes.LPWSTR),
+            ("dwX", wintypes.DWORD),
+            ("dwY", wintypes.DWORD),
+            ("dwXSize", wintypes.DWORD),
+            ("dwYSize", wintypes.DWORD),
+            ("dwXCountChars", wintypes.DWORD),
+            ("dwYCountChars", wintypes.DWORD),
+            ("dwFillAttribute", wintypes.DWORD),
+            ("dwFlags", wintypes.DWORD),
+            ("wShowWindow", wintypes.WORD),
+            ("cbReserved2", wintypes.WORD),
+            ("lpReserved2", ctypes.POINTER(wintypes.BYTE)),
+            ("hStdInput", wintypes.HANDLE),
+            ("hStdOutput", wintypes.HANDLE),
+            ("hStdError", wintypes.HANDLE),
+        ]
+
+    class _StartupInfoExW(ctypes.Structure):
+        _fields_ = [
+            ("StartupInfo", _StartupInfoW),
+            ("lpAttributeList", ctypes.c_void_p),
+        ]
+
+    class _ProcessInformation(ctypes.Structure):
+        _fields_ = [
+            ("hProcess", wintypes.HANDLE),
+            ("hThread", wintypes.HANDLE),
+            ("dwProcessId", wintypes.DWORD),
+            ("dwThreadId", wintypes.DWORD),
+        ]
 
     class _IoCounters(ctypes.Structure):
         _fields_ = [
@@ -195,6 +298,126 @@ if sys.platform == "win32":
     _kernel32.TerminateJobObject.restype = wintypes.BOOL
     _kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
     _kernel32.TerminateProcess.restype = wintypes.BOOL
+    _kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, wintypes.LPDWORD]
+    _kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+    _kernel32.CreatePipe.argtypes = [
+        ctypes.POINTER(wintypes.HANDLE),
+        ctypes.POINTER(wintypes.HANDLE),
+        ctypes.c_void_p,
+        wintypes.DWORD,
+    ]
+    _kernel32.CreatePipe.restype = wintypes.BOOL
+    _kernel32.CreateNamedPipeW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+    ]
+    _kernel32.CreateNamedPipeW.restype = wintypes.HANDLE
+    _kernel32.CreateFileW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    _kernel32.CreateFileW.restype = wintypes.HANDLE
+    _kernel32.CreateEventW.argtypes = [
+        ctypes.c_void_p,
+        wintypes.BOOL,
+        wintypes.BOOL,
+        wintypes.LPCWSTR,
+    ]
+    _kernel32.CreateEventW.restype = wintypes.HANDLE
+    _kernel32.SetEvent.argtypes = [wintypes.HANDLE]
+    _kernel32.SetEvent.restype = wintypes.BOOL
+    _kernel32.ResetEvent.argtypes = [wintypes.HANDLE]
+    _kernel32.ResetEvent.restype = wintypes.BOOL
+    _kernel32.WaitForMultipleObjects.argtypes = [
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.BOOL,
+        wintypes.DWORD,
+    ]
+    _kernel32.WaitForMultipleObjects.restype = wintypes.DWORD
+    _kernel32.ReadFile.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.LPDWORD,
+        ctypes.c_void_p,
+    ]
+    _kernel32.ReadFile.restype = wintypes.BOOL
+    _kernel32.WriteFile.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.LPDWORD,
+        ctypes.c_void_p,
+    ]
+    _kernel32.WriteFile.restype = wintypes.BOOL
+    _kernel32.CancelIoEx.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
+    _kernel32.CancelIoEx.restype = wintypes.BOOL
+    _kernel32.GetOverlappedResult.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_void_p,
+        wintypes.LPDWORD,
+        wintypes.BOOL,
+    ]
+    _kernel32.GetOverlappedResult.restype = wintypes.BOOL
+    _kernel32.InitializeProcThreadAttributeList.argtypes = [
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.POINTER(ctypes.c_size_t),
+    ]
+    _kernel32.InitializeProcThreadAttributeList.restype = wintypes.BOOL
+    _kernel32.UpdateProcThreadAttribute.argtypes = [
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    _kernel32.UpdateProcThreadAttribute.restype = wintypes.BOOL
+    _kernel32.DeleteProcThreadAttributeList.argtypes = [ctypes.c_void_p]
+    _kernel32.DeleteProcThreadAttributeList.restype = None
+    _kernel32.CreateProcessW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.LPWSTR,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        wintypes.BOOL,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.LPCWSTR,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    _kernel32.CreateProcessW.restype = wintypes.BOOL
+    #: ConPTY arrived in Windows 10 1809; older hosts export none of these.
+    _HAS_PSEUDOCONSOLE = hasattr(_kernel32, "CreatePseudoConsole")
+    if _HAS_PSEUDOCONSOLE:
+        _kernel32.CreatePseudoConsole.argtypes = [
+            _Coord,
+            wintypes.HANDLE,
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.HANDLE),
+        ]
+        _kernel32.CreatePseudoConsole.restype = ctypes.c_long
+        _kernel32.ResizePseudoConsole.argtypes = [wintypes.HANDLE, _Coord]
+        _kernel32.ResizePseudoConsole.restype = ctypes.c_long
+        _kernel32.ClosePseudoConsole.argtypes = [wintypes.HANDLE]
+        _kernel32.ClosePseudoConsole.restype = None
 
     def _create_containment_job() -> int:
         """Create a kill-on-close job object for one pseudoconsole child."""
@@ -257,6 +480,489 @@ if sys.platform == "win32":
     def _close_handle(handle: int) -> None:
         _kernel32.CloseHandle(handle)
 
+    def _last_error(call: str) -> OSError:
+        return OSError(f"{call} failed: {ctypes.get_last_error()}")
+
+    def _make_overlapped_conout_pipe() -> tuple[int, int]:
+        """Create the conout pipe with an overlapped, cancellable read end.
+
+        ``CreatePipe`` cannot produce an overlapped handle, and a synchronous
+        ``ReadFile`` on a pipe cannot be cancelled from the closing thread —
+        the binding's close contract needs both. A named pipe can, so the
+        read end is a first-instance, local-only named pipe server and the
+        write end handed to the pseudoconsole is a client opened on it.
+
+        ``FILE_FLAG_FIRST_PIPE_INSTANCE`` makes creation fail rather than
+        join an existing instance, so another process cannot pre-create the
+        name and receive this session's output; the name itself carries a
+        ``uuid4`` so it is not guessable in the first place.
+        """
+        name = f"\\\\.\\pipe\\termverify-conout-{os.getpid()}-{uuid.uuid4().hex}"
+        read_side = _kernel32.CreateNamedPipeW(
+            name,
+            _PIPE_ACCESS_INBOUND
+            | _FILE_FLAG_OVERLAPPED
+            | _FILE_FLAG_FIRST_PIPE_INSTANCE,
+            _PIPE_TYPE_BYTE
+            | _PIPE_READMODE_BYTE
+            | _PIPE_WAIT
+            | _PIPE_REJECT_REMOTE_CLIENTS,
+            1,
+            _CONOUT_PIPE_BUFFER_BYTES,
+            _CONOUT_PIPE_BUFFER_BYTES,
+            0,
+            None,
+        )
+        if not read_side or int(read_side) == _INVALID_HANDLE_VALUE:
+            raise _last_error("CreateNamedPipeW")
+        write_side = _kernel32.CreateFileW(
+            name, _GENERIC_WRITE, 0, None, _OPEN_EXISTING, 0, None
+        )
+        if not write_side or int(write_side) == _INVALID_HANDLE_VALUE:
+            error = ctypes.get_last_error()
+            _kernel32.CloseHandle(read_side)
+            raise OSError(f"CreateFileW on the conout pipe failed: {error}")
+        return int(read_side), int(write_side)
+
+    def _close_pseudoconsole(pseudoconsole: int) -> None:
+        _kernel32.ClosePseudoConsole(pseudoconsole)
+
+    class _PseudoConsoleSession:
+        """One natively owned ConPTY session: handles, child, and raw I/O.
+
+        This is the object ``ConptyChild`` wraps. It exists because
+        ``pywinpty`` hands out pre-decoded ``str`` and exposes no conout
+        handle (finding R7): owning the raw output bytes means owning
+        ``CreatePseudoConsole``, which means owning the ``STARTUPINFOEX``
+        spawn as well. Every method here is a direct native call; no reader
+        thread stands between the caller and the pipe.
+        """
+
+        def __init__(
+            self,
+            *,
+            pseudoconsole: int,
+            conout_read: int,
+            conin_write: int,
+            process_handle: int,
+            pid: int,
+            read_event: int,
+            cancel_event: int,
+        ) -> None:
+            self._pseudoconsole: int | None = pseudoconsole
+            self._conout_read: int | None = conout_read
+            self._conin_write: int | None = conin_write
+            self._process_handle: int | None = process_handle
+            self._read_event: int | None = read_event
+            self._cancel_event: int | None = cancel_event
+            self._pid = pid
+            self._buffer = ctypes.create_string_buffer(_READ_BUFFER_BYTES)
+            self._lock = threading.Lock()
+            self._closed = False
+            self._drain: threading.Thread | None = None
+
+        @property
+        def pid(self) -> int:
+            return self._pid
+
+        def isalive(self) -> bool:
+            handle = self._process_handle
+            if handle is None:
+                return False
+            return not _wait_for_handle(handle, 0)
+
+        def get_exitstatus(self) -> int | None:
+            """Return the child's native exit code once it has really exited.
+
+            The code is read only after an OS wait says the process is
+            signaled, so the ``STILL_ACTIVE`` sentinel can never be mistaken
+            for a genuine exit status of 259.
+            """
+            handle = self._process_handle
+            if handle is None or not _wait_for_handle(handle, 0):
+                return None
+            code = wintypes.DWORD(0)
+            if not _kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                raise _last_error("GetExitCodeProcess")
+            return int(code.value)
+
+        def set_size(self, columns: int, rows: int) -> None:
+            with self._lock:
+                pseudoconsole = self._pseudoconsole
+            if pseudoconsole is None:
+                raise ConptyClosedError(
+                    "the pseudoconsole is no longer owned by this session"
+                )
+            result = _kernel32.ResizePseudoConsole(
+                pseudoconsole, _Coord(X=columns, Y=rows)
+            )
+            if result != 0:
+                raise OSError(f"ResizePseudoConsole failed: {result:#010x}")
+
+        def write(self, data: bytes) -> None:
+            """Write every byte of ``data`` to conin, or raise.
+
+            Disclosed boundary (finding C2, issue #193): this is a
+            synchronous write on a blocking pipe and is deliberately not
+            wired to the cancel event, so it stays outside the adapter's
+            abort deadline exactly as before this slice.
+            """
+            handle = self._conin_write
+            if handle is None:
+                raise ConptyClosedError("the ConPTY session is closed")
+            total = len(data)
+            # Copied into a native buffer once; the loop then advances an
+            # offset into it. Re-slicing the payload per partial write would
+            # make a large write quadratic in its own size.
+            buffer = ctypes.create_string_buffer(data, total)
+            written = wintypes.DWORD(0)
+            offset = 0
+            while offset < total:
+                if not _kernel32.WriteFile(
+                    handle,
+                    ctypes.byref(buffer, offset),
+                    total - offset,
+                    ctypes.byref(written),
+                    None,
+                ):
+                    raise _last_error("WriteFile")
+                if written.value == 0:
+                    raise OSError("WriteFile made no progress on the conin pipe")
+                offset += written.value
+
+        def read_bytes(self) -> bytes:
+            """Block until conout has bytes and return them undecoded.
+
+            Raises :class:`_NativeEndOfStream` when the output pipe genuinely
+            broke and :class:`_NativeReadCancelled` when ``cancel_io`` ended
+            the read. ``ConptyChild`` maps both onto the binding's public
+            exceptions; nothing here decides whether a failure is a close.
+            """
+            handle = self._conout_read
+            read_event = self._read_event
+            if handle is None or read_event is None:
+                raise ConptyClosedError("the ConPTY session is closed")
+            overlapped = _Overlapped()
+            overlapped.hEvent = read_event
+            _kernel32.ResetEvent(read_event)
+            transferred = wintypes.DWORD(0)
+            started = _kernel32.ReadFile(
+                handle,
+                self._buffer,
+                _READ_BUFFER_BYTES,
+                ctypes.byref(transferred),
+                ctypes.byref(overlapped),
+            )
+            if not started:
+                error = ctypes.get_last_error()
+                if error != _ERROR_IO_PENDING:
+                    raise self._read_failure(error)
+                self._await_read(handle, overlapped)
+                if not _kernel32.GetOverlappedResult(
+                    handle, ctypes.byref(overlapped), ctypes.byref(transferred), False
+                ):
+                    raise self._read_failure(ctypes.get_last_error())
+            count = int(transferred.value)
+            if count == 0:
+                # A completed zero-byte read on a byte-mode pipe means the
+                # writer is gone; ConPTY never emits an empty write.
+                raise _NativeEndOfStream(
+                    "the native ConPTY output pipe reported end-of-stream"
+                )
+            # Slicing a ctypes character array already yields ``bytes``; the
+            # reader is on the hot path for every frame the child emits, so
+            # it makes exactly one copy. The stubs describe the slice as a
+            # list, which is why this needs saying to the checker.
+            return cast(bytes, self._buffer[:count])
+
+        def _await_read(self, handle: int, overlapped: _Overlapped) -> None:
+            """Wait for the pending read, a cancellation, or the child's exit.
+
+            The child's exit is a wake reason because ConPTY keeps its own
+            end of the output pipe open until the pseudoconsole is closed:
+            without this, a read issued after the child exited would block
+            forever instead of ever reaching end-of-stream. Closing the
+            pseudoconsole makes the console host flush what it still holds
+            and then drop the write end, so end-of-stream stays a real native
+            signal and never a timeout.
+            """
+            cancel_event = self._cancel_event
+            read_event = self._read_event
+            if cancel_event is None or read_event is None:
+                raise ConptyClosedError("the ConPTY session is closed")
+            process_handle = self._process_handle
+            waited_out_child = process_handle is None
+            while True:
+                handles: list[int] = [read_event, cancel_event]
+                if not waited_out_child and process_handle is not None:
+                    handles.append(process_handle)
+                array = (wintypes.HANDLE * len(handles))(*handles)
+                index = int(
+                    _kernel32.WaitForMultipleObjects(
+                        len(handles), array, False, _INFINITE
+                    )
+                )
+                if index == _WAIT_OBJECT_0:
+                    return
+                if index == _WAIT_OBJECT_0 + 1:
+                    _kernel32.CancelIoEx(handle, ctypes.byref(overlapped))
+                    transferred = wintypes.DWORD(0)
+                    _kernel32.GetOverlappedResult(
+                        handle,
+                        ctypes.byref(overlapped),
+                        ctypes.byref(transferred),
+                        True,
+                    )
+                    raise _NativeReadCancelled(
+                        "the in-flight native ConPTY read was cancelled"
+                    )
+                if index == _WAIT_OBJECT_0 + 2:
+                    # A signaled process handle stays signaled, so drop it
+                    # from the wait set or the next pass would spin on it.
+                    waited_out_child = True
+                    self._release_pseudoconsole()
+                    continue
+                raise _last_error("WaitForMultipleObjects")
+
+        def _read_failure(self, error: int) -> BaseException:
+            if error == _ERROR_BROKEN_PIPE:
+                return _NativeEndOfStream(
+                    "the native ConPTY output pipe reported end-of-stream"
+                )
+            if error == _ERROR_OPERATION_ABORTED:
+                return _NativeReadCancelled(
+                    "the in-flight native ConPTY read was cancelled"
+                )
+            return OSError(f"ReadFile on the conout pipe failed: {error}")
+
+        def _release_pseudoconsole(self) -> None:
+            """Hand the pseudoconsole to a thread that closes it.
+
+            ``ClosePseudoConsole`` waits for the console host to flush its
+            pending output, which only drains while somebody reads — and the
+            caller here *is* the reader, mid-read. Closing on a separate
+            thread lets the read keep draining until the host exits and the
+            write end drops, which is the end-of-stream signal this whole
+            path exists to produce.
+            """
+            with self._lock:
+                pseudoconsole = self._pseudoconsole
+                if pseudoconsole is None or self._drain is not None:
+                    return
+                self._pseudoconsole = None
+                self._drain = threading.Thread(
+                    target=_close_pseudoconsole,
+                    args=(pseudoconsole,),
+                    name=f"termverify-conpty-drain-{self._pid}",
+                    daemon=True,
+                )
+                self._drain.start()
+
+        def cancel_io(self) -> None:
+            """Wake any in-flight read so ``close`` can proceed.
+
+            The cancel event is never reset: it is only ever set while the
+            session is being torn down, and a later read would have nothing
+            left to observe.
+            """
+            cancel_event = self._cancel_event
+            if cancel_event is not None:
+                _kernel32.SetEvent(cancel_event)
+            handle = self._conout_read
+            if handle is not None:
+                _kernel32.CancelIoEx(handle, None)
+
+        def close(self) -> None:
+            """Release every native handle this session owns, in a safe order.
+
+            The conout read end goes first: with it gone the console host's
+            pending writes fail immediately, so ``ClosePseudoConsole`` cannot
+            block waiting for output nobody will read. Callers must ensure no
+            read or write is in flight — ``ConptyChild.close`` cancels and
+            waits them out before calling this.
+            """
+            with self._lock:
+                if self._closed:
+                    return
+                self._closed = True
+                pseudoconsole = self._pseudoconsole
+                self._pseudoconsole = None
+                drain = self._drain
+                handles = [
+                    self._conout_read,
+                    self._conin_write,
+                    self._process_handle,
+                    self._read_event,
+                    self._cancel_event,
+                ]
+                self._conout_read = None
+                self._conin_write = None
+                self._process_handle = None
+                self._read_event = None
+                self._cancel_event = None
+            conout_read = handles[0]
+            if conout_read is not None:
+                _kernel32.CloseHandle(conout_read)
+            if pseudoconsole is not None:
+                _close_pseudoconsole(pseudoconsole)
+            if drain is not None:
+                drain.join(_PSEUDOCONSOLE_DRAIN_JOIN_SECONDS)
+            for handle in handles[1:]:
+                if handle is not None:
+                    _kernel32.CloseHandle(handle)
+
+        def __del__(self) -> None:  # pragma: no cover - refcount backstop only
+            with contextlib.suppress(Exception):
+                self.close()
+
+    def _open_session(
+        argv: Sequence[str],
+        *,
+        rows: int,
+        columns: int,
+        env_overlay: Mapping[str, str] | None,
+        cwd: str | None,
+    ) -> _PseudoConsoleSession:
+        """Create a pseudoconsole and start ``argv`` attached to it.
+
+        Every handle created here is closed on any failure before the error
+        escapes: a partially built session is never returned and never leaks.
+        """
+        if not _HAS_PSEUDOCONSOLE:
+            raise ConptyUnsupportedError(
+                "this Windows build exports no CreatePseudoConsole; ConPTY"
+                " requires Windows 10 1809 or newer"
+            )
+        arguments = list(argv)
+        command = shutil.which(arguments[0])
+        if command is None:
+            raise FileNotFoundError(
+                f"the command was not found or was not executable: {arguments[0]}"
+            )
+        opened: list[int] = []
+        pseudoconsole: int | None = None
+        attributes: Any = None
+        try:
+            conin_read = wintypes.HANDLE()
+            conin_write = wintypes.HANDLE()
+            if not _kernel32.CreatePipe(
+                ctypes.byref(conin_read), ctypes.byref(conin_write), None, 0
+            ):
+                raise _last_error("CreatePipe")
+            opened.extend((int(conin_read.value or 0), int(conin_write.value or 0)))
+            conout_read, conout_write = _make_overlapped_conout_pipe()
+            opened.extend((conout_read, conout_write))
+            handle = wintypes.HANDLE()
+            result = _kernel32.CreatePseudoConsole(
+                _Coord(X=columns, Y=rows),
+                conin_read,
+                wintypes.HANDLE(conout_write),
+                0,
+                ctypes.byref(handle),
+            )
+            if result != 0:
+                raise OSError(f"CreatePseudoConsole failed: {result:#010x}")
+            pseudoconsole = int(handle.value or 0)
+            # The pseudoconsole duplicated both of its own ends; dropping them
+            # here is what lets this process observe end-of-stream later.
+            for owned in (int(conin_read.value or 0), conout_write):
+                _kernel32.CloseHandle(owned)
+                opened.remove(owned)
+            size = ctypes.c_size_t(0)
+            _kernel32.InitializeProcThreadAttributeList(None, 1, 0, ctypes.byref(size))
+            if ctypes.get_last_error() != _ERROR_INSUFFICIENT_BUFFER:
+                raise _last_error("InitializeProcThreadAttributeList")
+            attributes = (ctypes.c_ubyte * size.value)()
+            if not _kernel32.InitializeProcThreadAttributeList(
+                attributes, 1, 0, ctypes.byref(size)
+            ):
+                raise _last_error("InitializeProcThreadAttributeList")
+            if not _kernel32.UpdateProcThreadAttribute(
+                attributes,
+                0,
+                _PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
+                ctypes.c_void_p(pseudoconsole),
+                ctypes.sizeof(ctypes.c_void_p),
+                None,
+                None,
+            ):
+                raise _last_error("UpdateProcThreadAttribute")
+            startup = _StartupInfoExW()
+            startup.StartupInfo.cb = ctypes.sizeof(_StartupInfoExW)
+            startup.lpAttributeList = ctypes.cast(attributes, ctypes.c_void_p)
+            # Without STARTF_USESTDHANDLES the child is handed this process's
+            # standard handles, and it uses them in preference to the console
+            # it is attached to. When TermVerify itself runs with piped stdio
+            # — every CI run, every test run — the child would then write its
+            # output straight past the pseudoconsole and into TermVerify's own
+            # stdout: attached to the right console, reporting to the wrong
+            # place. Passing the flag with null handles suppresses that
+            # inheritance, so the console supplies stdin, stdout, and stderr.
+            # This is the failure the 2026-07-17 ctypes prototype hit and read
+            # as "failed to attach the child"; the child was attached all
+            # along.
+            startup.StartupInfo.dwFlags = _STARTF_USESTDHANDLES
+            startup.StartupInfo.hStdInput = None
+            startup.StartupInfo.hStdOutput = None
+            startup.StartupInfo.hStdError = None
+            merged = dict(os.environ)
+            if env_overlay is not None:
+                merged.update(env_overlay)
+            block = ctypes.create_unicode_buffer(
+                "".join(f"{name}={value}\0" for name, value in merged.items()) + "\0"
+            )
+            # argv[0] is quoted into the command line like every other
+            # argument, so a program path containing spaces starts the
+            # program it names rather than a prefix of it.
+            cmdline = ctypes.create_unicode_buffer(subprocess.list2cmdline(arguments))
+            information = _ProcessInformation()
+            if not _kernel32.CreateProcessW(
+                command,
+                cmdline,
+                None,
+                None,
+                False,
+                _EXTENDED_STARTUPINFO_PRESENT | _CREATE_UNICODE_ENVIRONMENT,
+                block,
+                cwd if cwd is not None else os.getcwd(),
+                ctypes.byref(startup),
+                ctypes.byref(information),
+            ):
+                raise OSError(
+                    f"ConPTY spawn failed for {command}:"
+                    f" CreateProcessW reported {ctypes.get_last_error()}"
+                )
+            _kernel32.CloseHandle(information.hThread)
+            process_handle = int(information.hProcess or 0)
+            opened.append(process_handle)
+            read_event = _kernel32.CreateEventW(None, True, False, None)
+            if not read_event:
+                raise _last_error("CreateEventW")
+            opened.append(int(read_event))
+            cancel_event = _kernel32.CreateEventW(None, True, False, None)
+            if not cancel_event:
+                raise _last_error("CreateEventW")
+            opened.append(int(cancel_event))
+            session = _PseudoConsoleSession(
+                pseudoconsole=pseudoconsole,
+                conout_read=conout_read,
+                conin_write=int(conin_write.value or 0),
+                process_handle=process_handle,
+                pid=int(information.dwProcessId),
+                read_event=int(read_event),
+                cancel_event=int(cancel_event),
+            )
+        except BaseException:
+            for owned in opened:
+                _kernel32.CloseHandle(owned)
+            if pseudoconsole is not None:
+                _close_pseudoconsole(pseudoconsole)
+            raise
+        finally:
+            if attributes is not None:
+                _kernel32.DeleteProcThreadAttributeList(attributes)
+        return session
+
 else:
 
     def _unsupported() -> ConptyUnsupportedError:
@@ -285,11 +991,25 @@ else:
     def _close_handle(handle: int) -> None:
         raise _unsupported()
 
+    def _open_session(
+        argv: Sequence[str],
+        *,
+        rows: int,
+        columns: int,
+        env_overlay: Mapping[str, str] | None,
+        cwd: str | None,
+    ) -> Any:
+        raise _unsupported()
+
+    _HAS_PSEUDOCONSOLE = False
+
 
 class ConptyChild:
     """Thin ownership wrapper around one native ConPTY pseudoconsole child."""
 
-    def __init__(self, pty: Any, pid: int, job: int, process_handle: int) -> None:
+    def __init__(
+        self, pty: Any, pid: int, job: int | None, process_handle: int | None
+    ) -> None:
         self._pty: Any | None = pty
         self._pid = pid
         self._job: int | None = job
@@ -297,6 +1017,11 @@ class ConptyChild:
         self._exit_status: int | None = None
         self._lock = threading.Lock()
         self._pending_io = 0
+        # One decoder per child, fed every native chunk in stream order, so a
+        # read that lands between two bytes of one codepoint heals on the next
+        # read instead of losing the character. ``replace`` therefore only
+        # ever fires on bytes the child genuinely emitted as invalid UTF-8.
+        self._decoder = codecs.getincrementaldecoder("utf-8")("replace")
 
     @classmethod
     def spawn(
@@ -327,38 +1052,9 @@ class ConptyChild:
             raise ConptyUnsupportedError(
                 "the ConPTY binding requires Windows; this host has no ConPTY"
             )
-        from winpty import Backend
-        from winpty._winpty import PTY
-
-        arguments = list(argv)
-        command = shutil.which(arguments[0])
-        if command is None:
-            raise FileNotFoundError(
-                f"the command was not found or was not executable: {arguments[0]}"
-            )
-        merged = dict(os.environ)
-        if env_overlay is not None:
-            merged.update(env_overlay)
-        pty = PTY(columns, rows, backend=Backend.ConPTY)
-        environment = (
-            "\0".join(f"{name}={value}" for name, value in merged.items()) + "\0"
+        pty = _open_session(
+            argv, rows=rows, columns=columns, env_overlay=env_overlay, cwd=cwd
         )
-        cmdline = (
-            " " + subprocess.list2cmdline(arguments[1:]) if len(arguments) > 1 else None
-        )
-        working_directory = cwd if cwd is not None else os.getcwd()
-        try:
-            spawned = pty.spawn(
-                command, cmdline=cmdline, cwd=working_directory, env=environment
-            )
-        except Exception as error:
-            # Drop the native reference before raising so the held exception's
-            # traceback cannot pin the freshly created pseudoconsole.
-            del pty
-            raise OSError(f"ConPTY spawn failed for {command}") from error
-        if not spawned:
-            del pty
-            raise OSError(f"ConPTY spawn reported failure for {command}")
         pid = int(pty.pid)
         job: int | None = None
         process_handle: int | None = None
@@ -372,8 +1068,10 @@ class ConptyChild:
                 _close_handle(process_handle)
             if job is not None:
                 _close_handle(job)
-            # Drop the native reference before raising so the exception
-            # traceback cannot pin the pseudoconsole handles.
+            # Release the session explicitly — no read or write can be in
+            # flight yet — and drop the reference so the raised exception's
+            # traceback cannot pin what is left of it.
+            pty.close()
             del pty
             raise OSError(
                 f"failed to contain ConPTY child {pid} in a job object"
@@ -395,10 +1093,19 @@ class ConptyChild:
         the read is in flight, and :class:`ConptyConcurrentIOError` when
         another read or write is already in flight. Any other native read
         failure — the binding open, the child alive — is re-raised unchanged.
+
+        The native layer hands over raw bytes and this method owns the
+        decode, running one incremental UTF-8 decoder across every chunk of
+        the child's lifetime (finding R7). A native read that lands between
+        two bytes of one codepoint therefore heals on the following read
+        rather than losing the character to a replacement. At a genuine
+        end-of-stream any bytes the decoder still holds are a sequence the
+        child truly left unfinished: they are flushed as replacement text on
+        this call, and the end-of-stream is raised by the next one.
         """
         pty = self._begin_io()
         try:
-            return str(pty.read(blocking=True))
+            chunk = pty.read_bytes()
         except Exception as error:
             replacement = self._classify_io_failure(pty, end_of_stream=True)
             # Drop the frame-local native reference before raising: the
@@ -407,9 +1114,14 @@ class ConptyChild:
             del pty
             if replacement is None:
                 raise
+            if type(replacement) is ConptyEndOfStreamError:
+                truncated = self._decoder.decode(b"", final=True)
+                if truncated:
+                    return truncated
             raise replacement from error
         finally:
             self._end_io()
+        return self._decoder.decode(chunk)
 
     def write(self, text: str) -> None:
         """Write ``text`` to the child without claiming a byte-count receipt.
@@ -422,7 +1134,7 @@ class ConptyChild:
         """
         pty = self._begin_io()
         try:
-            pty.write(text)
+            pty.write(text.encode("utf-8"))
         except Exception as error:
             replacement = self._classify_io_failure(pty, end_of_stream=False)
             del pty
@@ -500,13 +1212,22 @@ class ConptyChild:
             finally:
                 try:
                     self._cancel_pending_io(pty)
-                finally:
-                    # Release the binding's native reference even when the
-                    # cancel loop raises: the propagating exception's
-                    # traceback must never pin the native object. The
-                    # destructor closes the pseudoconsole once the last
-                    # in-flight frame unwinds.
+                except BaseException:
+                    # The cancel loop gave up, so a native call may still be
+                    # inside the session; closing its handles underneath one
+                    # is the crash this binding exists to avoid. Drop the
+                    # reference instead and let the last in-flight frame's
+                    # release run the session's destructor.
                     del pty
+                    raise
+                else:
+                    try:
+                        # No read or write is in flight any more, so the
+                        # handles can be released here and now rather than
+                        # whenever the last traceback holding them unwinds.
+                        pty.close()
+                    finally:
+                        del pty
             if not force and process_handle is not None:
                 child_exited = _wait_for_handle(process_handle, _CHILD_EXIT_WAIT_MS)
         finally:

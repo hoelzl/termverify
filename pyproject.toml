@@ -20,7 +20,6 @@ classifiers = [
     "Topic :: Software Development :: Testing",
 ]
 dependencies = [
-    "pywinpty>=3.0.5,<4.0; sys_platform == 'win32'",
     "rfc8785>=0.1.4",
 ]
 
@@ -89,12 +88,6 @@ files = ["src", "tests", "scripts"]
 python_version = "3.12"
 strict = true
 warn_unreachable = true
-
-[[tool.mypy.overrides]]
-# pywinpty ships no type stubs and is absent on non-Windows checkers; the
-# binding wrapper confines its untyped surface to termverify._conpty.
-module = "winpty.*"
-ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 # _jsonl_pipe.py is deliberately two-platform: the Windows containment leg

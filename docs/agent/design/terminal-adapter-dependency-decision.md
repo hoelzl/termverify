@@ -1,5 +1,34 @@
 # Terminal Adapter Dependency and Verification Decision
 
+> **Amended 2026-07-26 (issue #197, finding R7): `pywinpty` is replaced by
+> TermVerify's own ConPTY binding.** The decision below chose `pywinpty` and
+> rejected a raw `ctypes` binding. Implementation-time evidence invalidated
+> that choice on the one axis the decision did not weigh: `PTY.read` returns
+> pre-decoded `str`, decoding each native read in isolation, so a read landing
+> mid-codepoint destroyed the character before TermVerify could see it — 29
+> replacement characters and 12 lost characters in a measured 200,000-character
+> burst of `U+65E5`. `pywinpty` 3.0.5 exposes no bytes-returning read and no
+> conout handle (`PTY` offers only `cancel_io, fd, get_exitstatus, isalive,
+> iseof, pid, read, set_size, spawn, write`, and `fd` is the process handle),
+> and lost bytes cannot be recovered above it. Owning the raw bytes therefore
+> required owning `CreatePseudoConsole`, which required owning the spawn.
+> Amending rather than silently substituting is what the "documented rejection
+> trail" bullet below requires.
+>
+> **On the original rejection of `ctypes`:** the 2026-07-17 prototype "failed
+> to attach the child". It had not — the child attached correctly, but without
+> `STARTF_USESTDHANDLES` it inherited TermVerify's own standard handles and
+> used those in preference to its console, so its output bypassed the
+> pseudoconsole whenever TermVerify itself ran with piped stdio (every CI and
+> test run). Passing that flag with null handles resolves it. The
+> "too large and unsafe" half of the rejection stands as a cost that is now
+> paid deliberately: the binding is roughly 400 lines of native surface,
+> covered by the existing Windows-matrix evidence suite.
+>
+> The verification plan below is unchanged and still governs; item 1's
+> dependency governance now reads as "no third-party terminal dependency", and
+> the single-maintainer bus-factor risk it accepted is retired.
+
 - **Status:** accepted — decided 2026-07-17 under the maintainer's delegated
   autonomous authority; the exact candidate passed independent adversarial
   agent review before merge; this document is the "separately accepted dependency and
