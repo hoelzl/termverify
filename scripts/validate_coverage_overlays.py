@@ -29,8 +29,6 @@ OVERLAYS = {
     Path("coverage-windows.toml"): "# coverage: exclude-windows",
     Path("coverage-posix.toml"): "# coverage: exclude-posix",
 }
-SHARED_RUN_KEYS = ("branch", "source", "omit")
-SHARED_REPORT_KEYS = ("show_missing", "skip_covered", "fail_under", "precision")
 
 
 def _coverage_sections(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -80,19 +78,19 @@ def validate_coverage_overlays(repository_root: Path) -> list[str]:
                 f"{sorted(set(overlay_report) ^ set(base_report))} are not "
                 "present in both the overlay and pyproject.toml"
             )
-        for key in SHARED_RUN_KEYS:
-            if overlay_run.get(key) != base_run.get(key):
+        for key in sorted(set(overlay_run) & set(base_run)):
+            if overlay_run[key] != base_run[key]:
                 errors.append(
                     f"{relative}: [tool.coverage.run] {key} = "
-                    f"{overlay_run.get(key)!r} does not match pyproject.toml "
-                    f"({base_run.get(key)!r})"
+                    f"{overlay_run[key]!r} does not match pyproject.toml "
+                    f"({base_run[key]!r})"
                 )
-        for key in SHARED_REPORT_KEYS:
-            if overlay_report.get(key) != base_report.get(key):
+        for key in sorted((set(overlay_report) & set(base_report)) - {"exclude_also"}):
+            if overlay_report[key] != base_report[key]:
                 errors.append(
                     f"{relative}: [tool.coverage.report] {key} = "
-                    f"{overlay_report.get(key)!r} does not match pyproject.toml "
-                    f"({base_report.get(key)!r})"
+                    f"{overlay_report[key]!r} does not match pyproject.toml "
+                    f"({base_report[key]!r})"
                 )
         if overlay_report.get("exclude_also") != [marker]:
             errors.append(

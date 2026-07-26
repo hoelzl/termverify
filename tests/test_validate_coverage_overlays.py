@@ -168,3 +168,21 @@ def test_an_additive_overlay_key_is_reported(tmp_path: Path) -> None:
     )
     errors = validator.validate_coverage_overlays(tmp_path)
     assert any("coverage-windows.toml" in error for error in errors)
+
+
+def test_a_shared_key_with_drifted_values_is_reported(tmp_path: Path) -> None:
+    validator = load_validator()
+    drifted_pyproject = _PYPROJECT.replace(
+        "branch = true", 'branch = true\nconcurrency = ["thread"]'
+    )
+    additive_windows = _overlay("# coverage: exclude-windows").replace(
+        "branch = true", 'branch = true\nconcurrency = ["multiprocessing"]'
+    )
+    additive_posix = _overlay("# coverage: exclude-posix").replace(
+        "branch = true", 'branch = true\nconcurrency = ["multiprocessing"]'
+    )
+    (tmp_path / "pyproject.toml").write_text(drifted_pyproject, encoding="utf-8")
+    (tmp_path / "coverage-windows.toml").write_text(additive_windows, encoding="utf-8")
+    (tmp_path / "coverage-posix.toml").write_text(additive_posix, encoding="utf-8")
+    errors = validator.validate_coverage_overlays(tmp_path)
+    assert any("concurrency" in error for error in errors)
