@@ -8,15 +8,16 @@ honest exit records. It implements the ``JsonlChildPort`` shape from
 ``_conpty.py`` architecture: all adapter logic above the binding is
 fake-driven and ratcheted, while this native boundary is proven by
 real-subprocess integration tests. Unlike ``_conpty.py`` this module is
-not listed in coverage's ``omit``, but that buys less than it sounds:
-``# pragma: no cover`` is a static source exclusion, not a conditional
-one, so a pragma on a ``def`` line removes that whole function from
-measurement on **every** platform, Linux included. The POSIX I/O legs
-here are therefore unratcheted everywhere, and their evidence is the
-integration tests alone — deleting a body would not move the coverage
-number. Stated because the previous wording claimed the opposite, and
-because it is the reason those legs need explicit test evidence in
-review rather than a green ratchet (issue #230).
+not listed in coverage's ``omit``. Its platform legs carry
+``# coverage: exclude-posix`` / ``# coverage: exclude-windows`` markers
+instead of bare ``# pragma: no cover``, because a bare pragma is a static
+source exclusion that removes the leg from measurement on **every**
+platform (issue #230). The CI quality legs point ``COVERAGE_RCFILE`` at a
+per-OS overlay (``coverage-windows.toml`` / ``coverage-posix.toml``) that
+excludes only the legs which cannot run on that platform, so each leg is
+ratcheted exactly where it runs; local ``pytest --cov`` runs keep both
+markers excluded via ``pyproject.toml``, which is honest because CI
+measures them per-OS.
 
 Pipes are portable, so process ownership and framing are identical on
 Windows and POSIX. Interrupting blocked I/O is not, and that difference
@@ -124,7 +125,7 @@ _READ_CHUNK_BYTES: Final = 65_536
 _WAKE_BYTE: Final = b"\x00"
 
 
-if sys.platform == "win32":  # pragma: no cover - Windows-only containment
+if sys.platform == "win32":  # coverage: exclude-posix - Windows-only containment
     import ctypes
     from ctypes import wintypes
 
@@ -280,7 +281,7 @@ class PipeJsonlChild:
         self._wake_write = -1
         self._raw_stdin: io.RawIOBase | None = None
         self._raw_stdout: io.RawIOBase | None = None
-        if sys.platform != "win32":  # pragma: no cover - POSIX-only leg
+        if sys.platform != "win32":  # coverage: exclude-windows - POSIX-only leg
             self._adopt_posix_descriptors(process)
 
     @classmethod
@@ -349,7 +350,7 @@ class PipeJsonlChild:
             cwd=cwd,
             start_new_session=os.name != "nt",
         )
-        if sys.platform == "win32":  # pragma: no cover - Windows-only containment leg
+        if sys.platform == "win32":  # coverage: exclude-posix - containment
             job: int | None = None
             process_handle: int | None = None
             try:
@@ -391,7 +392,7 @@ class PipeJsonlChild:
                     f"failed to contain pipe child {process.pid} in a job object"
                 ) from error
             return cls(process, job=job, process_handle=process_handle)
-        try:  # pragma: no cover - POSIX-only leg
+        try:  # coverage: exclude-windows - POSIX-only leg
             return cls(process)
         except OSError as error:
             # Construction can now fail: adopting the descriptors calls
@@ -412,7 +413,7 @@ class PipeJsonlChild:
 
     def _adopt_posix_descriptors(
         self, process: subprocess.Popen[bytes]
-    ) -> None:  # pragma: no cover - POSIX-only leg
+    ) -> None:  # coverage: exclude-windows - POSIX-only leg
         """Take the two pipes as raw descriptors, plus a wake-up pipe.
 
         Detaching here, in the constructor, is the one moment at which it
@@ -473,7 +474,7 @@ class PipeJsonlChild:
         os.set_blocking(self._raw_stdin.fileno(), False)
         os.set_blocking(self._raw_stdout.fileno(), False)
 
-    def _signal_wake(self) -> None:  # pragma: no cover - POSIX-only leg
+    def _signal_wake(self) -> None:  # coverage: exclude-windows - POSIX-only leg
         """Wake any blocked read or write. Idempotent and never blocking."""
         if self._wake_write < 0:
             return
@@ -493,7 +494,7 @@ class PipeJsonlChild:
         gone (the child exited); both surface through the adapter's
         classified failure paths.
         """
-        if sys.platform != "win32":  # pragma: no cover - POSIX-only leg
+        if sys.platform != "win32":  # coverage: exclude-windows - POSIX-only leg
             with self._lock:
                 if self._closed or self._raw_stdin is None:
                     raise JsonlChildClosedError("the JSONL pipe binding is closed")
@@ -535,7 +536,7 @@ class PipeJsonlChild:
 
     def _write_all(
         self, fd: int, wake: int, line: bytes
-    ) -> None:  # pragma: no cover - POSIX
+    ) -> None:  # coverage: exclude-windows - POSIX-only leg
         """Write every byte, waiting for writability, wakeable throughout.
 
         A child that has stopped draining its stdin fills the pipe buffer
@@ -667,13 +668,13 @@ class PipeJsonlChild:
         pipe handles, so the buffered read stands and the job object
         remains the interruption — with the out-of-job holder disclosed.
         """
-        if sys.platform == "win32":  # pragma: no cover - Windows-only leg
+        if sys.platform == "win32":  # coverage: exclude-posix - Windows-only leg
             with self._lock:
                 if self._closed:
                     raise JsonlChildClosedError("the JSONL pipe binding is closed")
                 stdout = self._stdout()
             return stdout.read1(_READ_CHUNK_BYTES)
-        with self._lock:  # pragma: no cover - POSIX-only leg
+        with self._lock:  # coverage: exclude-windows - POSIX-only leg
             if self._closed or self._raw_stdout is None:
                 raise JsonlChildClosedError("the JSONL pipe binding is closed")
             fd = self._raw_stdout.fileno()
@@ -681,7 +682,7 @@ class PipeJsonlChild:
             # resets it to -1, and a negative descriptor is a `ValueError`
             # from `poll`, not this binding's documented closed error.
             wake = self._wake_read
-        while True:  # pragma: no cover - POSIX-only leg
+        while True:  # coverage: exclude-windows - POSIX-only leg
             if _wait_until_ready(fd, wake, write=False):
                 raise JsonlChildClosedError(
                     "the JSONL pipe binding was closed during a read"
@@ -782,7 +783,7 @@ class PipeJsonlChild:
         # It is also the general form of the invariant the Windows handle
         # ordering already follows — release every mechanism that can
         # unblock an operation before performing one that can block on it.
-        if sys.platform != "win32":  # pragma: no cover - POSIX-only leg
+        if sys.platform != "win32":  # coverage: exclude-windows - POSIX-only leg
             self._signal_wake()
         try:
             if live:
@@ -820,7 +821,7 @@ class PipeJsonlChild:
         finally:
             if (
                 job is not None and sys.platform == "win32"
-            ):  # pragma: no cover - Windows-only leg
+            ):  # coverage: exclude-posix - Windows-only leg
                 # Kill-on-close sweeps every remaining job member, so even
                 # a failed graceful path cannot leak a *contained* process.
                 # Release it before the pipes: a member still alive here —
@@ -834,7 +835,7 @@ class PipeJsonlChild:
                 _kernel32.CloseHandle(job)
             if (
                 process_handle is not None and sys.platform == "win32"
-            ):  # pragma: no cover - Windows-only leg
+            ):  # coverage: exclude-posix - Windows-only leg
                 _kernel32.CloseHandle(process_handle)
             self._close_pipes(process)
             # Reap opportunistically, never by waiting: on the raising path
@@ -897,7 +898,7 @@ class PipeJsonlChild:
         # the ordering has nothing left to protect there. Both are the same
         # invariant: release every mechanism that can unblock an operation
         # before performing one that can block on it.
-        if sys.platform == "win32":  # pragma: no cover - Windows-only containment leg
+        if sys.platform == "win32":  # coverage: exclude-posix - containment
             if job is None:
                 # Defensive: unreachable on the only construction path.
                 raise OSError("no containment job to terminate")
@@ -905,14 +906,14 @@ class PipeJsonlChild:
         else:
             with suppress(ProcessLookupError):
                 os.killpg(process.pid, FORCED_TERMINATION_SIGNAL)  # type: ignore[attr-defined,unused-ignore]
-        if sys.platform != "win32":  # pragma: no cover - POSIX-only leg
+        if sys.platform != "win32":  # coverage: exclude-windows - POSIX-only leg
             # Nothing to release here: POSIX detached both wrappers at
             # construction, so there is no buffered writer to flush and
             # the raw descriptor belongs to `_close_pipes`. The wake-up
             # pipe, signaled before this call, has already ended any write
             # that was blocked on a child no longer draining its stdin.
             return
-        if process.stdin is not None:  # pragma: no cover - Windows-only leg
+        if process.stdin is not None:  # coverage: exclude-posix - Windows-only leg
             with _suppress_os_errors():
                 raw = cast("io.BufferedWriter", process.stdin).detach()
                 # Close the raw stream rather than dropping it: an
@@ -926,7 +927,7 @@ class PipeJsonlChild:
         """Wait for the real exit; on Windows prefer the handle wait."""
         if (
             sys.platform == "win32" and process_handle is not None
-        ):  # pragma: no cover - Windows-only leg
+        ):  # coverage: exclude-posix - Windows-only leg
             if not _wait_for_handle(process_handle, int(_CHILD_EXIT_WAIT_S * 1000)):
                 raise OSError(
                     f"pipe child {self._pid} did not terminate on forced close"
@@ -997,7 +998,7 @@ class PipeJsonlChild:
             ) from error
 
     def _close_pipes(self, process: subprocess.Popen[bytes]) -> None:
-        if sys.platform == "win32":  # pragma: no cover - Windows-only leg
+        if sys.platform == "win32":  # coverage: exclude-posix - Windows-only leg
             _release_pipes(process)
             return
         # POSIX owns the raw descriptors outright, so releasing them is
@@ -1019,7 +1020,9 @@ class PipeJsonlChild:
         self._wake_write = -1
 
 
-def _wait_until_ready(fd: int, wake: int, *, write: bool) -> bool:
+def _wait_until_ready(  # coverage: exclude-windows - POSIX-only helper
+    fd: int, wake: int, *, write: bool
+) -> bool:
     """Block until ``fd`` is ready or ``wake`` fires; True if ``wake`` did.
 
     ``poll`` rather than ``select``: ``select`` cannot express a
@@ -1028,7 +1031,7 @@ def _wait_until_ready(fd: int, wake: int, *, write: bool) -> bool:
     buffered path served. ``poll`` has no such ceiling and is available on
     every POSIX target this binding supports.
     """
-    if sys.platform == "win32":  # pragma: no cover - POSIX-only helper
+    if sys.platform == "win32":  # coverage: exclude-posix - POSIX-only helper
         raise AssertionError("the pollable path is POSIX-only")
     poller = select.poll()
     poller.register(wake, select.POLLIN)
