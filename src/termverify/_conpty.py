@@ -1225,12 +1225,14 @@ class ConptyChild:
             process_handle = _open_containment_handle(pid)
             _assign_to_job(job, process_handle)
             pty.resume_main_thread()
-        except OSError as error:
+        except BaseException as error:
             # Terminate unconditionally, through the handle the session
             # owns: the child is suspended, so it cannot die of the handle
             # and pseudoconsole closes below, and on the paths where the
             # job or the containment handle could not be established it is
-            # in no job — anything less leaks a frozen orphan (#235 review).
+            # in no job — anything less leaks a frozen orphan. The teardown
+            # runs for BaseException, not just OSError: a KeyboardInterrupt
+            # in this window must not leak the child either (#235 review).
             pty.terminate_child(FORCED_TERMINATION_EXIT_CODE)
             if process_handle is not None:
                 _close_handle(process_handle)
@@ -1241,9 +1243,11 @@ class ConptyChild:
             # traceback cannot pin what is left of it.
             pty.close()
             del pty
-            raise OSError(
-                f"failed to contain ConPTY child {pid} in a job object"
-            ) from error
+            if isinstance(error, OSError):
+                raise OSError(
+                    f"failed to contain ConPTY child {pid} in a job object"
+                ) from error
+            raise
         return cls(pty, pid, job, process_handle)
 
     @property

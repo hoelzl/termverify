@@ -806,6 +806,45 @@ def test_a_containment_setup_failure_leaves_no_suspended_orphan(
     _assert_os_terminated(created_pid[0])
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+@pytest.mark.parametrize("failure_point", ["job-creation", "resume"])
+@pytest.mark.parametrize("error_type", [ValueError, KeyboardInterrupt])
+def test_a_non_os_error_in_the_containment_window_still_terminates_the_child(
+    monkeypatch: pytest.MonkeyPatch,
+    failure_point: str,
+    error_type: type[BaseException],
+) -> None:
+    """Issue #235 review round 2: only OSError was contained.
+
+    A KeyboardInterrupt or any other non-OSError raised between child
+    creation and resume bypassed the except entirely: the suspended child
+    leaked frozen. The containment teardown must run for any BaseException
+    and then re-raise the original exception unchanged.
+    """
+    import termverify._conpty as conpty_module
+
+    created_pid = _spy_spawned_pids(monkeypatch)
+    if failure_point == "job-creation":
+
+        def failing_create_job() -> int:
+            raise error_type("injected non-OS failure")
+
+        monkeypatch.setattr(
+            conpty_module, "_create_containment_job", failing_create_job
+        )
+    else:
+
+        def failing_resume(thread_handle: int) -> None:
+            raise error_type("injected non-OS failure")
+
+        monkeypatch.setattr(conpty_module, "_resume_main_thread", failing_resume)
+
+    with pytest.raises(error_type):
+        _spawn(_BLOCKING_CHILD)
+    assert created_pid, "the injected failure fired before the child existed"
+    _assert_os_terminated(created_pid[0])
+
+
 class _ForcedCloseWatchdog:
     """Force-close the binding if a sequential test exceeds its deadline.
 
