@@ -9,4 +9,7 @@
   `coverage-posix.toml` via `COVERAGE_RCFILE` — an overlay that repeats the
   gating settings but excludes only the legs that cannot run there. Windows
   legs measured on Windows: module 75.59%, total 94.66% against the 94
-  floor; the Ubuntu number is CI-validated on the PR. (Closes #230.)
+  floor; the Ubuntu number is CI-validated on the PR. Overlay drift
+  (repeated gating settings no pytest invocation compares) is checked
+  mechanically by the new `scripts/validate_coverage_overlays.py`
+  pre-commit hook. (Closes #230.)

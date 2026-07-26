@@ -28,6 +28,12 @@ repos:
         language: system
         pass_filenames: false
 
+      - id: validate-coverage-overlays
+        name: validate coverage overlays
+        entry: uv --no-config run python scripts/validate_coverage_overlays.py
+        language: system
+        pass_filenames: false
+
       - id: type-check
         name: type check
         entry: uv --no-config run mypy src tests scripts

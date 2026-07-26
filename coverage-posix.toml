@@ -2,11 +2,12 @@
 #
 # Selected via COVERAGE_RCFILE in ci.yml. Self-contained on purpose:
 # coverage reads exactly one rcfile, so this repeats the gating settings
-# from pyproject.toml [tool.coverage] — keep the two in sync (CI green is
-# the check). The only difference from the local-dev config is
-# exclude_also: an Ubuntu leg excludes only the `exclude-posix` markers
-# (the Windows legs, which cannot run there), so the POSIX-only legs of
-# _jsonl_pipe.py are measured and ratcheted here.
+# from pyproject.toml [tool.coverage] — no pytest invocation ever compares
+# the copies, so scripts/validate_coverage_overlays.py (a pre-commit hook)
+# is the drift check. The only intended difference from the local-dev
+# config is exclude_also: an Ubuntu leg excludes only the `exclude-posix`
+# markers (the Windows legs, which cannot run there), so the POSIX-only
+# legs of _jsonl_pipe.py are measured and ratcheted here.
 # The bare-pragma default is deliberately not widened.
 
 [tool.coverage.run]

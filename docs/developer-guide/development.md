@@ -96,8 +96,10 @@ allowing integer rounding to absorb a regression.
   `COVERAGE_RCFILE` to `coverage-windows.toml` or `coverage-posix.toml`,
   which repeats the gating settings but excludes only the legs that cannot
   run on that platform. Every leg is therefore ratcheted exactly where it
-  runs. The overlays are self-contained (coverage reads one rcfile); keep
-  them in sync with `pyproject.toml` — CI green is the check.
+  runs. The overlays are self-contained (coverage reads one rcfile) and no
+  pytest invocation ever compares them with `pyproject.toml`, so
+  `scripts/validate_coverage_overlays.py` — a pre-commit hook — is the
+  drift check for the repeated settings.
 
 ## Testing tiers
 
