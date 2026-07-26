@@ -78,6 +78,11 @@ from termverify.vt import ScreenSnapshot, VtNormalizationError
 
 _marker_tokens = itertools.count(1)
 
+#: A marker of representative shape, for parametrising split points. Every
+#: token these tests mint is one or two digits, so this length is the shape
+#: every `_marker()` has.
+_MARKER_SHAPE = f"{READINESS_MARKER_PREFIX_DEFAULT}1{READINESS_MARKER_TERMINATOR}"
+
 
 def _marker() -> str:
     """A readiness marker whose token no earlier marker in this run used.
@@ -472,9 +477,11 @@ def test_start_spawns_and_reaches_marker_readiness() -> None:
     assert binding.child.closes == []
 
 
-def test_start_finds_a_marker_split_across_chunks() -> None:
-    split = len(_marker()) // 2
-    chunks = ["hi" + _marker()[:split], _marker()[split:]]
+@pytest.mark.parametrize("split", range(1, len(_MARKER_SHAPE)))
+def test_start_finds_a_marker_split_at_any_point_across_chunks(split: int) -> None:
+    """One marker, cut at every point: prefix, token, and terminator alike."""
+    marker = _marker()
+    chunks = ["hi" + marker[:split], marker[split:]]
     binding = _FakeBinding(_FakeChild(chunks))
     factory = _NormalizerFactory()
     adapter = _adapter(binding, normalizer_factory=factory)
@@ -487,6 +494,97 @@ def test_start_finds_a_marker_split_across_chunks() -> None:
         {"chunk": chunks[1]},
     ]
     assert factory.created[0].fed == chunks
+
+
+def test_a_repainted_marker_does_not_complete_a_later_epoch() -> None:
+    """The console re-emits screen state; a redrawn marker is not a new one.
+
+    This is the defect that made the marker carry a token at all (#232): a
+    resize repaints the viewport, the previous epoch's marker text arrives
+    again, and without tokens the epoch completes on a marker its own input
+    never caused.
+    """
+    ready = _marker()
+    adapter, binding, _, _ = _started([ready])
+    # The repaint re-emits the marker verbatim, then the epoch's real output
+    # and its own marker arrive.
+    answer = _marker()
+    binding.child.reads.append("repaint:" + ready)
+    binding.child.reads.append("answer" + answer)
+
+    result = adapter.dispatch(TextInput(ManualTime(0), "x\r"))
+
+    assert type(result) is EpochCompleted
+    # Both reads belong to this epoch: the repaint did not end it early.
+    assert [event.data for event in result.observation.events] == [
+        {"chunk": "repaint:" + ready},
+        {"chunk": "answer" + answer},
+    ]
+
+
+def test_a_marker_with_a_malformed_token_is_not_honoured() -> None:
+    """A wrapped marker has console artefacts in its token; skip it.
+
+    Skipping is the fail-closed direction — the epoch runs to its deadline
+    and reports a structured failure — rather than honouring a marker whose
+    token was mangled by a line wrap.
+    """
+    wrapped = (
+        f"{READINESS_MARKER_PREFIX_DEFAULT}7\r\n\x1b[23;80H"
+        f"9{READINESS_MARKER_TERMINATOR}"
+    )
+    good = _marker()
+    adapter, binding, _, _ = _started([_marker()])
+    binding.child.reads.append(wrapped)
+    binding.child.reads.append(good)
+
+    result = adapter.dispatch(TextInput(ManualTime(0), "x\r"))
+
+    assert type(result) is EpochCompleted
+    assert [event.data for event in result.observation.events] == [
+        {"chunk": wrapped},
+        {"chunk": good},
+    ]
+
+
+def test_a_stray_prefix_does_not_swallow_the_next_real_marker() -> None:
+    """A subject that prints the prefix by accident must not break the run.
+
+    The stray prefix's search for a terminator reaches the *real* marker's,
+    making one oversized token. Resuming the search one character past where
+    the candidate began — not past where it ended — finds the real marker
+    instead of consuming it.
+    """
+    good = _marker()
+    adapter, binding, _, _ = _started([_marker()])
+    binding.child.reads.append(f"log: {READINESS_MARKER_PREFIX_DEFAULT} oops\r\n")
+    binding.child.reads.append("answer" + good)
+
+    result = adapter.dispatch(TextInput(ManualTime(0), "x\r"))
+
+    assert type(result) is EpochCompleted
+    assert [event.data for event in result.observation.events][-1] == {
+        "chunk": "answer" + good
+    }
+
+
+def test_an_unterminated_candidate_is_dropped_rather_than_retained() -> None:
+    """A stray prefix must not pin the rest of the run in the scan buffer.
+
+    Past the longest legal token no terminator can still close one, so the
+    candidate was never a marker. Without this bound a single stray prefix
+    retains every later byte and rescans them all on every read.
+    """
+    good = _marker()
+    adapter, binding, _, _ = _started([_marker()])
+    binding.child.reads.append(READINESS_MARKER_PREFIX_DEFAULT + "x" * 5_000)
+    binding.child.reads.append("answer" + good)
+
+    result = adapter.dispatch(TextInput(ManualTime(0), "x\r"))
+
+    assert type(result) is EpochCompleted
+    # The buffer kept only what could still begin a marker, not the burst.
+    assert len(adapter._pending) < len(READINESS_MARKER_PREFIX_DEFAULT)
 
 
 def test_start_with_the_default_vt_normalizer_renders_the_marker() -> None:

@@ -308,6 +308,11 @@ def test_spawn_fails_closed_off_windows() -> None:
 #: wrapping burst legitimately carries one repeat per reposition.
 _REPOSITION = re.compile(r"\x1b\[(\d+);(\d+)H")
 
+#: The other sequences ConPTY emits during a burst: CSI, and the OSC window
+#: title it sets once the child is attached. Characters inside these are not
+#: characters the child wrote.
+_ESCAPE = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;?]*[A-Za-z]")
+
 
 def _assert_burst_delivered_whole(region: str) -> None:
     """Assert a wrapping burst arrived complete, repeats accounted for exactly.
@@ -329,7 +334,36 @@ def _assert_burst_delivered_whole(region: str) -> None:
     assert len(set(repositions)) <= 1, (
         f"the console host repositioned to more than one cell: {set(repositions)}"
     )
-    assert region.count("Z") == _BURST_BYTES + len(repositions)
+    # Assert the pairing rather than inferring it from a total: a bare count
+    # is equally satisfied by one lost character plus one fabricated one.
+    # Each reposition must be followed by exactly the one cell it exists to
+    # rewrite; strip those pairs and the remainder must hold the burst
+    # exactly, with no escape left that could contribute a character to it.
+    remainder: list[str] = []
+    cursor = 0
+    for match in _REPOSITION.finditer(region):
+        remainder.append(region[cursor : match.start()])
+        after = match.end()
+        assert region[after : after + 1] == "Z", (
+            "a reposition was not followed by the repeated cell it exists to"
+            f" rewrite: {region[after : after + 20]!r}"
+        )
+        cursor = after + 1
+    remainder.append(region[cursor:])
+    # Remove the remaining escape sequences too — ConPTY sets its window
+    # title mid-burst, and a character inside an escape is not a character
+    # the child emitted. Anything left holding an ESC is a sequence this
+    # accounting does not model, which must fail loudly rather than be
+    # counted.
+    stripped = _ESCAPE.sub("", "".join(remainder))
+    assert "\x1b" not in stripped, (
+        "the burst carried an escape sequence this accounting does not know"
+        f" about: {stripped[stripped.index(chr(27)) : stripped.index(chr(27)) + 20]!r}"
+    )
+    assert stripped.count("Z") == _BURST_BYTES, (
+        f"the burst carried {stripped.count('Z')} characters once every"
+        f" repositioned repeat was removed; expected {_BURST_BYTES}"
+    )
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
@@ -920,6 +954,7 @@ def test_forced_close_waits_out_in_flight_large_write() -> None:
             assert time.monotonic() < deadline, "write never became in-flight"
             time.sleep(0.001)
 
+        close_called = time.monotonic()
         child.close(force=True)
         close_returned = time.monotonic()
 
@@ -932,8 +967,17 @@ def test_forced_close_waits_out_in_flight_large_write() -> None:
     assert not write_errors, write_errors
     assert "write_end" in events, "the in-flight native write did not complete"
     # Close overlapped the write and returned only after the write frame
-    # returned: the ordering evidence for the wait-out discipline.
+    # returned: the ordering evidence for the wait-out discipline. The
+    # second assertion is the load-bearing one — the write was still in
+    # flight when close was *entered*, not merely before it. Without it the
+    # test would degenerate into a tautology if conin ever got fast enough
+    # for the write to finish during the arrangement spin, and would still
+    # pass.
     assert events["write_start"] < close_returned
+    assert events["write_end"] >= close_called, (
+        "the write completed before close was entered, so this run proves"
+        " nothing about close waiting one out"
+    )
     assert events["write_end"] <= close_returned
     assert child.exit_status == FORCED_TERMINATION_EXIT_CODE
     with pytest.raises(ConptyClosedError):
@@ -941,7 +985,11 @@ def test_forced_close_waits_out_in_flight_large_write() -> None:
 
 
 def _assert_no_native_pin(error: BaseException) -> None:
-    """Assert no traceback frame in the exception chain pins a native PTY."""
+    """Assert no traceback frame in the exception chain pins a native session."""
+    # Imported here: the class exists only on Windows, and every caller is a
+    # Windows-only test.
+    from termverify._conpty import _PseudoConsoleSession
+
     seen: set[int] = set()
     stack: list[BaseException] = [error]
     while stack:
@@ -952,8 +1000,12 @@ def _assert_no_native_pin(error: BaseException) -> None:
         traceback = current.__traceback__
         while traceback is not None:
             for name, value in traceback.tb_frame.f_locals.items():
-                assert type(value).__name__ != "PTY", (
-                    f"native PTY pinned via frame local {name!r}"
+                # Against the imported class, not its name: this assertion
+                # was pinned to pywinpty's `PTY` and silently stopped being
+                # able to fail when the binding started owning the session
+                # itself. A rename now breaks the import instead.
+                assert not isinstance(value, _PseudoConsoleSession), (
+                    f"native pseudoconsole pinned via frame local {name!r}"
                 )
             traceback = traceback.tb_next
         for linked in (current.__cause__, current.__context__):

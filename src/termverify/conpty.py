@@ -190,13 +190,18 @@ READINESS_MARKER_PREFIX_DEFAULT: Final = "<<termverify.ready:"
 #: a host configures.
 READINESS_MARKER_TERMINATOR: Final = ">>"
 
+#: Longest legal marker token. Also bounds how much of a partial candidate
+#: the scanner will hold: past this, no terminator can still close a legal
+#: token, so the candidate is not a marker and is dropped.
+_MAX_MARKER_TOKEN: Final = 64
+
 #: A marker's token must match this: printable, bounded, and free of any
 #: character the console emits while wrapping or repositioning. A candidate
 #: whose token does not match is not a marker, so a marker split across a
 #: line wrap fails closed into the epoch deadline rather than being honoured
 #: with a mangled token — see the marker-protocol notes in the module
 #: docstring.
-_MARKER_TOKEN = re.compile(r"[0-9A-Za-z._-]{1,64}\Z")
+_MARKER_TOKEN = re.compile(rf"[0-9A-Za-z._-]{{1,{_MAX_MARKER_TOKEN}}}\Z")
 
 #: UTF-8's worst case for one screen cell. The screen model stores any
 #: character at or above U+00A0 in a single cell, so a cell can cost up to
@@ -625,7 +630,15 @@ class ConptyAdapter:
         failure, rather than completing on output the subject never sent.
 
         Without a match, only the shortest tail that could still complete a
-        split marker is retained.
+        split marker is retained. A candidate that has already outrun the
+        longest legal token without reaching a terminator is dropped: it can
+        never become a marker, and keeping it would let one stray prefix in
+        the subject's own output retain the rest of the run.
+
+        Rejected candidates resume the search one character past where they
+        began, not past where they ended. A prefix the subject printed by
+        accident would otherwise take the *next* genuine marker's terminator
+        as its own, and skipping past that swallows the real marker.
         """
         prefix = self._marker_prefix
         scanned = 0
@@ -636,18 +649,22 @@ class ConptyAdapter:
             body = index + len(prefix)
             end = self._pending.find(READINESS_MARKER_TERMINATOR, body)
             if end < 0:
-                # The token may still be arriving; keep the whole candidate.
-                self._pending = self._pending[index:]
-                return False
+                if len(self._pending) - body <= _MAX_MARKER_TOKEN:
+                    # The token may still be arriving; keep the candidate.
+                    self._pending = self._pending[index:]
+                    return False
+                # Too much has arrived after this prefix for any terminator
+                # to still close a legal token, so it was never a marker.
+                scanned = index + 1
+                continue
             token = self._pending[body:end]
-            after = end + len(READINESS_MARKER_TERMINATOR)
             if _MARKER_TOKEN.match(token) and token not in self._honoured_tokens:
                 self._honoured_tokens.add(token)
-                self._pending = self._pending[after:]
+                self._pending = self._pending[end + len(READINESS_MARKER_TERMINATOR) :]
                 return True
-            scanned = after
-        # Everything before ``scanned`` held only markers already answered,
-        # and nothing older than a prefix-length tail can begin a new one.
+            scanned = index + 1
+        # No prefix begins at or after ``scanned``, and nothing older than a
+        # prefix-length tail can begin one.
         keep = len(prefix) - 1
         if not keep:
             self._pending = ""
@@ -869,14 +886,17 @@ class ConptyAdapter:
           ``terminal.output`` string those chunks become may cost its
           observation record.
 
-        Retained memory follows from the byte bound only under a stated port
-        assumption: that a native read yields at least one byte, so bytes
-        also cap how many chunks the epoch can hold. ``ConptyChildPort.read``
-        does not forbid an empty string, and an empty-read loop would never
-        advance the byte counter — leaving the epoch deadline as its only
-        bound. Real ConPTY was measured not to do this (no empty read across
-        a 3 s idle), so this is an assumption about the port, not a claim
-        about the arithmetic.
+        ``ConptyChildPort.read`` may return an empty string, and since the
+        ConPTY binding took ownership of decoding (issue #197) it regularly
+        does: a native read landing inside a multi-byte codepoint decodes to
+        nothing until the rest of it arrives. Empty reads are skipped here
+        rather than retained — they are not evidence, and they never advance
+        the byte counter, so counting them would be the one way an epoch
+        could hold unbounded chunks. Their bytes are counted on the read that
+        completes the character. A port that returned empty strings forever
+        would still be ended by the epoch deadline above, which is the only
+        bound that does not depend on the port yielding anything.
+
         The per-object cost of retention is not counted either: at the
         ceiling a two-byte-per-read trickle retains ~27 MB of Python objects
         (a one-byte trickle costs less, ~8 MB, because single-character ASCII
@@ -902,22 +922,30 @@ class ConptyAdapter:
         output_bytes = 0
         while True:
             chunk = self._read_chunk(child, expired)
-            # Count before honoring the marker: the marker-bearing chunk is
-            # retained like any other, so excluding it would let the epoch
-            # exceed its own bound by a whole read.
-            output_bytes += len(chunk.encode("utf-8", "surrogatepass"))
-            if output_bytes > budget:
-                raise _EpochFailure(
-                    "the epoch retained more output than one observation"
-                    " record may carry; the budget is adapter abort policy,"
-                    " not evidence",
-                    {"budget": "bytes", "epoch-output-byte-budget": budget},
-                )
-            chunks.append(chunk)
-            self._feed(chunk)
-            self._pending += chunk
-            if self._scan_for_marker():
-                return
+            # An empty decode is not evidence: it means the native read
+            # landed inside a codepoint and the binding is holding those
+            # bytes until the rest arrives. Recording it would put a
+            # `terminal.output` event in the observation asserting the child
+            # emitted nothing, and replaying it feeds the normalizer nothing.
+            # The bytes are not lost — they surface on the read that
+            # completes the character, and are counted then.
+            if chunk:
+                # Count before honoring the marker: the marker-bearing chunk
+                # is retained like any other, so excluding it would let the
+                # epoch exceed its own bound by a whole read.
+                output_bytes += len(chunk.encode("utf-8", "surrogatepass"))
+                if output_bytes > budget:
+                    raise _EpochFailure(
+                        "the epoch retained more output than one observation"
+                        " record may carry; the budget is adapter abort policy,"
+                        " not evidence",
+                        {"budget": "bytes", "epoch-output-byte-budget": budget},
+                    )
+                chunks.append(chunk)
+                self._feed(chunk)
+                self._pending += chunk
+                if self._scan_for_marker():
+                    return
             if self._monotonic() >= epoch_deadline_at:
                 # The per-read watchdog cannot end this: a trickle just under
                 # the deadline never exceeds any single read's deadline, which

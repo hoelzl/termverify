@@ -22,7 +22,11 @@ from typing import Final
 
 import pytest
 
-from termverify._conpty import ConptyChild, ConptyEndOfStreamError
+from termverify._conpty import (
+    ConptyChild,
+    ConptyEndOfStreamError,
+    _NativeEndOfStream,
+)
 
 #: One character per UTF-8 encoded length, so every split point below
 #: exercises a distinct continuation-byte arithmetic.
@@ -44,7 +48,10 @@ class _FakeNativeSession:
 
     def read_bytes(self) -> bytes:
         if not self._chunks:
-            raise OSError("the native output pipe reported end-of-stream")
+            # The real native signal, not a lookalike: the binding maps
+            # end-of-stream from the exception type, so a fake raising a bare
+            # OSError would exercise a path real ConPTY never takes.
+            raise _NativeEndOfStream("the native output pipe reported end-of-stream")
         return self._chunks.pop(0)
 
     def write(self, data: bytes) -> None:  # pragma: no cover - unused here
@@ -151,3 +158,27 @@ def test_complete_output_reports_end_of_stream_without_extra_text() -> None:
     assert child.read() == _THREE_BYTE
     with pytest.raises(ConptyEndOfStreamError):
         child.read()
+
+
+def test_an_arbitrary_read_failure_is_not_reported_as_end_of_stream() -> None:
+    """Only the broken output pipe may claim the end-of-stream guarantee.
+
+    :class:`ConptyEndOfStreamError` promises that every byte the
+    pseudoconsole emitted has already been returned. A read that failed for
+    some other reason establishes nothing of the kind, and inferring
+    end-of-stream from a dead child would attach that promise to any failure
+    that happened to arrive after the child exited.
+    """
+
+    class _FailingSession(_FakeNativeSession):
+        def read_bytes(self) -> bytes:
+            raise OSError("ReadFile on the conout pipe failed: 1234")
+
+    session = _FailingSession([])
+    session._alive_after = False  # the child is gone, as after a crash
+    child = ConptyChild(session, pid=4321, job=None, process_handle=None)
+
+    with pytest.raises(OSError) as failure:
+        child.read()
+    assert not isinstance(failure.value, ConptyEndOfStreamError)
+    assert "1234" in str(failure.value)

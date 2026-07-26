@@ -28,6 +28,11 @@ survivors even if this process dies abruptly. Disclosed boundary: the child
 is assigned to the job immediately after ``CreateProcess`` returns, so a
 process the child manages to start within that microseconds-wide window
 would fall outside the job; the binding does not claim pre-start assignment.
+That window used to be unavoidable, because ``pywinpty`` owned the spawn.
+It no longer is — this module now calls ``CreateProcessW`` itself, so
+``CREATE_SUSPENDED``, assign, ``ResumeThread`` would close it outright — and
+it remains open only because closing it is a containment change outside the
+scope of the slice that took ownership (issue #235).
 
 I/O is single-flight by contract: at most one native read or write may be in
 flight, and overlap fails fast with ``ConptyConcurrentIOError``. The native
@@ -119,9 +124,12 @@ def is_supported() -> bool:
     This is the explicit support probe the adapter consults during
     negotiation, answering the same precondition :meth:`ConptyChild.spawn`
     checks so platform support is decidable before any spawn is attempted.
-    It inspects no session state and creates nothing.
+    Being Windows is not sufficient: pseudoconsoles arrived in Windows 10
+    1809, and an older host exports none of the entry points, so the probe
+    asks whether this build actually has them rather than assuming. It
+    inspects no session state and creates nothing.
     """
-    return os.name == "nt"
+    return os.name == "nt" and _HAS_PSEUDOCONSOLE
 
 
 class ConptyClosedError(RuntimeError):
@@ -169,8 +177,6 @@ if sys.platform == "win32":
     _INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
     _ERROR_INSUFFICIENT_BUFFER = 122
     _ERROR_BROKEN_PIPE = 109
-    _ERROR_PIPE_CONNECTED = 535
-    _ERROR_NO_DATA = 232
     _ERROR_IO_PENDING = 997
     _ERROR_OPERATION_ABORTED = 995
     _PIPE_ACCESS_INBOUND = 0x0000_0001
@@ -556,10 +562,12 @@ if sys.platform == "win32":
             self._read_event: int | None = read_event
             self._cancel_event: int | None = cancel_event
             self._pid = pid
-            self._buffer = ctypes.create_string_buffer(_READ_BUFFER_BYTES)
+            # Before the buffer: the destructor takes this lock, so an
+            # allocation failure below must not leave it unset.
             self._lock = threading.Lock()
             self._closed = False
             self._drain: threading.Thread | None = None
+            self._buffer = ctypes.create_string_buffer(_READ_BUFFER_BYTES)
 
         @property
         def pid(self) -> int:
@@ -587,15 +595,19 @@ if sys.platform == "win32":
             return int(code.value)
 
         def set_size(self, columns: int, rows: int) -> None:
+            # The native call stays inside the lock. Releasing it first would
+            # let the end-of-stream path hand the pseudoconsole to the drain
+            # thread, which closes it, between the read of the field and the
+            # resize — a resize on a freed handle.
             with self._lock:
                 pseudoconsole = self._pseudoconsole
-            if pseudoconsole is None:
-                raise ConptyClosedError(
-                    "the pseudoconsole is no longer owned by this session"
+                if pseudoconsole is None:
+                    raise ConptyClosedError(
+                        "the pseudoconsole is no longer owned by this session"
+                    )
+                result = _kernel32.ResizePseudoConsole(
+                    pseudoconsole, _Coord(X=columns, Y=rows)
                 )
-            result = _kernel32.ResizePseudoConsole(
-                pseudoconsole, _Coord(X=columns, Y=rows)
-            )
             if result != 0:
                 raise OSError(f"ResizePseudoConsole failed: {result:#010x}")
 
@@ -685,11 +697,22 @@ if sys.platform == "win32":
             pseudoconsole makes the console host flush what it still holds
             and then drop the write end, so end-of-stream stays a real native
             signal and never a timeout.
+
+            **Every exit but the successful one first ends the pending read.**
+            The kernel owns ``overlapped`` and ``self._buffer`` until the
+            operation completes, and ``overlapped`` is a frame local of
+            :meth:`read_bytes`; returning while the read is still outstanding
+            would let the kernel write a completion status into memory that
+            has been freed, and later reads into a buffer under a stale one.
             """
             cancel_event = self._cancel_event
             read_event = self._read_event
             if cancel_event is None or read_event is None:
-                raise ConptyClosedError("the ConPTY session is closed")
+                raise self._abandon_read(
+                    handle,
+                    overlapped,
+                    ConptyClosedError("the ConPTY session is closed"),
+                )
             process_handle = self._process_handle
             waited_out_child = process_handle is None
             while True:
@@ -705,16 +728,12 @@ if sys.platform == "win32":
                 if index == _WAIT_OBJECT_0:
                     return
                 if index == _WAIT_OBJECT_0 + 1:
-                    _kernel32.CancelIoEx(handle, ctypes.byref(overlapped))
-                    transferred = wintypes.DWORD(0)
-                    _kernel32.GetOverlappedResult(
+                    raise self._abandon_read(
                         handle,
-                        ctypes.byref(overlapped),
-                        ctypes.byref(transferred),
-                        True,
-                    )
-                    raise _NativeReadCancelled(
-                        "the in-flight native ConPTY read was cancelled"
+                        overlapped,
+                        _NativeReadCancelled(
+                            "the in-flight native ConPTY read was cancelled"
+                        ),
                     )
                 if index == _WAIT_OBJECT_0 + 2:
                     # A signaled process handle stays signaled, so drop it
@@ -722,7 +741,25 @@ if sys.platform == "win32":
                     waited_out_child = True
                     self._release_pseudoconsole()
                     continue
-                raise _last_error("WaitForMultipleObjects")
+                raise self._abandon_read(
+                    handle, overlapped, _last_error("WaitForMultipleObjects")
+                )
+
+        def _abandon_read(
+            self, handle: int, overlapped: _Overlapped, failure: BaseException
+        ) -> BaseException:
+            """Cancel the pending read and wait it out, then return ``failure``.
+
+            The wait is deliberately blocking: it is what guarantees the
+            kernel has finished with ``overlapped`` and the read buffer before
+            this frame unwinds.
+            """
+            _kernel32.CancelIoEx(handle, ctypes.byref(overlapped))
+            transferred = wintypes.DWORD(0)
+            _kernel32.GetOverlappedResult(
+                handle, ctypes.byref(overlapped), ctypes.byref(transferred), True
+            )
+            return failure
 
         def _read_failure(self, error: int) -> BaseException:
             if error == _ERROR_BROKEN_PIPE:
@@ -805,11 +842,23 @@ if sys.platform == "win32":
                 _kernel32.CloseHandle(conout_read)
             if pseudoconsole is not None:
                 _close_pseudoconsole(pseudoconsole)
+            stalled = False
             if drain is not None:
                 drain.join(_PSEUDOCONSOLE_DRAIN_JOIN_SECONDS)
+                stalled = drain.is_alive()
             for handle in handles[1:]:
                 if handle is not None:
                     _kernel32.CloseHandle(handle)
+            if stalled:
+                # The console host never finished closing. Say so: the
+                # pseudoconsole handle and that thread are both still held,
+                # and a close that returned silently would be claiming a
+                # release it did not make.
+                raise OSError(
+                    f"the pseudoconsole for child {self._pid} did not close"
+                    f" within {_PSEUDOCONSOLE_DRAIN_JOIN_SECONDS:.0f}s; its"
+                    " handle and closing thread are still held"
+                )
 
         def __del__(self) -> None:  # pragma: no cover - refcount backstop only
             with contextlib.suppress(Exception):
@@ -952,6 +1001,10 @@ if sys.platform == "win32":
                 read_event=int(read_event),
                 cancel_event=int(cancel_event),
             )
+            # Ownership has moved to the session; the failure path below must
+            # not close what it now owns.
+            opened.clear()
+            pseudoconsole = None
         except BaseException:
             for owned in opened:
                 _kernel32.CloseHandle(owned)
@@ -1107,7 +1160,7 @@ class ConptyChild:
         try:
             chunk = pty.read_bytes()
         except Exception as error:
-            replacement = self._classify_io_failure(pty, end_of_stream=True)
+            replacement = self._classify_io_failure(pty, error, end_of_stream=True)
             # Drop the frame-local native reference before raising: the
             # exception's traceback keeps this frame alive, and a pinned
             # native object would defer the handle release indefinitely.
@@ -1136,7 +1189,7 @@ class ConptyChild:
         try:
             pty.write(text.encode("utf-8"))
         except Exception as error:
-            replacement = self._classify_io_failure(pty, end_of_stream=False)
+            replacement = self._classify_io_failure(pty, error, end_of_stream=False)
             del pty
             if replacement is None:
                 raise
@@ -1297,22 +1350,28 @@ class ConptyChild:
             self._pending_io -= 1
 
     def _classify_io_failure(
-        self, pty: Any, *, end_of_stream: bool
+        self, pty: Any, failure: BaseException, *, end_of_stream: bool
     ) -> Exception | None:
         """Map a native I/O failure to the binding's honest exception, if any.
 
         A failure observed after ``close`` unpublished the native object is
         the close's own cancellation (or indistinguishable from it) and
         becomes :class:`ConptyClosedError` — never an end-of-stream claim,
-        because close may have abandoned buffered output. A read failure on
-        an open binding with a dead child is the native end-of-stream signal.
-        Anything else is the caller's to see unchanged (``None``).
+        because close may have abandoned buffered output.
+
+        Otherwise the *native* signal decides.
+        :class:`ConptyEndOfStreamError` carries a guarantee — that every byte
+        the pseudoconsole emitted has already been returned — which only the
+        broken output pipe actually establishes. Inferring it from a dead
+        child instead would attach that guarantee to any read failure that
+        happened to arrive after the child exited. Anything else is the
+        caller's to see unchanged (``None``).
         """
         if not pty.isalive():
             self._capture_exit_status(pty)
         if self._pty is None:
             return ConptyClosedError("the ConPTY binding was closed during native I/O")
-        if end_of_stream and not pty.isalive():
+        if end_of_stream and type(failure) is _NativeEndOfStream:
             return ConptyEndOfStreamError(
                 "the native ConPTY output pipe reported end-of-stream"
             )
