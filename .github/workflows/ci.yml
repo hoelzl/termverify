@@ -29,6 +29,10 @@ jobs:
       - run: uv --no-config sync --all-groups --locked
       - run: uv --no-config run pre-commit run --all-files
       - run: uv --no-config run pytest --cov --cov-report=term-missing
+        env:
+          # Per-OS overlay (issue #230): each leg measures its own platform's
+          # legs of _jsonl_pipe.py and excludes only the foreign marker.
+          COVERAGE_RCFILE: ${{ matrix.os == 'windows-latest' && 'coverage-windows.toml' || 'coverage-posix.toml' }}
       - run: uv --no-config run mypy src tests scripts
 
   package:

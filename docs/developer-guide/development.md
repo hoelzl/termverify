@@ -88,6 +88,16 @@ allowing integer rounding to absorb a regression.
   logic above it is written against an injected binding and stays fully
   ratcheted. Adding any other exclusion requires the same owner review as
   lowering the floor.
+- Platform-specific legs (today: `_jsonl_pipe.py`) carry per-OS markers —
+  `# coverage: exclude-posix` / `# coverage: exclude-windows` — never a bare
+  `# pragma: no cover`, which is a static source exclusion that would remove
+  the leg on **every** platform (issue #230). `pyproject.toml` excludes both
+  markers so local runs behave as before, and each CI quality leg sets
+  `COVERAGE_RCFILE` to `coverage-windows.toml` or `coverage-posix.toml`,
+  which repeats the gating settings but excludes only the legs that cannot
+  run on that platform. Every leg is therefore ratcheted exactly where it
+  runs. The overlays are self-contained (coverage reads one rcfile); keep
+  them in sync with `pyproject.toml` — CI green is the check.
 
 ## Testing tiers
 

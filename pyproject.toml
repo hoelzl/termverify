@@ -74,6 +74,13 @@ omit = ["*/termverify/_conpty.py"]
 [tool.coverage.report]
 show_missing = true
 skip_covered = true
+# Platform legs in _jsonl_pipe.py carry per-OS markers instead of bare
+# `# pragma: no cover` (a bare pragma is a static source exclusion that
+# would remove the leg on EVERY platform — issue #230). Local runs and any
+# run without COVERAGE_RCFILE set exclude both markers here; the CI quality
+# legs select one marker via coverage-windows.toml / coverage-posix.toml so
+# each leg is measured exactly where it runs.
+exclude_also = ['# coverage: exclude-(posix|windows)']
 # No-regression ratchet floor: integer floor of the reviewed observed total
 # (94.43% on 2026-07-17). Raise only for sustained durable coverage; lowering
 # requires explicit owner review (docs/developer-guide/development.md).
