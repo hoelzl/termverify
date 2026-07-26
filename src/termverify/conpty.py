@@ -37,16 +37,43 @@ Negotiation is truthful by construction:
 Readiness and quiescence are defined only by observable evidence:
 
 - A verified subject cooperates by emitting an explicit readiness marker —
-  after startup and after processing each input. The adapter scans the
-  decoded output stream for the configured marker in stream order; raw
+  after startup and after processing each input. A marker is
+  :data:`READINESS_MARKER_PREFIX_DEFAULT` (configurable), a token, and
+  :data:`READINESS_MARKER_TERMINATOR`; the token must be one the subject has
+  not used before in this run. The adapter scans the decoded output stream
+  in stream order and honours the first marker whose token is new; raw
   chunks are always fed to the normalizer unmodified and retained as ordered
   ``terminal.output`` events, so replaying the normalizer over the raw
   evidence reproduces the frames.
-- :data:`READINESS_MARKER_DEFAULT` is a private-use OSC sequence. The
-  Windows integration evidence shows ConPTY relaying it verbatim through
-  the raw output stream, so the default is no longer provisional; the
-  marker remains configurable, and a printable marker has its own
-  frame-visibility and replay evidence.
+- **The marker is printable on purpose, and carries a token on purpose.**
+  Both follow from how ConPTY delivers output, and neither is negotiable
+  (issue #232):
+
+  1. ConPTY emits pass-through OSC on a different path from rendered text,
+     and the OSC path is *ahead*. A marker written as a private-use OSC —
+     which the default was until 2026-07-26 — therefore overtakes the very
+     output it is supposed to bound: measured, a subject's single atomic
+     write of ``TV_BEFORE`` + marker + ``TV_AFTER`` arrived as the marker
+     alone, then the text. The adapter would end the epoch on a marker whose
+     output had not been delivered, and report a frame missing it. Only text
+     that goes through the renderer is ordered against other rendered
+     output.
+  2. Rendered text is screen *state*, and the console re-emits screen state
+     whenever it repaints — after a scroll, a resize, or a teardown. A
+     constant marker therefore arrives again in later epochs, and an epoch
+     would complete on a marker its input never caused. A per-emission token
+     is what distinguishes a new marker from a redrawn old one.
+
+  The cost is that markers occupy screen cells and appear in frame
+  evidence. Subjects should emit them where that is harmless — on their
+  own newline-terminated line. A line *wrap* is not a hazard: wrapping is
+  screen-buffer layout, not stream content, so a marker wider than the
+  terminal arrives contiguous and is honoured (measured on the Windows
+  host, issue #233 review). What the token charset defends against is a
+  marker whose screen cells are disturbed mid-emission — a TUI patching
+  cells with cursor-addressed rewrites interleaves console artefacts into
+  the token — and such a candidate is skipped, so the epoch fails closed
+  on its deadline instead of completing wrongly.
 - Native end-of-stream plus the observed native exit record ends the run
   truthfully; a missing exit record is a structured failure, never a
   fabricated exit.
@@ -81,6 +108,7 @@ Readiness and quiescence are defined only by observable evidence:
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -144,7 +172,8 @@ from termverify.transcript import (
 from termverify.vt import ScreenSnapshot, TerminalOutputNormalizer, VtScreenNormalizer
 
 __all__ = [
-    "READINESS_MARKER_DEFAULT",
+    "READINESS_MARKER_PREFIX_DEFAULT",
+    "READINESS_MARKER_TERMINATOR",
     "ConptyAdapter",
     "ConptyBinding",
     "ConptyBindingPort",
@@ -155,13 +184,36 @@ __all__ = [
     "UnenforcedConstraintPorts",
 ]
 
-#: Default readiness marker: a private-use OSC sequence (OSC … ST) that a
-#: compliant screen model consumes without rendering. Windows integration
-#: evidence (``tests/test_conpty_integration.py``) shows ConPTY relaying
-#: this exact sequence verbatim, so the default carries a passthrough claim
-#: backed by the CI matrix. Hosts can configure any exact non-empty string
-#: instead.
-READINESS_MARKER_DEFAULT: Final = "\x1b]7791;ready\x1b\\"
+#: Default readiness-marker prefix. A marker is this prefix, a token, and
+#: :data:`READINESS_MARKER_TERMINATOR`. The text is deliberately printable:
+#: it has to reach the adapter *through the console renderer*, in order with
+#: the output it bounds. Hosts can configure any non-empty prefix instead.
+READINESS_MARKER_PREFIX_DEFAULT: Final = "<<termverify.ready:"
+
+#: Closes every readiness marker. Not configurable: the token charset below
+#: excludes ``>``, so this terminates a marker unambiguously whatever prefix
+#: a host configures.
+READINESS_MARKER_TERMINATOR: Final = ">>"
+
+#: Longest legal marker token.
+_MAX_MARKER_TOKEN: Final = 64
+
+#: Longest a complete marker can be after its prefix: the token plus the
+#: terminator. Bounds both how far the scanner looks for a terminator and how
+#: much of a partial candidate it will hold — past this, no terminator can
+#: still close a legal token, so the candidate was never a marker. The
+#: terminator counts: a candidate holding a maximum-length token and the
+#: first character of a split terminator is still viable, and dropping it
+#: would lose the marker.
+_MAX_MARKER_CANDIDATE: Final = _MAX_MARKER_TOKEN + len(READINESS_MARKER_TERMINATOR)
+
+#: A marker's token must match this: printable, bounded, and free of any
+#: character the console emits between the cells it renders. A candidate
+#: whose token does not match is not a marker, so a marker whose screen
+#: cells were disturbed mid-emission (a cursor-addressed rewrite) fails
+#: closed into the epoch deadline rather than being honoured with a mangled
+#: token — see the marker-protocol notes in the module docstring.
+_MARKER_TOKEN = re.compile(rf"[0-9A-Za-z._-]{{1,{_MAX_MARKER_TOKEN}}}\Z")
 
 #: UTF-8's worst case for one screen cell. The screen model stores any
 #: character at or above U+00A0 in a single cell, so a cell can cost up to
@@ -407,12 +459,41 @@ def _validate_argv(argv: Sequence[str]) -> tuple[str, ...]:
     return values
 
 
-def _validate_marker(marker: object) -> str:
-    if type(marker) is not str:
-        raise TypeError("readiness_marker must be a string")
-    if not marker:
-        raise ValueError("readiness_marker must be non-empty")
-    return marker
+def _validate_marker_prefix(prefix: object) -> str:
+    if type(prefix) is not str:
+        raise TypeError("readiness_marker_prefix must be a string")
+    if not prefix:
+        raise ValueError("readiness_marker_prefix must be non-empty")
+    if not all(char.isprintable() for char in prefix):
+        # The marker is printable so it travels the renderer's path, ordered
+        # against the output it bounds (#232). A control character puts it
+        # back on a pass-through path: "\x1b]7791;" is an OSC opener, and
+        # ConPTY relays OSC *ahead* of rendered text — the exact ordering
+        # defect the printable marker exists to fix (#233 review).
+        raise ValueError(
+            "readiness_marker_prefix must be printable: a control character"
+            " would route the marker through a console pass-through path"
+            " that overtakes the output the marker bounds"
+        )
+    if READINESS_MARKER_TERMINATOR in prefix:
+        raise ValueError(
+            "readiness_marker_prefix must not contain"
+            f" {READINESS_MARKER_TERMINATOR!r}: it would terminate the marker"
+            " before its token"
+        )
+    if _MARKER_TOKEN.match(prefix):
+        # A prefix made only of token characters can be absorbed into a
+        # neighbouring candidate's token: a stray occurrence followed by the
+        # real marker yields one token spanning both, which is well-formed,
+        # so the genuine token is never recorded and the console's next
+        # repaint of that marker completes another epoch — exactly the
+        # double-honour #232 exists to prevent.
+        raise ValueError(
+            "readiness_marker_prefix must contain a character outside"
+            f" {_MARKER_TOKEN.pattern}, so it cannot be mistaken for part of"
+            " a token"
+        )
+    return prefix
 
 
 def _validate_deadline(deadline_ms: object) -> int:
@@ -496,7 +577,7 @@ class ConptyAdapter:
         abort_deadline_ms: int,
         constraint_ports: ConstraintPorts | None = None,
         normalizer_factory: NormalizerFactory | None = None,
-        readiness_marker: str = READINESS_MARKER_DEFAULT,
+        readiness_marker_prefix: str = READINESS_MARKER_PREFIX_DEFAULT,
         watchdog: ConptyWatchdogPort | None = None,
         monotonic: Callable[[], float] | None = None,
     ) -> None:
@@ -509,7 +590,13 @@ class ConptyAdapter:
         if normalizer_factory is None:
             normalizer_factory = VtScreenNormalizer
         self._normalizer_factory: NormalizerFactory = normalizer_factory
-        self._marker = _validate_marker(readiness_marker)
+        self._marker_prefix = _validate_marker_prefix(readiness_marker_prefix)
+        # Tokens already honoured. The console re-emits whatever stands on
+        # screen whenever it repaints, so a marker's text can arrive again
+        # long after the epoch it ended; only an unseen token counts as a new
+        # one. One entry per completed epoch, so this grows with the run's
+        # length and not with its output.
+        self._honoured_tokens: set[str] = set()
         self._watchdog: ConptyWatchdogPort = (
             watchdog if watchdog is not None else TimerWatchdog()
         )
@@ -562,19 +649,68 @@ class ConptyAdapter:
     # --- marker protocol ---------------------------------------------------
 
     def _scan_for_marker(self) -> bool:
-        """Consume the stream buffer up to and including one marker.
+        """Consume the stream buffer up to and including one *new* marker.
 
         Markers count in stream order: transcript-position causality is the
         evidence, and the subject's cooperation contract is exactly one
-        marker per processed input. Without a match, only the shortest tail
-        that could still complete a split marker is retained.
+        marker per processed input, each carrying a token it has not used
+        before in this run.
+
+        A candidate is skipped rather than honoured when its token has
+        already been honoured — the console repaints screen state, so a
+        marker's text reappears in the stream whenever the viewport is
+        redrawn — or when the token is malformed, which is what a marker
+        whose screen cells were disturbed mid-emission looks like. Skipping
+        is the fail-closed direction: the epoch runs on to its deadline and
+        reports a structured failure, rather than completing on output the
+        subject never sent.
+
+        Without a match, only the shortest tail that could still complete a
+        split marker is retained. A candidate that has already outrun the
+        longest legal token without reaching a terminator is dropped: it can
+        never become a marker, and keeping it would let one stray prefix in
+        the subject's own output retain the rest of the run.
+
+        Rejected candidates resume the search one character past where they
+        began, not past where they ended. A prefix the subject printed by
+        accident would otherwise take the *next* genuine marker's terminator
+        as its own, and skipping past that swallows the real marker.
         """
-        index = self._pending.find(self._marker)
-        if index >= 0:
-            self._pending = self._pending[index + len(self._marker) :]
-            return True
-        keep = len(self._marker) - 1
-        self._pending = self._pending[-keep:] if keep else ""
+        prefix = self._marker_prefix
+        scanned = 0
+        while True:
+            index = self._pending.find(prefix, scanned)
+            if index < 0:
+                break
+            body = index + len(prefix)
+            # Bounded: a terminator further out than a whole marker cannot be
+            # this candidate's, and searching to the end of the buffer for it
+            # is what let one stray prefix borrow a later marker's terminator.
+            end = self._pending.find(
+                READINESS_MARKER_TERMINATOR, body, body + _MAX_MARKER_CANDIDATE
+            )
+            if end < 0:
+                if len(self._pending) - body < _MAX_MARKER_CANDIDATE:
+                    # The rest may still be arriving; keep the candidate.
+                    self._pending = self._pending[index:]
+                    return False
+                # Too much has arrived after this prefix for any terminator
+                # to still close a legal token, so it was never a marker.
+                scanned = index + 1
+                continue
+            token = self._pending[body:end]
+            if _MARKER_TOKEN.match(token) and token not in self._honoured_tokens:
+                self._honoured_tokens.add(token)
+                self._pending = self._pending[end + len(READINESS_MARKER_TERMINATOR) :]
+                return True
+            scanned = index + 1
+        # No prefix begins at or after ``scanned``, and nothing older than a
+        # prefix-length tail can begin one.
+        keep = len(prefix) - 1
+        if not keep:
+            self._pending = ""
+            return False
+        self._pending = self._pending[max(scanned, len(self._pending) - keep) :]
         return False
 
     # --- epoch loop --------------------------------------------------------
@@ -791,14 +927,17 @@ class ConptyAdapter:
           ``terminal.output`` string those chunks become may cost its
           observation record.
 
-        Retained memory follows from the byte bound only under a stated port
-        assumption: that a native read yields at least one byte, so bytes
-        also cap how many chunks the epoch can hold. ``ConptyChildPort.read``
-        does not forbid an empty string, and an empty-read loop would never
-        advance the byte counter — leaving the epoch deadline as its only
-        bound. Real ConPTY was measured not to do this (no empty read across
-        a 3 s idle), so this is an assumption about the port, not a claim
-        about the arithmetic.
+        ``ConptyChildPort.read`` may return an empty string, and since the
+        ConPTY binding took ownership of decoding (issue #197) it regularly
+        does: a native read landing inside a multi-byte codepoint decodes to
+        nothing until the rest of it arrives. Empty reads are skipped here
+        rather than retained — they are not evidence, and they never advance
+        the byte counter, so counting them would be the one way an epoch
+        could hold unbounded chunks. Their bytes are counted on the read that
+        completes the character. A port that returned empty strings forever
+        would still be ended by the epoch deadline above, which is the only
+        bound that does not depend on the port yielding anything.
+
         The per-object cost of retention is not counted either: at the
         ceiling a two-byte-per-read trickle retains ~27 MB of Python objects
         (a one-byte trickle costs less, ~8 MB, because single-character ASCII
@@ -824,22 +963,30 @@ class ConptyAdapter:
         output_bytes = 0
         while True:
             chunk = self._read_chunk(child, expired)
-            # Count before honoring the marker: the marker-bearing chunk is
-            # retained like any other, so excluding it would let the epoch
-            # exceed its own bound by a whole read.
-            output_bytes += len(chunk.encode("utf-8", "surrogatepass"))
-            if output_bytes > budget:
-                raise _EpochFailure(
-                    "the epoch retained more output than one observation"
-                    " record may carry; the budget is adapter abort policy,"
-                    " not evidence",
-                    {"budget": "bytes", "epoch-output-byte-budget": budget},
-                )
-            chunks.append(chunk)
-            self._feed(chunk)
-            self._pending += chunk
-            if self._scan_for_marker():
-                return
+            # An empty decode is not evidence: it means the native read
+            # landed inside a codepoint and the binding is holding those
+            # bytes until the rest arrives. Recording it would put a
+            # `terminal.output` event in the observation asserting the child
+            # emitted nothing, and replaying it feeds the normalizer nothing.
+            # The bytes are not lost — they surface on the read that
+            # completes the character, and are counted then.
+            if chunk:
+                # Count before honoring the marker: the marker-bearing chunk
+                # is retained like any other, so excluding it would let the
+                # epoch exceed its own bound by a whole read.
+                output_bytes += len(chunk.encode("utf-8", "surrogatepass"))
+                if output_bytes > budget:
+                    raise _EpochFailure(
+                        "the epoch retained more output than one observation"
+                        " record may carry; the budget is adapter abort policy,"
+                        " not evidence",
+                        {"budget": "bytes", "epoch-output-byte-budget": budget},
+                    )
+                chunks.append(chunk)
+                self._feed(chunk)
+                self._pending += chunk
+                if self._scan_for_marker():
+                    return
             if self._monotonic() >= epoch_deadline_at:
                 # The per-read watchdog cannot end this: a trickle just under
                 # the deadline never exceeds any single read's deadline, which

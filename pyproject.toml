@@ -20,7 +20,6 @@ classifiers = [
     "Topic :: Software Development :: Testing",
 ]
 dependencies = [
-    "pywinpty>=3.0.5,<4.0; sys_platform == 'win32'",
     "rfc8785>=0.1.4",
 ]
 
@@ -60,10 +59,16 @@ testpaths = ["tests"]
 branch = true
 source = ["termverify"]
 # The native ConPTY binding executes only on the Windows CI legs; including it
-# would make the cross-platform ratchet floor depend on the host OS. It stays
-# deliberately thin, its behavior is proven by the Windows-only integration
-# tests, and all adapter logic above it must remain fully ratcheted
+# would make the cross-platform ratchet floor depend on the host OS. Its
+# behavior is proven by the Windows-only integration tests, and all adapter
+# logic above it must remain fully ratcheted
 # (docs/developer-guide/development.md).
+#
+# It is no longer "deliberately thin", which this rationale used to claim:
+# taking the pseudoconsole over from pywinpty (#197) roughly tripled it, and
+# the omit means the spawn's ownership handover, the read cancellation path,
+# and the teardown are all unmeasured. Issue #236 revisits whether a
+# per-OS supplemental measurement should cover it (see also Slice 8.3).
 omit = ["*/termverify/_conpty.py"]
 
 [tool.coverage.report]
@@ -89,12 +94,6 @@ files = ["src", "tests", "scripts"]
 python_version = "3.12"
 strict = true
 warn_unreachable = true
-
-[[tool.mypy.overrides]]
-# pywinpty ships no type stubs and is absent on non-Windows checkers; the
-# binding wrapper confines its untyped surface to termverify._conpty.
-module = "winpty.*"
-ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 # _jsonl_pipe.py is deliberately two-platform: the Windows containment leg

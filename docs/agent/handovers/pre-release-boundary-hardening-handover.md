@@ -709,12 +709,15 @@ remains slice 4 and fail-closed.
 The owner accepted adapter slice 4 on 2026-07-18 (issue #121,
 adversarially reviewed): Windows integration evidence on the real path —
 default `ConptyBinding`, native `ConptyChild`, real `VtScreenNormalizer` —
-on the full Windows CI matrix. The disclosed OSC assumption is resolved
-with evidence: ConPTY relays the private `OSC 7791;ready ST` default
-verbatim through the raw output stream, so the marker default is no longer
-provisional and no printable-default amendment was needed; a
-host-configured printable marker retains its own frame-visibility and
-replay evidence. Real output exposed the v1 VT subset gap exactly as the
+on the full Windows CI matrix. The disclosed OSC assumption was recorded
+here as resolved — ConPTY relays the private `OSC 7791;ready ST` default
+verbatim through the raw output stream — and that conclusion was
+**retracted on 2026-07-26 (issue #232)**. Relaying it verbatim was true and
+never sufficient: ConPTY renders text on one path and passes OSC through on
+another, ahead of it, so an OSC marker can arrive before the output it is
+supposed to bound. The default is now a printable prefix plus a
+per-emission token; see `docs/agent/design/conpty-adapter-design.md` for the
+amendment and the measurement. Real output exposed the v1 VT subset gap exactly as the
 fail-closed design intended: ConPTY opens every session with `CSI 1 t`,
 `CSI c`, `CSI ?1004h`, and `CSI ?9001h`, and the subset was amended
 pre-release (no released artifact or recorded transcript carries the prior

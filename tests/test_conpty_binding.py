@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import sys
 import threading
 import time
@@ -301,6 +302,70 @@ def test_spawn_fails_closed_off_windows() -> None:
         )
 
 
+#: Cursor repositioning ConPTY emits while a burst wraps: after scrolling with
+#: ``\r\n`` it parks on the last column of the bottom row and rewrites that one
+#: cell before continuing. The rewrite is a real character in the stream, so a
+#: wrapping burst legitimately carries one repeat per reposition.
+_REPOSITION = re.compile(r"\x1b\[(\d+);(\d+)H")
+
+#: The other sequences ConPTY emits during a burst: CSI, and the OSC window
+#: title it sets once the child is attached. Characters inside these are not
+#: characters the child wrote.
+_ESCAPE = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;?]*[A-Za-z]")
+
+
+def _assert_burst_delivered_whole(region: str) -> None:
+    """Assert a wrapping burst arrived complete, repeats accounted for exactly.
+
+    "Byte-complete" is not "byte-count-equal": the console host re-emits the
+    last cell of a row after each scroll, so the raw stream carries more
+    burst characters than the child wrote. Whether it does that at all
+    depends on how fast the reader drains — a slow reader lets the host
+    coalesce whole frames and emit none — so pinning a bare count pins the
+    reader's speed instead of the binding's fidelity. What must hold either
+    way is that every character the child wrote arrived and that every extra
+    one is a cell the host explicitly repositioned onto.
+    """
+    repositions = _REPOSITION.findall(region)
+    # Every reposition parks on the same cell — the bottom row's last column.
+    # If the host ever repositions somewhere else, the one-repeat-per-jump
+    # accounting below stops describing what it emits, and this says so
+    # instead of silently absorbing the difference into the count.
+    assert len(set(repositions)) <= 1, (
+        f"the console host repositioned to more than one cell: {set(repositions)}"
+    )
+    # Assert the pairing rather than inferring it from a total: a bare count
+    # is equally satisfied by one lost character plus one fabricated one.
+    # Each reposition must be followed by exactly the one cell it exists to
+    # rewrite; strip those pairs and the remainder must hold the burst
+    # exactly, with no escape left that could contribute a character to it.
+    remainder: list[str] = []
+    cursor = 0
+    for match in _REPOSITION.finditer(region):
+        remainder.append(region[cursor : match.start()])
+        after = match.end()
+        assert region[after : after + 1] == "Z", (
+            "a reposition was not followed by the repeated cell it exists to"
+            f" rewrite: {region[after : after + 20]!r}"
+        )
+        cursor = after + 1
+    remainder.append(region[cursor:])
+    # Remove the remaining escape sequences too — ConPTY sets its window
+    # title mid-burst, and a character inside an escape is not a character
+    # the child emitted. Anything left holding an ESC is a sequence this
+    # accounting does not model, which must fail loudly rather than be
+    # counted.
+    stripped = _ESCAPE.sub("", "".join(remainder))
+    assert "\x1b" not in stripped, (
+        "the burst carried an escape sequence this accounting does not know"
+        f" about: {stripped[stripped.index(chr(27)) : stripped.index(chr(27)) + 20]!r}"
+    )
+    assert stripped.count("Z") == _BURST_BYTES, (
+        f"the burst carried {stripped.count('Z')} characters once every"
+        f" repositioned repeat was removed; expected {_BURST_BYTES}"
+    )
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
 def test_final_frame_drains_byte_complete_to_native_end_of_stream() -> None:
     """Item 3: service output past child exit until the native pipe ends."""
@@ -321,7 +386,7 @@ def test_final_frame_drains_byte_complete_to_native_end_of_stream() -> None:
     start = combined.find("TV_START")
     end = combined.find("TV_END")
     assert 0 <= start < end, combined[-200:]
-    assert combined[start:end].count("Z") == _BURST_BYTES
+    _assert_burst_delivered_whole(combined[start:end])
     assert not child.is_alive()
     assert child.exit_status == 0
 
@@ -643,7 +708,7 @@ def test_conpty_child_lifecycle_matches_spike_evidence() -> None:
     burst_start = combined.find("TV_BURST_START")
     burst_end = combined.find("TV_BURST_DONE")
     assert 0 <= burst_start < burst_end
-    assert combined[burst_start:burst_end].count("Z") == _BURST_BYTES
+    _assert_burst_delivered_whole(combined[burst_start:burst_end])
 
 
 # --- Slice 4: binding-level cancellation/recovery with hostile fixtures ---
@@ -854,6 +919,15 @@ def test_forced_close_waits_out_in_flight_large_write() -> None:
     crashes the interpreter — and the write itself completes normally
     (``cancel_io`` does not cancel conin writes; the wait-out is the
     discipline under test).
+
+    The size is chosen against the measured conin throughput (~1 MiB/s: the
+    console host turns every byte into input records), so the write stays in
+    flight for seconds — long enough for the close to provably overlap it —
+    while still finishing inside the close's cancellation budget. It is
+    deliberately far below the budget: ``write`` now writes every byte it was
+    given rather than however many the previous binding's single native call
+    happened to take, so the same wall-clock window is a much smaller payload
+    than it used to be.
     """
     child = _spawn(_DEAF_CHILD)
     watchdog = _ForcedCloseWatchdog(child)
@@ -864,7 +938,7 @@ def test_forced_close_waits_out_in_flight_large_write() -> None:
     def big_write() -> None:
         try:
             events["write_start"] = time.monotonic()
-            child.write("W" * (256 * 1024 * 1024))
+            child.write("W" * (4 * 1024 * 1024))
             events["write_end"] = time.monotonic()
         except BaseException as error:
             write_errors.append(error)
@@ -880,6 +954,7 @@ def test_forced_close_waits_out_in_flight_large_write() -> None:
             assert time.monotonic() < deadline, "write never became in-flight"
             time.sleep(0.001)
 
+        close_called = time.monotonic()
         child.close(force=True)
         close_returned = time.monotonic()
 
@@ -892,8 +967,17 @@ def test_forced_close_waits_out_in_flight_large_write() -> None:
     assert not write_errors, write_errors
     assert "write_end" in events, "the in-flight native write did not complete"
     # Close overlapped the write and returned only after the write frame
-    # returned: the ordering evidence for the wait-out discipline.
+    # returned: the ordering evidence for the wait-out discipline. The
+    # second assertion is the load-bearing one — the write was still in
+    # flight when close was *entered*, not merely before it. Without it the
+    # test would degenerate into a tautology if conin ever got fast enough
+    # for the write to finish during the arrangement spin, and would still
+    # pass.
     assert events["write_start"] < close_returned
+    assert events["write_end"] >= close_called, (
+        "the write completed before close was entered, so this run proves"
+        " nothing about close waiting one out"
+    )
     assert events["write_end"] <= close_returned
     assert child.exit_status == FORCED_TERMINATION_EXIT_CODE
     with pytest.raises(ConptyClosedError):
@@ -901,7 +985,11 @@ def test_forced_close_waits_out_in_flight_large_write() -> None:
 
 
 def _assert_no_native_pin(error: BaseException) -> None:
-    """Assert no traceback frame in the exception chain pins a native PTY."""
+    """Assert no traceback frame in the exception chain pins a native session."""
+    # Imported here: the class exists only on Windows, and every caller is a
+    # Windows-only test.
+    from termverify._conpty import _PseudoConsoleSession
+
     seen: set[int] = set()
     stack: list[BaseException] = [error]
     while stack:
@@ -912,8 +1000,12 @@ def _assert_no_native_pin(error: BaseException) -> None:
         traceback = current.__traceback__
         while traceback is not None:
             for name, value in traceback.tb_frame.f_locals.items():
-                assert type(value).__name__ != "PTY", (
-                    f"native PTY pinned via frame local {name!r}"
+                # Against the imported class, not its name: this assertion
+                # was pinned to pywinpty's `PTY` and silently stopped being
+                # able to fail when the binding started owning the session
+                # itself. A rename now breaks the import instead.
+                assert not isinstance(value, _PseudoConsoleSession), (
+                    f"native pseudoconsole pinned via frame local {name!r}"
                 )
             traceback = traceback.tb_next
         for linked in (current.__cause__, current.__context__):
@@ -953,6 +1045,35 @@ print(
 print("TV_CWD:" + os.getcwd(), flush=True)
 print("TV_DELIVERY_DONE", flush=True)
 """
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_spawn_runs_a_program_whose_path_contains_spaces(tmp_path: Path) -> None:
+    """A spaced ``argv[0]`` starts that program, not a prefix of its path.
+
+    The command line is what the child parses into its own ``argv``, so an
+    unquoted spaced program path arrives split across several arguments. The
+    binding quotes ``argv[0]`` like every other argument, and names the
+    executable to the OS separately, so neither reading can diverge.
+    """
+    spaced = tmp_path / "program dir with spaces"
+    spaced.mkdir()
+    # ``cmd.exe`` resolves its dependencies through the system search path, so
+    # it still runs from a copy outside its own directory.
+    program = spaced / "my shell.exe"
+    shutil.copy(Path(os.environ["SYSTEMROOT"]) / "System32" / "cmd.exe", program)
+
+    child = ConptyChild.spawn(
+        [str(program), "/c", "echo TV_SPACED_ARGV0"],
+        rows=_INITIAL_ROWS,
+        columns=_INITIAL_COLUMNS,
+    )
+    collected: list[str] = []
+    try:
+        _read_until(child, "TV_SPACED_ARGV0", collected)
+    finally:
+        child.close(force=True)
+    assert "TV_SPACED_ARGV0" in "".join(collected)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
