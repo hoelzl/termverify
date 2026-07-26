@@ -822,6 +822,14 @@ def test_a_frame_ceiling_bytes_cannot_express_refuses_the_geometry(
         "budget": "geometry",
         axis: rows if axis == "terminal-rows" else columns,
     }
+    # Refused *before any read* — the property the pre-read placement exists
+    # for, and the only test that can pin it. The buffered-marker test below
+    # cannot: on that path no placement causes a read, and `_observation`'s
+    # defense-in-depth gate raises the identical failure, so with the check
+    # moved into the read loop the whole suite stayed green while a host with
+    # an unrecordable geometry got told its subject was too slow (round 9,
+    # finding F1).
+    assert binding.child.reads_served == 0
 
 
 @pytest.mark.parametrize(
@@ -885,12 +893,20 @@ def test_stop_refuses_an_unrecordable_geometry_it_did_not_read_its_way_into() ->
     what rounds 6 and 8 each found walkable. Set the geometry directly and
     `stop()` must produce a structured failure, not an unrecordable record
     (round 8, finding m4).
+
+    The screen is resized with the adapter, not only the adapter. Poking
+    `_rows` alone is intercepted by `_snapshot`'s own dimension check, which
+    also yields a structured failure — so without this the test would pass
+    against an ungated `stop()` and pin guard ordering rather than the harm
+    (round 9, finding F4).
     """
     binding = _FakeBinding(_FakeChild([_MARKER], exit_status=0))
     adapter = _adapter(binding, watchdog=_FakeWatchdog())
     assert type(adapter.start("run-conpty", _configuration())) is Started
 
     adapter._rows = _MAX_COLLECTION_ITEMS + 1
+    normalizer = cast("_FakeNormalizer", adapter._normalizer)
+    normalizer.notify_resize(rows=_MAX_COLLECTION_ITEMS + 1, columns=adapter._columns)
 
     result = adapter.stop(Stop(ManualTime(0)))
 

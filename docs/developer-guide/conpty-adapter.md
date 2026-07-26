@@ -93,28 +93,34 @@ geometry and the run fails with `budget: "geometry"` as soon as an epoch
 begins, before any read.
 
 That threshold is where the *adapter* stops, not where the record does: a
-523,264-cell frame of at most 16,384 rows still fits one record with a few
-kilobytes to spare. The adapter refuses because an epoch that can record a
-frame but no output is not a useful epoch, and admitting it would mean
-discovering the problem only when the transcript is serialized.
+523,264-cell frame that also stays inside the row and column limits below
+still fits one record with a few kilobytes to spare. The adapter refuses
+because an epoch that can record a frame but no output is not a useful
+epoch, and admitting it would mean discovering the problem only when the
+transcript is serialized.
 
 **Rows and columns are limits of their own, and cells express neither.** The
 frame meets three ceilings in three different units, so the adapter checks
 three axes and the failure details name the one that bound:
 
-| Axis | Ceiling | Limit | Detail key |
+| Axis | Ceiling | Largest admitted | Detail key |
 | --- | --- | --- | --- |
 | rows | one collection item per frame line | 16,384 rows | `terminal-rows` |
 | columns | one line is one string, at 4 bytes per cell | 262,144 columns | `terminal-columns` |
-| cells | the frame's aggregate bytes against the record | 523,264 cells | `terminal-cells` |
+| cells | the frame's aggregate bytes against the record | 523,263 cells | `terminal-cells` |
 
 Neither of the first two is implied by the third. A terminal 10 columns wide
 and 20,000 rows tall is only 200,000 cells — well under the threshold above —
 and still cannot be recorded, because its frame is 20,000 collection items. A
 terminal 262,145 columns wide and 1 row tall is 262,145 cells and still
-cannot be recorded, because that one line is a 1 MiB string. Only a single-row
-terminal can reach the column limit without the cell limit firing first: at
-two rows, any width past 262,144 is already past 523,264 cells.
+cannot be recorded, because that one line is 1 MiB plus four bytes, and one
+string may be 1 MiB. Only a single-row terminal can reach the column limit
+without the cell limit firing first: at two rows, any width past 262,144 is
+already past 523,264 cells.
+
+Nor does either imply the other, so a frame at the cell threshold is not
+automatically recordable — 523,264 columns on a single row is one row and
+523,264 cells, and its one line is 2 MiB.
 
 All three refuse the run the same way, with `budget: "geometry"`, as soon as
 an epoch begins and before any read.

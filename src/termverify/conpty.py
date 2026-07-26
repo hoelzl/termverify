@@ -732,8 +732,8 @@ class ConptyAdapter:
 
         - **rows** against the record's collection ceiling. `frame.lines` is
           one item per row, so above it no epoch is recordable at any cell
-          count — a ten-column terminal reaches it two orders of magnitude
-          below the cell threshold.
+          count — a ten-column terminal reaches it at 163,850 cells, a third
+          of the cell threshold.
         - **columns** against the per-string ceiling, which one frame line
           meets on its own at ``4 * columns`` bytes. Only a single-row
           terminal can reach this without the cell bound firing first: at two

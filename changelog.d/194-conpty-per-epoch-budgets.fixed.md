@@ -32,12 +32,12 @@
   bytes, and a box-drawn or CJK screen costs three to four bytes per cell, so
   counting cells under-reserved by up to 4x — observable above roughly 261,000
   cells, where the per-record sum is the binding ceiling and a large emoji
-  frame was admitted and then rejected. At 523,264 cells or more the frame reserve
-  leaves an observation record no room for output at all, and the run now
-  fails with `budget: "geometry"` as soon as an epoch begins — before any
-  read, so a resize past the threshold cannot slip through an epoch whose
-  readiness marker was already buffered — rather than as a phantom output
-  flood.
+  frame was admitted and then rejected. At 523,264 cells or more the frame
+  reserve leaves an observation record no room for output at all, and the
+  run now fails with `budget: "geometry"` as soon as an epoch begins —
+  before any read, so a resize past the threshold cannot slip through an
+  epoch whose readiness marker was already buffered — rather than as a
+  phantom output flood.
   Disclosed limit: the codec still owns recordability and enforces ceilings no
   budget can model, notably a canonical-line limit ESC-dense output reaches far
   sooner.
