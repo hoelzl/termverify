@@ -7,9 +7,14 @@ honest exit records. It implements the ``JsonlChildPort`` shape from
 ``termverify.jsonl`` directly rather than importing it, mirroring the
 ``_conpty.py`` architecture: all adapter logic above the binding is
 fake-driven and ratcheted, while this native boundary is proven by
-real-subprocess integration tests and excluded from the coverage ratchet.
+real-subprocess integration tests. Unlike ``_conpty.py`` this module is
+**not** omitted from coverage measurement — only its platform-specific
+legs carry ``# pragma: no cover``, which means each leg is invisible on
+the platform that cannot run it and measured on the one that can.
 
-Pipes are portable, so this binding runs identically on Windows and POSIX:
+Pipes are portable, so process ownership and framing are identical on
+Windows and POSIX. Interrupting blocked I/O is not, and that difference
+is stated below rather than smoothed over:
 
 - **Windows:** the child is assigned to a kill-on-close job object created
   per spawn (the ConPTY binding's proven pattern), so a forced close
@@ -27,9 +32,11 @@ Pipes are portable, so this binding runs identically on Windows and POSIX:
 Interrupting blocked I/O is where the two platforms genuinely differ, and
 the difference is a mechanism difference, not a strength claim:
 
-- **POSIX** owns both pipes as raw descriptors and waits on ``select``
-  over the descriptor *and* a self-pipe, so any close wakes a blocked
-  read or write outright. This does not depend on reaching whoever holds
+- **POSIX** owns both pipes as raw descriptors and waits on ``poll``
+  over the descriptor *and* a self-pipe, so any close that proceeds wakes
+  a blocked read or write outright (a release-only close of a live child
+  is refused before it signals anything, and leaves the binding usable).
+  This does not depend on reaching whoever holds
   the other end, which is what makes it answer review finding R4: a
   ``setsid()`` descendant escapes ``killpg`` and can hold the child's
   stdout write end open forever, and the reader still ends — as a closed
@@ -260,6 +267,9 @@ class PipeJsonlChild:
         self._read_in_flight = False
         self._interrupted_read = threading.Event()
         self._interrupted_read.set()
+        self._write_in_flight = False
+        self._interrupted_write = threading.Event()
+        self._interrupted_write.set()
         self._wake_read = -1
         self._wake_write = -1
         self._raw_stdin: io.RawIOBase | None = None
@@ -305,7 +315,10 @@ class PipeJsonlChild:
         handing the binding out, because failing the spawn would not
         contain that descendant either, only misreport the cause. A
         descendant that inherits the child's stdout write end can also
-        block the teardown's pipe release indefinitely (issue #213).
+        block the teardown's pipe release indefinitely — on Windows only,
+        which is where this whole paragraph applies: POSIX wakes its own
+        blocked I/O through the self-pipe and does not depend on reaching
+        the holder at all (issue #213).
 
         On POSIX the child starts its own session so a forced close can
         kill its process group.
@@ -372,7 +385,24 @@ class PipeJsonlChild:
                     f"failed to contain pipe child {process.pid} in a job object"
                 ) from error
             return cls(process, job=job, process_handle=process_handle)
-        return cls(process)
+        try:  # pragma: no cover - POSIX-only leg
+            return cls(process)
+        except OSError as error:
+            # Construction can now fail: adopting the descriptors calls
+            # `os.pipe`, which fails on EMFILE/ENFILE. Fail closed like the
+            # Windows containment leg rather than leaking a live child and
+            # both pipes — the spawn contract is that no child outlives a
+            # failed spawn (adversarial review, finding m5).
+            try:
+                process.kill()
+                process.wait(timeout=_CHILD_EXIT_WAIT_S)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+            finally:
+                _release_pipes(process)
+            raise OSError(
+                f"failed to adopt the pipe descriptors for child {process.pid}"
+            ) from error
 
     def _adopt_posix_descriptors(
         self, process: subprocess.Popen[bytes]
@@ -380,14 +410,23 @@ class PipeJsonlChild:
         """Take the two pipes as raw descriptors, plus a wake-up pipe.
 
         Detaching here, in the constructor, is the one moment at which it
-        is provably free: nothing has been read or written yet, so both
-        buffered wrappers hold empty buffers. ``BufferedWriter.detach``
-        *flushes* (issue #217) — the buffered layer offers no
-        release-without-flush operation — so a teardown-time detach
-        against a child that never drains its stdin can block on the very
-        path that exists to guarantee a bounded failure. Detaching while
-        there is nothing to flush moves that hazard out of the teardown
-        entirely rather than describing it away.
+        is provably free, and the two wrappers are free for *different*
+        reasons. ``BufferedWriter.detach`` **flushes** (issue #217) — the
+        buffered layer offers no release-without-flush operation — so a
+        teardown-time detach against a child that never drains its stdin
+        can block on the very path that exists to guarantee a bounded
+        failure. ``BufferedReader.detach`` does not flush; it **silently
+        discards** whatever it has buffered, so detaching a reader that has
+        already read would lose bytes with no error at all.
+
+        Both are safe here because of the *call site*, not because of
+        ``detach``: this runs only ever straight out of
+        ``subprocess.Popen``, so neither buffer has been used. Constructing
+        from a ``Popen`` that has been read from or written to would break
+        the claim silently — hence writing the invariant down rather than
+        leaving it to be inferred. For the same reason the ``Popen`` must
+        never be used as a context manager: ``__exit__`` calls ``close``
+        on both wrappers, which raises once they are detached.
 
         What this buys beyond the flush: the buffered objects also own
         locks. A read blocked inside ``BufferedReader.read1`` holds one,
@@ -443,14 +482,32 @@ class PipeJsonlChild:
                 if self._closed or self._raw_stdin is None:
                     raise JsonlChildClosedError("the JSONL pipe binding is closed")
                 fd = self._raw_stdin.fileno()
-            self._write_all(fd, line)
+                wake = self._wake_read
+                # Tracked exactly like a read, and for the same reason: a
+                # close must not close this descriptor while a write is
+                # still inside `poll`/`os.write` on it. Untracked, the fd
+                # number is free the instant `_close_pipes` runs, and any
+                # concurrent `open` in the process can reuse it — the write
+                # would then put control-protocol bytes into an unrelated
+                # file. Trading a hang for silent corruption is strictly
+                # worse than the hang (adversarial review, finding M3).
+                self._write_in_flight = True
+                self._interrupted_write.clear()
+            try:
+                self._write_all(fd, wake, line)
+            finally:
+                with self._lock:
+                    self._write_in_flight = False
+                    self._interrupted_write.set()
             return
         with self._lock:
             stdin = self._stdin()
         stdin.write(line)
         stdin.flush()
 
-    def _write_all(self, fd: int, line: bytes) -> None:  # pragma: no cover - POSIX
+    def _write_all(
+        self, fd: int, wake: int, line: bytes
+    ) -> None:  # pragma: no cover - POSIX
         """Write every byte, waiting for writability, wakeable throughout.
 
         A child that has stopped draining its stdin fills the pipe buffer
@@ -459,21 +516,24 @@ class PipeJsonlChild:
         ends the write as a closed binding — the same interruption the
         reader gets, so the adapter's deadline can produce a structured
         failure on either direction.
+
+        Both descriptors are passed in, snapshotted under the lock by the
+        caller. Re-reading ``self._wake_read`` here would race a close that
+        has already reset it to -1, and ``poll`` rejects a negative
+        descriptor with a ``ValueError`` that is not this binding's
+        documented closed error.
         """
         view = memoryview(line)
         while view:
-            readable, writable, _ = select.select([self._wake_read], [fd], [])
-            if readable:
+            if _wait_until_ready(fd, wake, write=True):
                 raise JsonlChildClosedError(
                     "the JSONL pipe binding was closed during a write"
                 )
-            if not writable:
-                continue
             try:
                 written = os.write(fd, view)
             except BlockingIOError:
-                # select promised writability, but the pipe can refuse a
-                # partial write between the two calls; wait again.
+                # Writability can be lost between the poll and the write;
+                # wait again rather than failing a write that can proceed.
                 continue
             view = view[written:]
 
@@ -582,17 +642,20 @@ class PipeJsonlChild:
             if self._closed or self._raw_stdout is None:
                 raise JsonlChildClosedError("the JSONL pipe binding is closed")
             fd = self._raw_stdout.fileno()
+            # Snapshotted with the descriptor, never re-read below: a close
+            # resets it to -1, and a negative descriptor is a `ValueError`
+            # from `poll`, not this binding's documented closed error.
+            wake = self._wake_read
         while True:  # pragma: no cover - POSIX-only leg
-            readable, _, _ = select.select([fd, self._wake_read], [], [])
-            if self._wake_read in readable:
+            if _wait_until_ready(fd, wake, write=False):
                 raise JsonlChildClosedError(
                     "the JSONL pipe binding was closed during a read"
                 )
             try:
                 return os.read(fd, _READ_CHUNK_BYTES)
             except BlockingIOError:
-                # Readability can be lost between select and read; wait
-                # again rather than reporting a spurious end-of-stream,
+                # Readability can be lost between the poll and the read;
+                # wait again rather than reporting a spurious end-of-stream,
                 # which an empty return would be indistinguishable from.
                 continue
 
@@ -613,7 +676,10 @@ class PipeJsonlChild:
         assignment window, or any descendant of a child that exited before
         assignment (see :meth:`spawn`). Such a process is not swept, and
         if it holds the child's stdout write end it can block the pipe
-        release indefinitely — issue #213. On the raising path the exit
+        release indefinitely — issue #213, and Windows-only: the sentences
+        about the job object describe the platform that has one, while
+        POSIX interrupts its own blocked I/O and never waits on the
+        holder. On the raising path the exit
         record is not captured: the raise is the result, and
         ``exit_status`` stays ``None``. A second close
         arriving while another thread's close is in flight waits for that
@@ -628,6 +694,7 @@ class PipeJsonlChild:
         claiming otherwise, and the binding does not fabricate either.
         """
         interrupted: threading.Event | None = None
+        interrupted_write: threading.Event | None = None
         with self._lock:
             if self._closed:
                 # Another close owns the teardown; wait for it to finish
@@ -648,6 +715,8 @@ class PipeJsonlChild:
                 self._process_handle = None
                 if self._read_in_flight:
                     interrupted = self._interrupted_read
+                if self._write_in_flight:
+                    interrupted_write = self._interrupted_write
         if done is not None:
             done.wait()
             return
@@ -698,6 +767,13 @@ class PipeJsonlChild:
                 # binding with a read still unwinding. Wait — bounded,
                 # without the lock — for that delivery.
                 interrupted.wait(timeout=_READ_DELIVERY_WAIT_S)
+            if interrupted_write is not None:
+                # Same wait for the other direction, and it is not
+                # symmetry for its own sake: `_close_pipes` frees the
+                # stdin descriptor's *number*, and a write still inside
+                # `os.write` on it would then be writing into whatever
+                # the process opened next.
+                interrupted_write.wait(timeout=_READ_DELIVERY_WAIT_S)
             self._wait_out(process, process_handle)
             try:
                 status = process.wait(timeout=_CHILD_EXIT_WAIT_S)
@@ -771,17 +847,21 @@ class PipeJsonlChild:
     def _terminate_tree(
         self, process: subprocess.Popen[bytes], job: int | None
     ) -> None:
-        # Kill first, release the writer second. ``detach`` on a
-        # ``BufferedWriter`` flushes whatever it still holds (the buffered
-        # layer offers no release-without-flush operation, #217), and
-        # against the subject this teardown exists for — one that never
-        # drains its stdin, with a full pipe buffer — that flush blocks
-        # forever. Ending the tree first makes the flush fail fast against
-        # a dead reader instead, which is what lets a write under the abort
-        # deadline produce a structured failure rather than a hang
-        # (adversarial review 2026-07-24, finding C2). Same invariant as
-        # the teardown's handle ordering: release every mechanism that can
-        # unblock an operation before performing one that can block on it.
+        # Kill first, release the writer second — a **Windows** ordering
+        # argument, kept because Windows still has a buffered writer here.
+        # ``detach`` on a ``BufferedWriter`` flushes whatever it still
+        # holds (the buffered layer offers no release-without-flush
+        # operation, #217), and against the subject this teardown exists
+        # for — one that never drains its stdin, with a full pipe buffer —
+        # that flush blocks forever. Ending the tree first makes the flush
+        # fail fast against a dead reader instead, which is what lets a
+        # write under the abort deadline produce a structured failure
+        # rather than a hang (adversarial review 2026-07-24, finding C2).
+        # POSIX returns below before touching any writer at all: the
+        # wake-up pipe, already signaled, has ended any blocked write, so
+        # the ordering has nothing left to protect there. Both are the same
+        # invariant: release every mechanism that can unblock an operation
+        # before performing one that can block on it.
         if sys.platform == "win32":  # pragma: no cover - Windows-only containment leg
             if job is None:
                 # Defensive: unreachable on the only construction path.
@@ -902,6 +982,25 @@ class PipeJsonlChild:
                     os.close(fd)
         self._wake_read = -1
         self._wake_write = -1
+
+
+def _wait_until_ready(fd: int, wake: int, *, write: bool) -> bool:
+    """Block until ``fd`` is ready or ``wake`` fires; True if ``wake`` did.
+
+    ``poll`` rather than ``select``: ``select`` cannot express a
+    descriptor at or above ``FD_SETSIZE`` and raises on one, so a host
+    with many open descriptors would start failing reads that the old
+    buffered path served. ``poll`` has no such ceiling and is available on
+    every POSIX target this binding supports.
+    """
+    if sys.platform == "win32":  # pragma: no cover - POSIX-only helper
+        raise AssertionError("the pollable path is POSIX-only")
+    poller = select.poll()
+    poller.register(wake, select.POLLIN)
+    poller.register(fd, select.POLLOUT if write else select.POLLIN)
+    # No timeout: the wake-up pipe is what ends an otherwise endless wait,
+    # and every close signals it before touching either descriptor.
+    return any(ready == wake for ready, _events in poller.poll())
 
 
 def _release_pipes(process: subprocess.Popen[bytes]) -> None:

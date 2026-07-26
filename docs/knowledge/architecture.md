@@ -91,22 +91,33 @@ recorded owner decision — so the honest position is disclosure, not a
 guarantee. A verified run must not be read as asserting that no process
 outlived it.
 
-What *is* guaranteed, and what the platforms share, is narrower than the
-containment claim it replaces:
+What replaces the containment claim is narrower, and splits into what every
+platform owes and what only POSIX currently delivers. Keeping the two apart is
+the point: the previous claim failed precisely by averaging them.
 
-- **Failure classification is identical on every platform.** A run ends in a
-  structured result carrying a real exit record or a real forced-termination
-  record. No record is fabricated, and no path ends in a hang.
+Guaranteed on **every** platform:
+
+- **Failure classification is identical.** When a run produces a result, that
+  result is structured and carries a real exit record or a real
+  forced-termination record. No record is ever fabricated, and no run reports
+  anything it did not observe.
+
+Guaranteed on **POSIX** only:
+
 - **A survivor cannot hold the verifier hostage.** This is the substantive
   guarantee, because the damaging case is not the orphan itself but the pipe
-  end it holds: a reader blocked on a descriptor no containment can close used
-  to wedge permanently, and to strand the teardown behind it. The POSIX pipe
-  binding therefore interrupts its own blocked reads and writes through a
-  self-pipe instead of relying on containment to reach the holder, so the abort
-  deadline still produces a structured failure. Windows cannot use that
-  mechanism — `select` does not work on anonymous pipe handles — and relies on
-  the job object, so a holder outside the job remains a disclosed way to stall
-  a teardown there.
+  end it holds: a reader blocked on a descriptor no containment can close
+  wedges permanently. The POSIX pipe binding therefore interrupts its own
+  blocked reads and writes through a self-pipe instead of relying on
+  containment to reach the holder, so the abort deadline still produces a
+  structured failure and the teardown still returns.
+
+**Not** guaranteed on Windows, and disclosed as such: `select`/`poll` do not
+work on anonymous pipe handles, so the job object is the only interruption
+available there. A holder outside the job — a process from the assignment
+window, or a descendant of a child that exited before assignment — can still
+stall a teardown, and a stalled teardown produces no result at all rather than
+a wrong one. Tracked as issue #213's Windows leg.
 
 The invariant behind both, stated because it has been violated twice: **release
 every mechanism that can unblock an operation before performing an operation

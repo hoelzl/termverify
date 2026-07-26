@@ -215,18 +215,26 @@ class JsonlBinding:
     pipe-only generalization of the ConPTY binding's containment patterns:
     a kill-on-close job object on Windows, a process group on POSIX.
 
-    Every platform produces the **same failure classification**: a run
-    ends in a structured result carrying a real exit record or a real
-    forced-termination record, never a fabricated one and never a hang.
+    Every platform produces the **same failure classification**: when a
+    run produces a result, that result is structured and carries a real
+    exit record or a real forced-termination record, never a fabricated
+    one.
+
     Containment *strength* is not identical, and the difference is
     disclosed rather than averaged away. A process can leave the
     containment on either platform — a ``setsid()`` descendant on POSIX,
     a process started inside the disclosed assignment window on Windows —
     and such a survivor is not reaped; no portable mechanism to reap it
-    is in scope. What does hold everywhere is that a survivor can no
-    longer hold the verifier hostage: the POSIX binding interrupts its
-    own blocked reads and writes through a self-pipe, so a descendant
-    holding a pipe end outlives the run without stalling its teardown.
+    is in scope.
+
+    What such a survivor can still do differs by platform, and this is
+    the part the earlier wording got wrong. On POSIX it can no longer
+    hold the verifier hostage: the binding interrupts its own blocked
+    reads and writes through a self-pipe, so a descendant holding a pipe
+    end outlives the run without stalling its teardown. On Windows there
+    is no equivalent — ``select``/``poll`` do not work on anonymous pipe
+    handles — so a holder outside the job can still stall a teardown, and
+    that is a disclosed boundary, not a solved problem (issue #213).
     Recorded in ``docs/knowledge/architecture.md``; the earlier claim of
     "identical observable outcomes on every platform (no survivors)" was
     an overstatement on both halves.

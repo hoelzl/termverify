@@ -20,7 +20,9 @@
   without flushing; it flushes, so the teardown stall they existed to prevent
   was not prevented — bounded only by the tree already being dead. Detaching
   now happens once at construction, where both buffers are provably empty, and
-  teardown closes raw descriptors. (Resolves #217.)
+  teardown closes raw descriptors. (Resolves #217 on POSIX; the Windows
+  teardown still releases a buffered writer, and that flush is still bounded
+  only by the tree already being dead.)
 - **The teardown deadlock behind a descendant-held pipe is closed on POSIX.**
   Same shape as the above and the general form of the ordering invariant the
   Windows handle release already followed: release every mechanism that can

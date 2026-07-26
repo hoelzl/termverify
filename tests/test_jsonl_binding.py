@@ -767,13 +767,18 @@ def test_a_forced_close_wakes_a_read_blocked_on_an_escaped_descendants_pipe() ->
     contained tree: the reader blocked on stdout never observes
     end-of-stream, and no containment this binding owns can make it.
 
-    Before the self-pipe reader this wedged permanently — and worse than
-    permanently. `close(force=True)` saw an already-exited child, skipped
-    termination, timed out waiting for a delivery that never came, and
-    then blocked *inside a `finally`* on the buffered reader's lock, held
-    by the read it could not unblock. The abort deadline produced no
-    structured failure, `close` never returned, and the run had no honest
-    outcome at all.
+    Measured before the fix, on all three Ubuntu legs (run 30183983506):
+    `close(force=True)` **returned cleanly** and the reader stayed blocked
+    for the life of the process — "the blocked read was never woken". So
+    the observed defect is not a stuck teardown but a worse-behaved one:
+    close reported success, closed the stdout descriptor, and left a
+    thread blocked on that descriptor's number, free for the next `open`
+    in the process to reuse.
+
+    The `_close_pipes`-blocks-inside-a-`finally` shape that #213 and #217
+    describe was *not* reached here, because the immediate child had
+    already exited. It is not asserted by this test, and this docstring
+    does not claim it.
 
     The remedy is not containment — the orphan is disclosed as unreapable —
     but interruption the binding owns outright: the reader waits on the
@@ -821,5 +826,67 @@ def test_a_forced_close_wakes_a_read_blocked_on_an_escaped_descendants_pipe() ->
     finally:
         # Cleanup, not evidence: the escaped grandchild is exactly the
         # survivor this slice discloses as unreapable, so the test reaps it.
+        if grandchild_pid:
+            _kill_pid(grandchild_pid)
+
+
+def test_write_line_delivers_a_maximal_line_byte_exact() -> None:
+    """A line far past the pipe buffer must arrive whole, and unreordered.
+
+    On POSIX this is the only test that exercises `_write_all`'s
+    partial-write loop: a pipe buffer is 64 KiB or less, so a line this
+    size cannot be written in one `os.write` and the loop must advance the
+    memoryview correctly. A loop that dropped or repeated a slice would
+    corrupt the wire silently — the failure mode a hang at least announces
+    (adversarial review, finding M4).
+    """
+    payload = bytes(_MAX_LINE_BYTES - 32)
+    body = payload.translate(bytes.maketrans(b"\x00", b"z"))
+    child = _spawn(_ECHO_CHILD)
+    with _reaped(child):
+        for _ in range(3):
+            child.read_line()
+        child.write_line(body + b"\n")
+        echoed = child.read_line()
+    assert echoed == b"TV_ECHO:" + body + b"\n"
+
+
+@_posix_only
+def test_a_forced_close_wakes_a_write_blocked_on_a_child_that_never_reads() -> None:
+    """The wake-up covers both directions, not only the read.
+
+    A subject that stops draining its stdin fills the pipe buffer, and a
+    write with nowhere to go blocks. Containment can end that too — by
+    killing the child — but only when the write end's fate is the child's;
+    the binding's own interruption does not depend on that, and it is what
+    lets the adapter's abort deadline classify a stuck write.
+    """
+    child = _spawn(_ECHO_CHILD)
+    grandchild_pid = 0
+    try:
+        for _ in range(3):
+            child.read_line()
+        # Stop the child from reading, then write far more than any pipe
+        # buffer can hold: the write cannot complete until it is woken.
+        child.write_line(b"hang\n")
+        write_error: list[BaseException | None] = []
+        flood = bytes(_MAX_LINE_BYTES) + b"\n"
+        writer = threading.Thread(
+            target=lambda: write_error.append(
+                _call_capturing(lambda: child.write_line(flood))
+            ),
+            daemon=True,
+        )
+        writer.start()
+        time.sleep(_READ_ARRIVAL_S)
+
+        child.close(force=True)
+
+        writer.join(timeout=_OS_WAIT_TIMEOUT_S)
+        assert not writer.is_alive(), "the blocked write was never woken"
+        assert write_error[0] is not None, (
+            "a write interrupted by a close must not report success"
+        )
+    finally:
         if grandchild_pid:
             _kill_pid(grandchild_pid)
