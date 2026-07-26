@@ -591,11 +591,13 @@ console-detached grandchild — which the pseudoconsole cannot reach — is
 killed only by the job sweep (exit code 0), isolating the sweep as its own
 evidenced mechanism. A fault-injected containment failure at spawn is also
 proven fail-closed: the spawn raises and the already-created child is
-OS-observed terminated. Disclosed boundary:
-job assignment happens immediately after `CreateProcess` returns, so a
-process the child starts within that microseconds-wide window would fall
-outside the job; the binding documents this rather than claiming pre-start
-assignment. Cancellation/recovery taxonomy, dimensions receipts,
+OS-observed terminated. The job-assignment
+window this slice disclosed — a descendant started between `CreateProcess`
+and the assignment — is closed as of 2026-07-26 (issue #235): the child is
+created `CREATE_SUSPENDED` and assigned before its main thread resumes, so
+no descendant can predate the membership, and every failure path between
+creation and resume terminates the suspended child rather than leaking it.
+Cancellation/recovery taxonomy, dimensions receipts,
 enforcement receipts, and evidence normalization remain unproven and
 fail-closed.
 
