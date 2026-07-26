@@ -44,7 +44,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 import pytest
 
@@ -675,7 +675,13 @@ def test_spawn_assigns_the_containment_job_before_the_child_may_run(
     flags_seen: list[int] = []
     real_assign = conpty_module._assign_to_job
     real_resume = conpty_module._resume_main_thread
-    real_create_process = conpty_module._kernel32.CreateProcessW
+    # The kernel handle, the creation flag, and the process structure exist
+    # only in the nt branch, so off-Windows mypy cannot resolve them on the
+    # module; these tests are Windows-only at runtime (skipif above).
+    native: Any = conpty_module
+    kernel32 = native._kernel32
+    create_suspended: int = native._CREATE_SUSPENDED
+    real_create_process = kernel32.CreateProcessW
 
     def recording_assign(job: int, process_handle: int) -> None:
         events.append("assign")
@@ -691,15 +697,13 @@ def test_spawn_assigns_the_containment_job_before_the_child_may_run(
 
     monkeypatch.setattr(conpty_module, "_assign_to_job", recording_assign)
     monkeypatch.setattr(conpty_module, "_resume_main_thread", recording_resume)
-    monkeypatch.setattr(
-        conpty_module._kernel32, "CreateProcessW", recording_create_process
-    )
+    monkeypatch.setattr(kernel32, "CreateProcessW", recording_create_process)
 
     child = _spawn(_BLOCKING_CHILD)
     try:
         assert events == ["assign", "resume"]
         assert flags_seen, "CreateProcessW was never observed"
-        assert all(flags & conpty_module._CREATE_SUSPENDED for flags in flags_seen), (
+        assert all(flags & create_suspended for flags in flags_seen), (
             "the child was not created suspended"
         )
     finally:
@@ -721,21 +725,23 @@ def test_a_spawn_failure_after_creation_leaves_no_suspended_orphan(
     import termverify._conpty as conpty_module
 
     created_pid: list[int] = []
-    real_create_process = conpty_module._kernel32.CreateProcessW
+    # See the ordering test above: these exist only in the nt branch, and
+    # this test is Windows-only at runtime (skipif above).
+    native: Any = conpty_module
+    kernel32 = native._kernel32
+    real_create_process = kernel32.CreateProcessW
 
     def recording_create_process(*args):  # type: ignore[no-untyped-def]
         result = real_create_process(*args)
         if result:
             information = ctypes.cast(
-                args[9], ctypes.POINTER(conpty_module._ProcessInformation)
+                args[9], ctypes.POINTER(native._ProcessInformation)
             ).contents
             created_pid.append(int(information.dwProcessId))
         return result
 
-    monkeypatch.setattr(
-        conpty_module._kernel32, "CreateProcessW", recording_create_process
-    )
-    monkeypatch.setattr(conpty_module._kernel32, "CreateEventW", lambda *args: 0)
+    monkeypatch.setattr(kernel32, "CreateProcessW", recording_create_process)
+    monkeypatch.setattr(kernel32, "CreateEventW", lambda *args: 0)
 
     with pytest.raises(OSError):
         _spawn(_BLOCKING_CHILD)

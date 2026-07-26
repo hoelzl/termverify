@@ -1112,6 +1112,9 @@ else:
     def _assign_to_job(job: int, process_handle: int) -> None:
         raise _unsupported()
 
+    def _resume_main_thread(thread_handle: int) -> None:
+        raise _unsupported()
+
     def _terminate_job(job: int, exit_code: int) -> None:
         raise _unsupported()
 
