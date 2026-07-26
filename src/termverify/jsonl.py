@@ -460,11 +460,17 @@ class JsonlAdapter:
         pipe buffer filled and no deadline could end it — an unbounded wait
         producing no evidence (adversarial review 2026-07-24, finding C2).
 
-        The mechanism is the read path's, named rather than assumed: the
-        timer force-closes the binding, terminating the child; the child's
-        death closes its end of the stdin pipe; the blocked write then
-        fails instead of waiting. ``expired`` tells the caller the failure
-        belongs to the deadline rather than to the peer.
+        The mechanism is the read path's, named rather than assumed — and
+        it is now two mechanisms, because the binding's platforms differ.
+        On POSIX the timer's forced close signals the binding's self-pipe
+        *before* terminating anything, and the blocked write ends on that
+        signal alone; it does not depend on the child dying, which is what
+        makes it hold against a subject whose stdin read end is held by a
+        descendant the containment cannot reach. On Windows there is no
+        such signal: the close terminates the child, the child's death
+        closes its end of the stdin pipe, and the blocked write fails
+        instead of waiting. ``expired`` tells the caller the failure
+        belongs to the deadline rather than to the peer on both.
         """
         message: dict[str, JsonValue] = {
             "protocol": CONTROL_PROTOCOL_V1,

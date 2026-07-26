@@ -8,9 +8,15 @@ honest exit records. It implements the ``JsonlChildPort`` shape from
 ``_conpty.py`` architecture: all adapter logic above the binding is
 fake-driven and ratcheted, while this native boundary is proven by
 real-subprocess integration tests. Unlike ``_conpty.py`` this module is
-**not** omitted from coverage measurement — only its platform-specific
-legs carry ``# pragma: no cover``, which means each leg is invisible on
-the platform that cannot run it and measured on the one that can.
+not listed in coverage's ``omit``, but that buys less than it sounds:
+``# pragma: no cover`` is a static source exclusion, not a conditional
+one, so a pragma on a ``def`` line removes that whole function from
+measurement on **every** platform, Linux included. The POSIX I/O legs
+here are therefore unratcheted everywhere, and their evidence is the
+integration tests alone — deleting a body would not move the coverage
+number. Stated because the previous wording claimed the opposite, and
+because it is the reason those legs need explicit test evidence in
+review rather than a green ratchet (issue #230).
 
 Pipes are portable, so process ownership and framing are identical on
 Windows and POSIX. Interrupting blocked I/O is not, and that difference
@@ -447,15 +453,25 @@ class PipeJsonlChild:
         # Popen(stdin=PIPE, stdout=PIPE) wires both; the single
         # construction path guarantees it.
         assert stdin is not None and stdout is not None
-        self._raw_stdin = stdin.detach()
-        self._raw_stdout = stdout.detach()
-        os.set_blocking(self._raw_stdin.fileno(), False)
-        os.set_blocking(self._raw_stdout.fileno(), False)
+        # The wake pipe comes FIRST, because it is the only step here that
+        # can fail (`os.pipe` raises on EMFILE/ENFILE). Detaching is the
+        # point of no return: once the wrappers are detached, `spawn`'s
+        # fail-closed path cannot release the child's descriptors through
+        # them — every call raises `ValueError: raw stream has been
+        # detached`, which `_suppress_os_errors` swallows, so the release
+        # closes nothing and two descriptors survive on a path whose
+        # trigger is descriptor exhaustion. Ordering the fallible step
+        # before the irreversible one makes the failure leave the object
+        # exactly as `spawn` found it (adversarial review round 2, J2).
         self._wake_read, self._wake_write = os.pipe()
         # The writer must never block: a close signaling a full wake pipe
         # would be a teardown blocking on its own interruption mechanism.
         os.set_blocking(self._wake_write, False)
         os.set_blocking(self._wake_read, False)
+        self._raw_stdin = stdin.detach()
+        self._raw_stdout = stdout.detach()
+        os.set_blocking(self._raw_stdin.fileno(), False)
+        os.set_blocking(self._raw_stdout.fileno(), False)
 
     def _signal_wake(self) -> None:  # pragma: no cover - POSIX-only leg
         """Wake any blocked read or write. Idempotent and never blocking."""
@@ -481,6 +497,18 @@ class PipeJsonlChild:
             with self._lock:
                 if self._closed or self._raw_stdin is None:
                     raise JsonlChildClosedError("the JSONL pipe binding is closed")
+                if self._write_in_flight:
+                    # Single-flight is a port contract the adapter honors,
+                    # so this is defense in depth — but the asymmetry it
+                    # removes ran the wrong way: an unenforced overlapping
+                    # read fails as a hang, an unenforced overlapping write
+                    # fails as silent corruption, because the second
+                    # writer's `finally` would clear the in-flight flag
+                    # while the first is still inside `os.write` and a
+                    # close would then free the descriptor under it.
+                    raise JsonlChildClosedError(
+                        "the JSONL pipe binding allows one in-flight write"
+                    )
                 fd = self._raw_stdin.fileno()
                 wake = self._wake_read
                 # Tracked exactly like a read, and for the same reason: a
@@ -555,7 +583,14 @@ class PipeJsonlChild:
         the binding tracks it so a forced close can interrupt the blocked
         syscall and then wait — bounded, without holding the lock — for
         the interrupted read to deliver its error, handing ownership back
-        only once no read is still unwinding.
+        once no read is still unwinding.
+
+        Disclosed residual: that wait is bounded, and on expiry the close
+        proceeds anyway. It is a very strong probability reduction rather
+        than a proof — after the wake-up, ``poll`` returns at once and
+        neither ``os.read`` nor ``os.write`` can block on a non-blocking
+        descriptor, so only scheduler starvation reaches the timeout — but
+        it is not the guarantee an unqualified "only once" would claim.
         """
         with self._lock:
             if self._closed:

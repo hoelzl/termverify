@@ -768,8 +768,10 @@ def test_a_forced_close_wakes_a_read_blocked_on_an_escaped_descendants_pipe() ->
     end-of-stream, and no containment this binding owns can make it.
 
     Measured before the fix, on all three Ubuntu legs (run 30183983506):
-    `close(force=True)` **returned cleanly** and the reader stayed blocked
-    for the life of the process — "the blocked read was never woken". So
+    `close(force=True)` **returned cleanly** and the reader was still
+    blocked 30 seconds later, when the join gave up — "the blocked read
+    was never woken". (Still blocked at the join is what the log supports;
+    the thread is a daemon the run then abandoned.) So
     the observed defect is not a stuck teardown but a worse-behaved one:
     close reported success, closed the stdout descriptor, and left a
     thread blocked on that descriptor's number, free for the next `open`
@@ -862,7 +864,6 @@ def test_a_forced_close_wakes_a_write_blocked_on_a_child_that_never_reads() -> N
     lets the adapter's abort deadline classify a stuck write.
     """
     child = _spawn(_ECHO_CHILD)
-    grandchild_pid = 0
     try:
         for _ in range(3):
             child.read_line()
@@ -880,13 +881,31 @@ def test_a_forced_close_wakes_a_write_blocked_on_a_child_that_never_reads() -> N
         writer.start()
         time.sleep(_READ_ARRIVAL_S)
 
-        child.close(force=True)
+        # On its own thread with a joined timeout, like the read test: a
+        # regression that re-wedges the teardown must fail this test, not
+        # hang the CI job (no `pytest-timeout` is installed).
+        closing: list[BaseException | None] = []
+        closer = threading.Thread(
+            target=lambda: closing.append(
+                _call_capturing(lambda: child.close(force=True))
+            ),
+            daemon=True,
+        )
+        closer.start()
+        closer.join(timeout=_OS_WAIT_TIMEOUT_S)
+        assert not closer.is_alive(), "close never returned with a write in flight"
+        assert closing == [None], f"close failed: {closing!r}"
 
         writer.join(timeout=_OS_WAIT_TIMEOUT_S)
         assert not writer.is_alive(), "the blocked write was never woken"
-        assert write_error[0] is not None, (
-            "a write interrupted by a close must not report success"
+        # The *type* is the assertion, not merely that something raised.
+        # "Some exception" would also accept the `OSError(EBADF)` a write
+        # gets when the teardown frees the descriptor underneath it —
+        # which is exactly the untracked-write defect this arrangement
+        # exists to catch, so accepting it would pin nothing (round 2, J3).
+        assert isinstance(write_error[0], JsonlChildClosedError), (
+            "an interrupted write must surface as a closed binding, not as"
+            f" a descriptor error: {write_error!r}"
         )
     finally:
-        if grandchild_pid:
-            _kill_pid(grandchild_pid)
+        child.close(force=True)
