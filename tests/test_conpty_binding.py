@@ -708,8 +708,10 @@ def _handle_is_open(handle: int) -> bool:
 
     # The kernel handle exists only in the nt branch, so off-Windows mypy
     # cannot resolve it on the module; callers are Windows-only (skipif).
+    # DWORD is spelled c_uint32 here: ctypes.wintypes does not exist off
+    # Windows, and the Linux mypy leg checks this file too.
     native: Any = conpty_module
-    flags = ctypes.wintypes.DWORD()
+    flags = ctypes.c_uint32()
     return bool(native._kernel32.GetHandleInformation(handle, ctypes.byref(flags)))
 
 
