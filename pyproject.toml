@@ -1,6 +1,6 @@
 [project]
 name = "termverify"
-version = "0.1.0"
+version = "0.1.1"
 description = "Protocol-driven verification for autonomous terminal applications."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -112,7 +112,7 @@ module = "termverify._jsonl_pipe"
 warn_unreachable = false
 
 [tool.bumpversion]
-current_version = "0.1.0"
+current_version = "0.1.1"
 commit = true
 # No local tag: the Release workflow (.github/workflows/release.yml) creates the
 # authoritative vX.Y.Z tag on the server *after* the CI-green gate, so a red
