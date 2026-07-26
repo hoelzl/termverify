@@ -715,6 +715,33 @@ def _handle_is_open(handle: int) -> bool:
     return bool(native._kernel32.GetHandleInformation(handle, ctypes.byref(flags)))
 
 
+def _spy_verified_closes(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Record handles OS-verified closed at the moment of their CloseHandle.
+
+    The validity check runs inside the spy, immediately after the real
+    ``CloseHandle`` returns in the same call stack: a later check cannot
+    distinguish a recycled handle value (the CI failure this replaces —
+    the constructor's own allocations reused the freed value before the
+    test could ask the OS).
+    """
+    import termverify._conpty as conpty_module
+
+    native: Any = conpty_module
+    kernel32 = native._kernel32
+    real_close_handle = kernel32.CloseHandle
+    verified: list[int] = []
+
+    def recording_close_handle(handle):  # type: ignore[no-untyped-def]
+        result = real_close_handle(handle)
+        value = int(handle.value if hasattr(handle, "value") else handle)
+        if result and not _handle_is_open(value):
+            verified.append(value)
+        return result
+
+    monkeypatch.setattr(kernel32, "CloseHandle", recording_close_handle)
+    return verified
+
+
 def _assert_os_terminated(pid: int) -> None:
     """Prove by an OS handle wait that the pid is dead with the forced code."""
     handle = _open_process_handle(pid)
@@ -750,6 +777,7 @@ def test_spawn_assigns_the_containment_job_before_the_child_may_run(
     native: Any = conpty_module
     create_suspended: int = native._CREATE_SUSPENDED
     spawned = _spy_spawned(monkeypatch)
+    verified_closed = _spy_verified_closes(monkeypatch)
 
     def recording_assign(job: int, process_handle: int) -> None:
         events.append("assign")
@@ -770,7 +798,7 @@ def test_spawn_assigns_the_containment_job_before_the_child_may_run(
             "the child was not created suspended"
         )
         _, thread_handle, _ = spawned[0]
-        assert not _handle_is_open(thread_handle), (
+        assert thread_handle in verified_closed, (
             "the thread handle leaked after the successful resume"
         )
     finally:
@@ -818,6 +846,7 @@ def test_a_resume_failure_terminates_the_child_and_closes_the_thread_handle(
     import termverify._conpty as conpty_module
 
     spawned = _spy_spawned(monkeypatch)
+    verified_closed = _spy_verified_closes(monkeypatch)
 
     def failing_resume(thread_handle: int) -> None:
         raise OSError("injected resume failure")
@@ -828,9 +857,7 @@ def test_a_resume_failure_terminates_the_child_and_closes_the_thread_handle(
         _spawn(_BLOCKING_CHILD)
     assert spawned, "the injected failure fired before the child existed"
     pid, thread_handle, _ = spawned[0]
-    assert not _handle_is_open(thread_handle), (
-        "the thread handle leaked on the teardown"
-    )
+    assert thread_handle in verified_closed, "the thread handle leaked on the teardown"
     _assert_os_terminated(pid)
 
 
