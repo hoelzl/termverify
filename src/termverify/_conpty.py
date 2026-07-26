@@ -1054,6 +1054,18 @@ else:
     ) -> Any:
         raise _unsupported()
 
+    class _PseudoConsoleSession:
+        """Placeholder so the name resolves off Windows; never instantiated.
+
+        The Windows evidence tests assert against this class rather than
+        against a class *name*, which is what keeps that assertion able to
+        fail when the native session is renamed. Type checking runs on both
+        platforms, so the name has to exist on both.
+        """
+
+        def __init__(self) -> None:
+            raise _unsupported()
+
     _HAS_PSEUDOCONSOLE = False
 
 
