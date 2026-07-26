@@ -607,6 +607,19 @@ if sys.platform == "win32":
             self._thread_handle = None
             _kernel32.CloseHandle(handle)
 
+        def terminate_child(self, exit_code: int) -> None:
+            """Terminate the child through the handle this session owns.
+
+            The spawn's containment-setup failure paths call this before
+            releasing anything: a suspended child cannot die of handle or
+            pseudoconsole closes, and it is not in a job yet, so an
+            unconditional terminate is the only path that cannot leak a
+            frozen orphan (issue #235 review).
+            """
+            handle = self._process_handle
+            if handle is not None:
+                _kernel32.TerminateProcess(handle, exit_code)
+
         def isalive(self) -> bool:
             handle = self._process_handle
             if handle is None:
@@ -1213,8 +1226,13 @@ class ConptyChild:
             _assign_to_job(job, process_handle)
             pty.resume_main_thread()
         except OSError as error:
+            # Terminate unconditionally, through the handle the session
+            # owns: the child is suspended, so it cannot die of the handle
+            # and pseudoconsole closes below, and on the paths where the
+            # job or the containment handle could not be established it is
+            # in no job — anything less leaks a frozen orphan (#235 review).
+            pty.terminate_child(FORCED_TERMINATION_EXIT_CODE)
             if process_handle is not None:
-                _terminate_process(process_handle, FORCED_TERMINATION_EXIT_CODE)
                 _close_handle(process_handle)
             if job is not None:
                 _close_handle(job)

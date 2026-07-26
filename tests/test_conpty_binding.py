@@ -656,6 +656,42 @@ def test_spawn_containment_failure_terminates_child_and_fails_closed(
     assert exit_code == FORCED_TERMINATION_EXIT_CODE
 
 
+def _spy_spawned_pids(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Record the pid of every child the binding creates (issue #235)."""
+    import termverify._conpty as conpty_module
+
+    # The kernel handle and the process structure exist only in the nt
+    # branch, so off-Windows mypy cannot resolve them on the module; the
+    # callers are Windows-only at runtime (skipif on each test).
+    native: Any = conpty_module
+    kernel32 = native._kernel32
+    real_create_process = kernel32.CreateProcessW
+    created: list[int] = []
+
+    def recording_create_process(*args):  # type: ignore[no-untyped-def]
+        result = real_create_process(*args)
+        if result:
+            information = ctypes.cast(
+                args[9], ctypes.POINTER(native._ProcessInformation)
+            ).contents
+            created.append(int(information.dwProcessId))
+        return result
+
+    monkeypatch.setattr(kernel32, "CreateProcessW", recording_create_process)
+    return created
+
+
+def _assert_os_terminated(pid: int) -> None:
+    """Prove by an OS handle wait that the pid is dead with the forced code."""
+    handle = _open_process_handle(pid)
+    try:
+        exit_code = _wait_for_os_exit_code(handle, _OS_WAIT_TIMEOUT_MS)
+    finally:
+        _terminate_process(handle)
+        _close_process_handle(handle)
+    assert exit_code == FORCED_TERMINATION_EXIT_CODE
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
 def test_spawn_assigns_the_containment_job_before_the_child_may_run(
     monkeypatch: pytest.MonkeyPatch,
@@ -724,35 +760,50 @@ def test_a_spawn_failure_after_creation_leaves_no_suspended_orphan(
     """
     import termverify._conpty as conpty_module
 
-    created_pid: list[int] = []
-    # See the ordering test above: these exist only in the nt branch, and
-    # this test is Windows-only at runtime (skipif above).
+    created_pid = _spy_spawned_pids(monkeypatch)
     native: Any = conpty_module
-    kernel32 = native._kernel32
-    real_create_process = kernel32.CreateProcessW
-
-    def recording_create_process(*args):  # type: ignore[no-untyped-def]
-        result = real_create_process(*args)
-        if result:
-            information = ctypes.cast(
-                args[9], ctypes.POINTER(native._ProcessInformation)
-            ).contents
-            created_pid.append(int(information.dwProcessId))
-        return result
-
-    monkeypatch.setattr(kernel32, "CreateProcessW", recording_create_process)
-    monkeypatch.setattr(kernel32, "CreateEventW", lambda *args: 0)
+    monkeypatch.setattr(native._kernel32, "CreateEventW", lambda *args: 0)
 
     with pytest.raises(OSError):
         _spawn(_BLOCKING_CHILD)
     assert created_pid, "the injected failure fired before the child existed"
-    handle = _open_process_handle(created_pid[0])
-    try:
-        exit_code = _wait_for_os_exit_code(handle, _OS_WAIT_TIMEOUT_MS)
-    finally:
-        _terminate_process(handle)
-        _close_process_handle(handle)
-    assert exit_code == FORCED_TERMINATION_EXIT_CODE
+    _assert_os_terminated(created_pid[0])
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+@pytest.mark.parametrize("failure_point", ["job-creation", "handle-open"])
+def test_a_containment_setup_failure_leaves_no_suspended_orphan(
+    monkeypatch: pytest.MonkeyPatch, failure_point: str
+) -> None:
+    """Issue #235 review: pre-assignment failures must terminate the child.
+
+    Job creation and the containment-handle open run before the assignment;
+    a failure there must still terminate the suspended child — it is not in
+    a job yet, and a suspended process cannot die of handle closes, so a
+    failure path that skips the termination leaks a frozen orphan.
+    """
+    import termverify._conpty as conpty_module
+
+    created_pid = _spy_spawned_pids(monkeypatch)
+    if failure_point == "job-creation":
+
+        def failing_create_job() -> int:
+            raise OSError("injected job creation failure")
+
+        monkeypatch.setattr(
+            conpty_module, "_create_containment_job", failing_create_job
+        )
+    else:
+
+        def failing_open(pid: int) -> int:
+            raise OSError("injected handle open failure")
+
+        monkeypatch.setattr(conpty_module, "_open_containment_handle", failing_open)
+
+    with pytest.raises(OSError, match="failed to contain ConPTY child"):
+        _spawn(_BLOCKING_CHILD)
+    assert created_pid, "the injected failure fired before the child existed"
+    _assert_os_terminated(created_pid[0])
 
 
 class _ForcedCloseWatchdog:
