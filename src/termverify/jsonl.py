@@ -213,9 +213,31 @@ class JsonlBinding:
 
     A thin delegate to ``termverify._jsonl_pipe.PipeJsonlChild`` — the
     pipe-only generalization of the ConPTY binding's containment patterns:
-    a kill-on-close job object on Windows, a process group on POSIX, with
-    identical observable outcomes on every platform (real exit record,
-    forced-termination record, no survivors).
+    a kill-on-close job object on Windows, a process group on POSIX.
+
+    Every platform produces the **same failure classification**: when a
+    run produces a result, that result is structured and carries a real
+    exit record or a real forced-termination record, never a fabricated
+    one.
+
+    Containment *strength* is not identical, and the difference is
+    disclosed rather than averaged away. A process can leave the
+    containment on either platform — a ``setsid()`` descendant on POSIX,
+    a process started inside the disclosed assignment window on Windows —
+    and such a survivor is not reaped; no portable mechanism to reap it
+    is in scope.
+
+    What such a survivor can still do differs by platform, and this is
+    the part the earlier wording got wrong. On POSIX it can no longer
+    hold the verifier hostage: the binding interrupts its own blocked
+    reads and writes through a self-pipe, so a descendant holding a pipe
+    end outlives the run without stalling its teardown. On Windows there
+    is no equivalent — ``select``/``poll`` do not work on anonymous pipe
+    handles — so a holder outside the job can still stall a teardown, and
+    that is a disclosed boundary, not a solved problem (issue #213).
+    Recorded in ``docs/knowledge/architecture.md``; the earlier claim of
+    "identical observable outcomes on every platform (no survivors)" was
+    an overstatement on both halves.
     """
 
     def spawn(
@@ -438,11 +460,17 @@ class JsonlAdapter:
         pipe buffer filled and no deadline could end it — an unbounded wait
         producing no evidence (adversarial review 2026-07-24, finding C2).
 
-        The mechanism is the read path's, named rather than assumed: the
-        timer force-closes the binding, terminating the child; the child's
-        death closes its end of the stdin pipe; the blocked write then
-        fails instead of waiting. ``expired`` tells the caller the failure
-        belongs to the deadline rather than to the peer.
+        The mechanism is the read path's, named rather than assumed — and
+        it is now two mechanisms, because the binding's platforms differ.
+        On POSIX the timer's forced close signals the binding's self-pipe
+        *before* terminating anything, and the blocked write ends on that
+        signal alone; it does not depend on the child dying, which is what
+        makes it hold against a subject whose stdin read end is held by a
+        descendant the containment cannot reach. On Windows there is no
+        such signal: the close terminates the child, the child's death
+        closes its end of the stdin pipe, and the blocked write fails
+        instead of waiting. ``expired`` tells the caller the failure
+        belongs to the deadline rather than to the peer on both.
         """
         message: dict[str, JsonValue] = {
             "protocol": CONTROL_PROTOCOL_V1,

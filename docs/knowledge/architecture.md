@@ -75,6 +75,55 @@ than subject compliance. Non-empty terminal capabilities remain unsupported.
 There is no POSIX PTY adapter yet. Browser bridging remains deferred until the
 direct and terminal vertical slices prove that a shared abstraction is needed.
 
+## Process containment is bounded, and the boundary is disclosed
+
+A subject's process tree is contained by a kill-on-close job object on Windows
+and by a process group on POSIX. **Neither is escape-proof, and TermVerify does
+not claim otherwise.** A process can leave the containment in a known way on
+each platform: on POSIX by starting a new session (`setsid`), which no
+process-group signal reaches; on Windows by being started inside the disclosed
+microseconds-wide window between `CreateProcess` and job assignment, or by
+descending from a child that exited before it could be assigned at all.
+
+Such a survivor is **not reaped**. Reaping it portably would require cgroups or
+a subreaper — horizontal platform machinery, rejected as out of scope by
+recorded owner decision — so the honest position is disclosure, not a
+guarantee. A verified run must not be read as asserting that no process
+outlived it.
+
+What replaces the containment claim is narrower, and splits into what every
+platform owes and what only POSIX currently delivers. Keeping the two apart is
+the point: the previous claim failed precisely by averaging them.
+
+Guaranteed on **every** platform:
+
+- **Failure classification is identical.** When a run produces a result, that
+  result is structured and carries a real exit record or a real
+  forced-termination record. No record is ever fabricated, and no run reports
+  anything it did not observe.
+
+Guaranteed on **POSIX** only:
+
+- **A survivor cannot hold the verifier hostage.** This is the substantive
+  guarantee, because the damaging case is not the orphan itself but the pipe
+  end it holds: a reader blocked on a descriptor no containment can close
+  wedges permanently. The POSIX pipe binding therefore interrupts its own
+  blocked reads and writes through a self-pipe instead of relying on
+  containment to reach the holder, so the abort deadline still produces a
+  structured failure and the teardown still returns.
+
+**Not** guaranteed on Windows, and disclosed as such: `select`/`poll` do not
+work on anonymous pipe handles, so the job object is the only interruption
+available there. A holder outside the job — a process from the assignment
+window, or a descendant of a child that exited before assignment — can still
+stall a teardown, and a stalled teardown produces no result at all rather than
+a wrong one. Tracked as issue #213's Windows leg.
+
+The invariant behind both, stated because it has been violated twice: **release
+every mechanism that can unblock an operation before performing an operation
+that can block on it.** A teardown that blocks inside a `finally` cannot report
+anything at all.
+
 # Design constraints
 
 - No required model provider, agent harness, web service, or GUI toolkit.
