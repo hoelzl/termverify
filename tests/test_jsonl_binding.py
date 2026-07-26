@@ -44,7 +44,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any
@@ -57,6 +57,24 @@ from termverify.jsonl import JsonlChildClosedError, JsonlEndOfStreamError
 
 _OS_WAIT_TIMEOUT_S = 30.0
 _POLL_INTERVAL_S = 0.02
+#: Arrangement, never evidence: let a helper thread's read reach the
+#: blocking syscall before the test closes underneath it. Over-waiting
+#: costs time; under-waiting only makes the test arrange a weaker case.
+_READ_ARRIVAL_S = 0.2
+
+
+def _call_capturing(call: Callable[[], object]) -> BaseException | None:
+    """Run `call` in a helper thread, returning the exception it raised.
+
+    Assertions belong on the test thread: an `assert` inside a thread body
+    would fail the thread and leave the test asserting on a timeout.
+    """
+    try:
+        call()
+    except BaseException as error:  # noqa: BLE001 - diagnostic capture
+        return error
+    return None
+
 
 #: Echo child: reports its pid and delivered environment, echoes each line
 #: back uppercased, exits 3 on the "exit" line, and hangs forever on "hang".
@@ -98,6 +116,29 @@ sys.stdout.write(f"TV_PID:{os.getpid()}\\n")
 sys.stdout.write(f"TV_GRANDCHILD:{grandchild.pid}\\n")
 sys.stdout.flush()
 time.sleep(600)
+"""
+
+
+#: Escaping child (POSIX): starts a grandchild in its OWN session, holding
+#: the inherited stdout write end, then exits itself. `killpg` on the
+#: child's group cannot reach a process in another session, so the write
+#: end outlives the whole contained tree and a reader blocked on stdout
+#: never observes end-of-stream. This is review finding R4's subject, and
+#: the same shape as #213's descendant-held pipe.
+_ESCAPING_CHILD = """\
+import os
+import subprocess
+import sys
+import time
+
+grandchild = subprocess.Popen(
+    [sys.executable, "-c", "import time; time.sleep(600)"],
+    stdout=sys.stdout,
+    start_new_session=True,
+)
+sys.stdout.write(f"TV_GRANDCHILD:{grandchild.pid}\\n")
+sys.stdout.flush()
+sys.exit(0)
 """
 
 
@@ -708,3 +749,77 @@ def test_forced_close_with_a_read_in_flight_sweeps_the_tree_and_returns(
         # Cleanup, not evidence: a regression must not leak the tree.
         _kill_pid(grandchild_pid)
         _kill_pid(pid)
+
+
+_posix_only = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="process-group containment and its escape are POSIX mechanisms",
+)
+
+
+@_posix_only
+def test_a_forced_close_wakes_a_read_blocked_on_an_escaped_descendants_pipe() -> None:
+    """A read no containment can unblock must still end (R4, #196, #213).
+
+    The subject starts a grandchild in its **own session**, holding the
+    inherited stdout write end, and then exits. `killpg` reaches a process
+    group, not another session, so the write end outlives the whole
+    contained tree: the reader blocked on stdout never observes
+    end-of-stream, and no containment this binding owns can make it.
+
+    Before the self-pipe reader this wedged permanently — and worse than
+    permanently. `close(force=True)` saw an already-exited child, skipped
+    termination, timed out waiting for a delivery that never came, and
+    then blocked *inside a `finally`* on the buffered reader's lock, held
+    by the read it could not unblock. The abort deadline produced no
+    structured failure, `close` never returned, and the run had no honest
+    outcome at all.
+
+    The remedy is not containment — the orphan is disclosed as unreapable —
+    but interruption the binding owns outright: the reader waits on the
+    child's stdout **and** a self-pipe, and any close writes that pipe.
+    """
+    child = _spawn(_ESCAPING_CHILD)
+    grandchild_pid = 0
+    try:
+        first = child.read_line()
+        grandchild_pid = int(first.decode().split(":", 1)[1])
+        assert _pid_alive(grandchild_pid)
+
+        # A read that can never complete: the immediate child is gone, so
+        # nothing will write again, and the grandchild holds the write end
+        # open so end-of-stream never arrives either.
+        read_error: list[BaseException | None] = []
+        reader = threading.Thread(
+            target=lambda: read_error.append(_call_capturing(child.read_line)),
+            daemon=True,
+        )
+        reader.start()
+        time.sleep(_READ_ARRIVAL_S)
+
+        closing: list[BaseException | None] = []
+        closer = threading.Thread(
+            target=lambda: closing.append(
+                _call_capturing(lambda: child.close(force=True))
+            ),
+            daemon=True,
+        )
+        closer.start()
+        closer.join(timeout=_OS_WAIT_TIMEOUT_S)
+        assert not closer.is_alive(), (
+            "close never returned: it is blocked behind a read that no"
+            " containment can unblock"
+        )
+        assert closing == [None], f"close failed: {closing!r}"
+
+        reader.join(timeout=_OS_WAIT_TIMEOUT_S)
+        assert not reader.is_alive(), "the blocked read was never woken"
+        assert isinstance(read_error[0], JsonlChildClosedError), (
+            "an interrupted read must surface as closed, never as"
+            f" end-of-stream: {read_error!r}"
+        )
+    finally:
+        # Cleanup, not evidence: the escaped grandchild is exactly the
+        # survivor this slice discloses as unreapable, so the test reaps it.
+        if grandchild_pid:
+            _kill_pid(grandchild_pid)
