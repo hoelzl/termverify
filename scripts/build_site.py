@@ -18,6 +18,7 @@ path, and nothing in the library depends on it.
 from __future__ import annotations
 
 import argparse
+import html
 import posixpath
 import re
 import shutil
@@ -74,7 +75,31 @@ def discover_schema_resources(schemas_root: Path) -> tuple[Path, ...]:
     return tuple(resources)
 
 
-def _landing_page(published: tuple[str, ...]) -> str:
+def _readme_tagline(repo_root: Path) -> str:
+    """Extract the project tagline from ``README.md``, its canonical home.
+
+    The minimal landing page never hard-codes project descriptions: the
+    tagline lives in exactly one place, and a missing or unparsable README
+    fails closed rather than silently publishing stale prose.
+    """
+    readme = repo_root / "README.md"
+    if not readme.is_file():
+        raise ValueError(f"missing tagline source {readme}")
+    lines = readme.read_text(encoding="utf-8").splitlines()
+    seen_title = False
+    for line in lines:
+        if line.startswith("# "):
+            seen_title = True
+            continue
+        if not seen_title or not line.strip():
+            continue
+        if line.startswith("#"):
+            break
+        return line.strip()
+    raise ValueError(f"no tagline paragraph found in {readme}")
+
+
+def _landing_page(published: tuple[str, ...], tagline: str) -> str:
     links = "\n".join(
         f'      <li><a href="/{path}">{CANONICAL_BASE_URL}/{path}</a></li>'
         for path in published
@@ -89,9 +114,7 @@ def _landing_page(published: tuple[str, ...]) -> str:
   <body>
     <h1>TermVerify</h1>
     <p>
-      A Python library and reference tooling for verifying autonomous
-      terminal applications: deterministic behavior, replayable evidence,
-      and human review as product features.
+      {html.escape(tagline)}
     </p>
     <p>
       Source, documentation, and issues:
@@ -262,7 +285,9 @@ def build_site(
         shutil.copyfile(schemas_root / resource, target)
     if not include_docs:
         (output_dir / "index.html").write_text(
-            _landing_page(published), encoding="utf-8", newline="\n"
+            _landing_page(published, _readme_tagline(repo_root)),
+            encoding="utf-8",
+            newline="\n",
         )
     return published
 

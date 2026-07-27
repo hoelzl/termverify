@@ -116,6 +116,22 @@ class TestBuildSite:
             in landing
         )
 
+    def test_landing_page_tagline_is_sourced_from_readme(self, tmp_path: Path) -> None:
+        output = tmp_path / "site"
+        build_site(COMMITTED_SCHEMAS_ROOT, output)
+        landing = (output / "index.html").read_text(encoding="utf-8")
+        readme_tagline = next(
+            line.strip()
+            for line in Path("README.md").read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.startswith("#")
+        )
+        assert readme_tagline in landing
+        assert "reference tooling for verifying autonomous" not in landing
+
+    def test_landing_page_fails_closed_without_readme(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="README"):
+            build_site(COMMITTED_SCHEMAS_ROOT, tmp_path / "site", repo_root=tmp_path)
+
     def test_no_content_outside_landing_page_and_schemas(self, tmp_path: Path) -> None:
         output = tmp_path / "site"
         build_site(COMMITTED_SCHEMAS_ROOT, output)
