@@ -15,7 +15,7 @@ from typing import cast
 import pytest
 
 from termverify import _conpty
-from termverify._conpty import ConptyChild
+from termverify._conpty import ConptyChild, ConptyGeometryMismatchError
 from termverify.adapter import (
     Adapter,
     AdapterFailure,
@@ -434,7 +434,10 @@ def test_complete_negotiation_proceeds_to_exactly_one_spawn() -> None:
     assert terminal.run_id == "run-conpty"
     assert terminal.effective == _configuration().terminal
     assert result.failure.code == "adapter-start-failed"
-    assert result.failure.details == {"during": "spawn"}
+    assert result.failure.details == {
+        "during": "spawn",
+        "reason": "this negotiation fake refuses to spawn a child",
+    }
     assert ports.calls == [
         "seed",
         "clock",
@@ -510,3 +513,91 @@ def test_epoch_operations_validate_input_types() -> None:
         adapter.advance_clock(cast("ClockAdvance", object()))
     with pytest.raises(TypeError):
         adapter.stop(cast("Stop", object()))
+
+
+def test_a_geometry_mismatch_yields_a_structured_start_failed() -> None:
+    """#228: a console that cannot adopt the request is a geometry failure.
+
+    The failure names what was requested and what the console adopted, not a
+    bare "could not be spawned" — the transcript's ``tier="os"`` receipt must
+    never stand for a geometry the subject did not run at.
+    """
+
+    class _GeometryRefusingBinding(_Binding):
+        def spawn(
+            self,
+            argv: Sequence[str],
+            *,
+            rows: int,
+            columns: int,
+            env_overlay: Mapping[str, str] | None = None,
+            cwd: str | None = None,
+        ) -> ConptyChildPort:
+            raise ConptyGeometryMismatchError(
+                "requested terminal geometry 100000x10 but the pseudoconsole"
+                " adopted 120x30",
+                requested=(10, 100_000),
+                adopted=(30, 120),
+            )
+
+    adapter, _ = _adapter(binding=_GeometryRefusingBinding(), ports=_EnforcingPorts())
+
+    result = adapter.start("run-conpty", _configuration())
+
+    assert type(result) is StartFailed
+    assert result.failure.code == "adapter-start-failed"
+    assert "geometry" in result.failure.message
+    assert result.failure.details == {
+        "during": "spawn",
+        "terminal-rows": 24,
+        "terminal-columns": 80,
+        "adopted-rows": 30,
+        "adopted-columns": 120,
+        "reason": "requested terminal geometry 100000x10 but the pseudoconsole"
+        " adopted 120x30",
+    }
+
+
+def test_a_predicted_geometry_refusal_yields_start_failed_without_adopted() -> None:
+    """Predictive refusals measured nothing, so the details name no adoption.
+
+    A refusal from the COORD-wrap model happens before any child exists; the
+    failure details carry the request and the reason but no adopted size.
+    """
+
+    class _PredictingRefusalBinding(_Binding):
+        def spawn(
+            self,
+            argv: Sequence[str],
+            *,
+            rows: int,
+            columns: int,
+            env_overlay: Mapping[str, str] | None = None,
+            cwd: str | None = None,
+        ) -> ConptyChildPort:
+            raise ConptyGeometryMismatchError(
+                "the requested terminal geometry 100000x10 cannot be adopted:"
+                " columns=100000 wraps to -31072 in the console's signed"
+                " 16-bit COORD member, and conhost kills the child at console"
+                " attach",
+                requested=(10, 100_000),
+                adopted=None,
+            )
+
+    adapter, _ = _adapter(binding=_PredictingRefusalBinding(), ports=_EnforcingPorts())
+
+    result = adapter.start("run-conpty", _configuration())
+
+    assert type(result) is StartFailed
+    assert result.failure.code == "adapter-start-failed"
+    # Whole-dict equality: the request and the reason are present, and the
+    # adopted keys are provably absent — nothing was measured.
+    assert result.failure.details == {
+        "during": "spawn",
+        "terminal-rows": 24,
+        "terminal-columns": 80,
+        "reason": "the requested terminal geometry 100000x10 cannot be adopted:"
+        " columns=100000 wraps to -31072 in the console's signed"
+        " 16-bit COORD member, and conhost kills the child at console"
+        " attach",
+    }

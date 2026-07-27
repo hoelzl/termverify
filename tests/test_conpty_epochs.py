@@ -24,6 +24,7 @@ from termverify._conpty import (
     ConptyClosedError,
     ConptyConcurrentIOError,
     ConptyEndOfStreamError,
+    ConptyGeometryMismatchError,
 )
 from termverify.adapter import (
     AdapterFailure,
@@ -744,7 +745,10 @@ def test_start_spawn_failure_is_start_failed() -> None:
 
     assert type(result) is StartFailed
     assert result.failure.code == "adapter-start-failed"
-    assert result.failure.details == {"during": "spawn"}
+    assert result.failure.details == {
+        "during": "spawn",
+        "reason": "no such command",
+    }
     assert len(result.enforced) == 7
 
 
@@ -1498,7 +1502,10 @@ def test_key_dispatch_write_failure_uses_the_structured_runtime_path() -> None:
 
     assert type(result) is TerminalResult
     assert type(result.outcome) is RunFailed
-    assert result.outcome.failure.details == {"during": "write"}
+    assert result.outcome.failure.details == {
+        "during": "write",
+        "reason": "write refused",
+    }
     assert binding.child.closes == [True]
 
 
@@ -1527,7 +1534,36 @@ def test_resize_failure_is_a_runtime_failure() -> None:
 
     assert type(result) is TerminalResult
     assert type(result.outcome) is RunFailed
-    assert result.outcome.failure.details == {"during": "resize"}
+    assert result.outcome.failure.details == {
+        "during": "resize",
+        "reason": "resize failed",
+    }
+    assert binding.child.closes == [True]
+
+
+def test_a_resize_read_back_mismatch_names_the_adopted_geometry() -> None:
+    """A measured divergence fails with both geometries — and the normalizer
+    is never told about a size the console does not have (issue #228)."""
+    mismatch = ConptyGeometryMismatchError(
+        "the pseudoconsole adopted 30x100 instead of the requested 31x100",
+        requested=(31, 100),
+        adopted=(30, 100),
+    )
+    adapter, binding, factory, _ = _started([_marker()], resize_error=mismatch)
+
+    result = adapter.dispatch(Resize(ManualTime(0), columns=100, rows=31))
+
+    assert type(result) is TerminalResult
+    assert type(result.outcome) is RunFailed
+    assert result.outcome.failure.details == {
+        "during": "resize",
+        "terminal-rows": 31,
+        "terminal-columns": 100,
+        "reason": "the pseudoconsole adopted 30x100 instead of the requested 31x100",
+        "adopted-rows": 30,
+        "adopted-columns": 100,
+    }
+    assert factory.created[0].resizes == []
     assert binding.child.closes == [True]
 
 
@@ -1538,7 +1574,10 @@ def test_write_failure_is_a_runtime_failure() -> None:
 
     assert type(result) is TerminalResult
     assert type(result.outcome) is RunFailed
-    assert result.outcome.failure.details == {"during": "write"}
+    assert result.outcome.failure.details == {
+        "during": "write",
+        "reason": "write failed",
+    }
 
 
 def test_dispatch_end_of_stream_finishes_the_run() -> None:

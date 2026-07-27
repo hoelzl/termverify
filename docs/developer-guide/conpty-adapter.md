@@ -33,6 +33,40 @@ adapter = ConptyAdapter(
 above the disclosed DA-stall floor (~3.1 s on the verified matrix) plus spawn
 overhead, or every real start fails by policy.
 
+## Geometry verification
+
+The `os` tier claim is verified, not assumed: before any session is handed
+out, the binding proves the pseudoconsole adopted the requested geometry
+exactly ([issue #228](https://github.com/hoelzl/termverify/issues/228)). The
+console's `COORD` members are signed 16-bit values the request is wrapped
+into unchecked, and a request that does not survive the wrap misfires in
+three measured ways: a wrapped-to-zero member fails creation with
+`E_INVALIDARG`, a wrapped-negative member kills the child at console attach
+(`STATUS_DLL_INIT_FAILED`), and a member wrapping to a smaller positive
+silently truncates — the child would run at a geometry the receipt claims at
+`tier="os"`. Predictable misfires are refused from the measured model
+without spawning anything; every other geometry's adoption is measured by a
+probe child's read-back (one probe per distinct geometry, cached per
+process), and a divergence fails the start as `StartFailed` whose details
+name the requested and adopted sizes.
+
+The resize boundary wraps identically and is, if anything, sneakier —
+measured on the dev host, a wrapping request silently truncates (65600
+columns adopted as 64) and a wrap-to-zero silently no-ops while reporting
+success, so the console keeps a size the adapter no longer knows. Resize
+also has a kill band creation does not: an axis of exactly 32767 with an
+otherwise adoptable geometry makes `ResizePseudoConsole` report success
+while the attached client dies (observed as `STATUS_CONTROL_C_EXIT` for a
+stdin-blocked client; every 32766 variant is fine; creation at 32767 is
+unaffected, so the creation-semantics probe cannot see it). The kill band is
+refused predictively; any `Resize` input event whose geometry fails
+verification never reaches the native call: the console provably keeps its
+previous size, the normalizer is never notified, and the run fails as
+`adapter-runtime-failed` naming the requested geometry (and the adopted one,
+when measured). One disclosed residual: a wedged mid-run probe can block a
+resize epoch up to the 30-second probe timeout outside the abort deadline's
+coverage — bounded and fail-closed, but the deadline does not see it.
+
 It bounds an epoch two ways, not one. A watchdog around each blocking read
 force-closes the child when a *single read* exceeds the deadline. That alone
 would not bound the epoch — a subject trickling output just under the

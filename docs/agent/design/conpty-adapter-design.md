@@ -344,6 +344,29 @@ A check that costs one comparison should not be gated on an
 argument about what a host can request — the argument is where the defect
 lives, and it is cheaper to check the axis than to be right about it.
 
+> **Follow-up (issue #228, resolved 2026-07-27):** the same unchecked wrap
+> let the terminal receipt claim `tier="os"` for a geometry the console
+> never adopted — a request surviving the recordability gates could still
+> truncate silently in the `COORD` wrap (measured: 65546 rows adopted as
+> 10). The spawn now verifies adoption before handing out a session:
+> predictable wrap misfires are refused from the measured model, and every
+> other geometry's adoption is measured by a probe child's read-back.
+> Adversarial review then found the same boundary at *resize* (measured:
+> 65600 columns silently adopted as 64; wrap-to-zero a silent no-op), so
+> `resize` verifies too — and review round 2 found resize is NOT creation
+> after all: an axis of exactly 32767 with an otherwise adoptable geometry
+> kills the attached client (observed as `STATUS_CONTROL_C_EXIT` for a
+> stdin-blocked client; a client blocked outside console I/O was observed
+> dying `STATUS_DLL_INIT_FAILED`) while `ResizePseudoConsole` reports
+> success (measured; every 32766 variant is fine; creation at 32767 is
+> unaffected). The kill band is refused predictively at resize, and a
+> refused resize provably leaves the console at its previous size. Disclosed
+> residual: a wedged mid-run probe can block a resize epoch up to the 30s
+> probe timeout outside the abort deadline's coverage — bounded and
+> fail-closed, but the deadline does not see it; and if the subject exits
+> during such a wedge, the epoch records the resulting runtime failure
+> rather than the subject's real exit.
+
 The general lesson is the one this slice keeps re-learning in new clothes:
 **a bound expressed in one unit does not cover a ceiling charged in
 another.** Cells did not cover bytes (round 4), and bytes cover neither

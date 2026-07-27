@@ -54,6 +54,7 @@ from termverify._conpty import (
     ConptyClosedError,
     ConptyConcurrentIOError,
     ConptyEndOfStreamError,
+    ConptyGeometryMismatchError,
     ConptyUnsupportedError,
 )
 
@@ -1459,3 +1460,404 @@ def test_spawn_without_overlay_keeps_the_ambient_defaults(
     cwd_match = re.search(r"TV_CWD:([^\r\n]+)", combined)
     assert cwd_match is not None
     assert Path(cwd_match.group(1)).resolve() == Path(os.getcwd()).resolve()
+
+
+# --- geometry verification (issue #228) -------------------------------------
+#
+# The pseudoconsole's COORD is a signed 16-bit member per axis, and conhost
+# range-checks nothing at creation: a request that does not survive the int16
+# wrap is silently truncated (the child runs at a size the receipt claims
+# ``tier="os"`` for), refused with a raw HRESULT, or the child dies at console
+# attach. ``ConptyChild.spawn`` verifies every geometry before handing out a
+# session: predictable misfires are refused outright, and the rest are proven
+# by a probe child's read-back of the adopted size, cached per process.
+
+
+def _spawn_at(script: str, *, rows: int, columns: int) -> ConptyChild:
+    return ConptyChild.spawn(
+        [sys.executable, "-I", "-u", "-c", script], rows=rows, columns=columns
+    )
+
+
+def _refusal_must_not_spawn(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail the test if the refusal path spawns anything at all.
+
+    The predictive half of the verification refuses from the measured model
+    *without spawning* — no subject, not even the probe child. A refusal
+    that still reaches ``_open_session`` has lost its predictive layer and
+    is paying a probe (or leaking a dying child) for a known-bad geometry.
+    """
+    import termverify._conpty as conpty_module
+
+    def _spying_open(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("a predictable geometry refusal spawned a child")
+
+    monkeypatch.setattr(conpty_module, "_open_session", _spying_open)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_a_geometry_wrapping_to_zero_fails_structured_before_creation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A wrapped-to-zero COORD member is refused with the structured error.
+
+    Measured on the dev host: rows=65536 wraps to 0 and CreatePseudoConsole
+    answers with E_INVALIDARG; the spawn must surface the geometry refusal,
+    not the raw HRESULT.
+    """
+    _refusal_must_not_spawn(monkeypatch)
+    with pytest.raises(ConptyGeometryMismatchError, match="65536"):
+        _spawn_at(_BLOCKING_CHILD, rows=65_536, columns=10)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_a_geometry_wrapping_negative_fails_before_the_child_dies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A wrapped-negative COORD member is refused before the child exists.
+
+    Measured on the dev host: columns=100000 wraps to a negative int16 and
+    conhost kills the child at console attach (STATUS_DLL_INIT_FAILED) — the
+    run started and produced a cryptic exit, not a geometry failure.
+    """
+    _refusal_must_not_spawn(monkeypatch)
+    with pytest.raises(ConptyGeometryMismatchError, match="100000"):
+        _spawn_at(_BLOCKING_CHILD, rows=10, columns=100_000)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_a_geometry_the_console_would_silently_truncate_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The overclaim class itself: silent truncation to a different size.
+
+    Measured on the dev host: rows=65546 wraps to 10 and the child runs at
+    10 rows while the receipt records 65546 at ``tier="os"``.
+    """
+    _refusal_must_not_spawn(monkeypatch)
+    with pytest.raises(ConptyGeometryMismatchError, match="65546"):
+        _spawn_at(_BLOCKING_CHILD, rows=65_546, columns=10)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_an_exactly_adopted_geometry_spawns_and_is_cached() -> None:
+    """A geometry the console adopts exactly passes and is cached."""
+    import termverify._conpty as conpty_module
+
+    conpty_module._GEOMETRY_ADOPTIONS.pop((40, 120), None)
+    child = _spawn_at(_BLOCKING_CHILD, rows=40, columns=120)
+    try:
+        assert child.is_alive()
+    finally:
+        child.close(force=True)
+    assert conpty_module._GEOMETRY_ADOPTIONS[(40, 120)] == (40, 120)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_a_verified_geometry_is_not_probed_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The per-process cache bounds the read-back cost to one probe."""
+    import termverify._conpty as conpty_module
+
+    conpty_module._GEOMETRY_ADOPTIONS.pop((50, 132), None)
+    _spawn_at(_BLOCKING_CHILD, rows=50, columns=132).close(force=True)
+
+    def _reprobe(rows: int, columns: int) -> tuple[int, int]:
+        raise AssertionError("a verified geometry was probed again")
+
+    monkeypatch.setattr(conpty_module, "_probe_geometry", _reprobe)
+    _spawn_at(_BLOCKING_CHILD, rows=50, columns=132).close(force=True)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_a_read_back_mismatch_fails_the_spawn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The read-back half: a diverging adoption fails the spawn structured.
+
+    On this host the predictive check already refuses every known misfire;
+    the read-back guards the residual — a Windows build whose conhost
+    substitutes instead of truncating (the 120x30 observation in #228).
+    """
+    import termverify._conpty as conpty_module
+
+    conpty_module._GEOMETRY_ADOPTIONS.pop((41, 121), None)
+    monkeypatch.setattr(
+        conpty_module, "_probe_geometry", lambda rows, columns: (rows - 1, columns)
+    )
+    try:
+        with pytest.raises(ConptyGeometryMismatchError, match="adopted"):
+            _spawn_at(_BLOCKING_CHILD, rows=41, columns=121)
+    finally:
+        # A monkeypatched probe's cached mismatch is poison for later
+        # honest verifications in this process; do not leave it behind.
+        conpty_module._GEOMETRY_ADOPTIONS.pop((41, 121), None)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_a_failing_probe_fails_the_spawn_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A probe that cannot answer must not hand out an unverified session."""
+    import termverify._conpty as conpty_module
+
+    conpty_module._GEOMETRY_ADOPTIONS.pop((42, 122), None)
+
+    def _boom(rows: int, columns: int) -> tuple[int, int]:
+        raise OSError("probe exploded")
+
+    monkeypatch.setattr(conpty_module, "_probe_geometry", _boom)
+    with pytest.raises(OSError, match="probe exploded"):
+        _spawn_at(_BLOCKING_CHILD, rows=42, columns=122)
+
+
+# --- resize-boundary verification (issue #228, review round 1, F1) ---------
+#
+# The resize boundary re-opens the same defect class: measured on the dev
+# host against the post-spawn-fix code, ResizePseudoConsole silently
+# truncates a wrapping geometry (7x65600 adopted as 64 columns), silently
+# NO-OPS a wrap-to-zero (the console keeps its previous size), and errors
+# only on wrap-negative — while the adapter's normalizer was told the
+# requested size. ``ConptyChild.resize`` verifies exactly like ``spawn``.
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_a_resize_the_console_would_silently_truncate_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """7x65600 would silently resize the console to 7x64: refuse it.
+
+    Measured on the dev host: ResizePseudoConsole adopted 64 columns and
+    reported success — the normalizer would have modeled 65600.
+    """
+    child = _spawn_at(_BLOCKING_CHILD, rows=30, columns=120)
+    try:
+        _refusal_must_not_spawn(monkeypatch)
+        with pytest.raises(ConptyGeometryMismatchError, match="65600"):
+            child.resize(rows=7, columns=65_600)
+        # The refused resize changed nothing: the session is still healthy
+        # and a legitimate resize still takes effect.
+        # Recovery targets the cached setup geometry, so the no-spawn spy
+        # stays silent; a live resize still takes effect after the refusal.
+        child.resize(rows=30, columns=120)
+        assert child.is_alive()
+    finally:
+        child.close(force=True)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_a_resize_wrapping_to_zero_fails_instead_of_silently_no_oping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The sneakiest misfire: wrap-to-zero at resize is a silent no-op.
+
+    Measured on the dev host: resizing to columns=65536 returned success
+    and the console kept its previous size — the adapter would believe a
+    resize that never happened. Refuse it structurally instead.
+    """
+    child = _spawn_at(_BLOCKING_CHILD, rows=30, columns=120)
+    try:
+        _refusal_must_not_spawn(monkeypatch)
+        with pytest.raises(ConptyGeometryMismatchError, match="65536"):
+            child.resize(rows=30, columns=65_536)
+        # Recovery targets the cached setup geometry, so the no-spawn spy
+        # stays silent; a live resize still takes effect after the refusal.
+        child.resize(rows=30, columns=120)
+        assert child.is_alive()
+    finally:
+        child.close(force=True)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_a_resize_wrapping_negative_fails_structured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Wrap-negative errors natively at resize; refuse it before that."""
+    child = _spawn_at(_BLOCKING_CHILD, rows=30, columns=120)
+    try:
+        _refusal_must_not_spawn(monkeypatch)
+        with pytest.raises(ConptyGeometryMismatchError, match="40000"):
+            child.resize(rows=30, columns=40_000)
+        assert child.is_alive()
+    finally:
+        child.close(force=True)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_a_resize_to_an_exactly_adopted_geometry_succeeds() -> None:
+    """An uncached exact geometry is probed once, then the resize applies."""
+    import termverify._conpty as conpty_module
+
+    conpty_module._GEOMETRY_ADOPTIONS.pop((50, 132), None)
+    child = _spawn_at(_BLOCKING_CHILD, rows=30, columns=120)
+    try:
+        child.resize(rows=50, columns=132)
+        assert child.is_alive()
+        assert conpty_module._GEOMETRY_ADOPTIONS[(50, 132)] == (50, 132)
+    finally:
+        child.close(force=True)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_a_resize_read_back_mismatch_fails_the_resize(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The resize half of the read-back: a diverging adoption fails closed."""
+    import termverify._conpty as conpty_module
+
+    conpty_module._GEOMETRY_ADOPTIONS.pop((41, 130), None)
+    monkeypatch.setattr(
+        conpty_module, "_probe_geometry", lambda rows, columns: (rows - 1, columns)
+    )
+    child = _spawn_at(_BLOCKING_CHILD, rows=30, columns=120)
+    try:
+        with pytest.raises(ConptyGeometryMismatchError, match="adopted"):
+            child.resize(rows=41, columns=130)
+        assert child.is_alive()
+    finally:
+        child.close(force=True)
+        # The mismatch is cached by design (fail-closed from cache on
+        # repeat); a monkeypatched probe's entry is poison for every later
+        # honest verification in this process, so the test must not leave
+        # it behind.
+        conpty_module._GEOMETRY_ADOPTIONS.pop((41, 130), None)
+
+
+# --- probe failure-mode guards (issue #228, review round 1, F3) ------------
+#
+# ``_probe_geometry`` fails closed on three infrastructure paths: a wedged
+# probe (deadline), no exit record, and an undecodable exit status (crash
+# aliasing). These guards are platform-neutral once the child spawn is
+# stubbed, so they run on every host.
+
+
+class _StubProbeChild:
+    """The ``ConptyChild`` surface ``_probe_geometry`` uses, scripted."""
+
+    def __init__(self, *, alive: bool, status: int | None) -> None:
+        self._alive = alive
+        self._status = status
+        self.closed_with_force: bool | None = None
+
+    def is_alive(self) -> bool:
+        return self._alive
+
+    @property
+    def exit_status(self) -> int | None:
+        return self._status
+
+    def close(self, *, force: bool) -> None:
+        self.closed_with_force = force
+        self._alive = False
+
+
+def _stub_probe_spawn(monkeypatch: pytest.MonkeyPatch, child: _StubProbeChild) -> None:
+    import termverify._conpty as conpty_module
+
+    def _stub_spawn_contained(
+        cls: type[Any], /, argv: Any, **kwargs: Any
+    ) -> _StubProbeChild:
+        return child
+
+    monkeypatch.setattr(
+        conpty_module.ConptyChild,
+        "_spawn_contained",
+        classmethod(_stub_spawn_contained),
+    )
+
+
+def test_a_wedged_probe_fails_closed_and_is_reaped_forcefully(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import termverify._conpty as conpty_module
+
+    monkeypatch.setattr(conpty_module, "_GEOMETRY_PROBE_TIMEOUT_SECONDS", 0.2)
+    child = _StubProbeChild(alive=True, status=None)
+    _stub_probe_spawn(monkeypatch, child)
+
+    with pytest.raises(OSError, match="did not exit"):
+        conpty_module._probe_geometry(24, 80)
+    assert child.closed_with_force is True
+
+
+def test_a_probe_without_an_exit_record_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import termverify._conpty as conpty_module
+
+    child = _StubProbeChild(alive=False, status=None)
+    _stub_probe_spawn(monkeypatch, child)
+
+    with pytest.raises(OSError, match="no exit record"):
+        conpty_module._probe_geometry(24, 80)
+    assert child.closed_with_force is True
+
+
+def test_a_probe_crash_exit_status_cannot_alias_a_geometry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The load-bearing decode guard: a crash status decodes out of band.
+
+    STATUS_DLL_INIT_FAILED (0xC0000142) as (columns<<16)|rows would claim
+    columns=49152 — outside [1, 32767], so the probe fails closed instead
+    of "verifying" a geometry no console has.
+    """
+    import termverify._conpty as conpty_module
+
+    child = _StubProbeChild(alive=False, status=0xC0000142)
+    _stub_probe_spawn(monkeypatch, child)
+
+    with pytest.raises(OSError, match="probe child failed"):
+        conpty_module._probe_geometry(24, 80)
+    assert child.closed_with_force is True
+
+
+def test_the_geometry_contract_rejects_non_int_axes() -> None:
+    """Geometry axes are ints; anything else is a contract violation.
+
+    Platform-neutral: the guard runs before any native call. ``bool`` is an
+    ``int`` subclass but not a geometry, so the check is on the exact type.
+    """
+    import termverify._conpty as conpty_module
+
+    with pytest.raises(TypeError, match="rows.*str"):
+        conpty_module._verify_geometry("24", 80)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="columns.*float"):
+        conpty_module._verify_geometry(24, 80.5)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="rows.*bool"):
+        conpty_module._verify_geometry(True, 80)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_a_resize_to_the_maximum_coord_axis_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The resize-only kill band: an axis of exactly 32767 kills the client.
+
+    Measured on the dev host (review round 2): ResizePseudoConsole to an
+    axis of exactly 32767 with an otherwise adoptable geometry — including
+    a same-size resize — returns success while the attached client dies
+    within half a second (observed as STATUS_CONTROL_C_EXIT (0xC000013A)
+    for a stdin-blocked client); every 32766 variant is fine. Creation is
+    unaffected (32767x32767 is adopted exactly), so the creation-semantics
+    probe cannot see the band: the run would record a subject exit the
+    adapter's own resize caused. Refuse it predictively.
+    """
+    child = _spawn_at(_BLOCKING_CHILD, rows=30, columns=120)
+    try:
+        _refusal_must_not_spawn(monkeypatch)
+        for rows, columns in ((1, 32_767), (32_767, 1), (32_767, 32_767)):
+            with pytest.raises(
+                ConptyGeometryMismatchError, match="otherwise adoptable"
+            ):
+                child.resize(rows=rows, columns=columns)
+        # The type contract precedes even the kill-band check.
+        with pytest.raises(TypeError, match="must be an int"):
+            child.resize(rows=32_767.0, columns=1)  # type: ignore[arg-type]
+        # The refused resizes changed nothing: a same-size resize to the
+        # cached creation geometry still takes effect.
+        child.resize(rows=30, columns=120)
+        assert child.is_alive()
+    finally:
+        child.close(force=True)

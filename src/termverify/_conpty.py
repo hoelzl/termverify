@@ -160,6 +160,193 @@ class ConptyEndOfStreamError(Exception):
     """
 
 
+class ConptyGeometryMismatchError(OSError):
+    """The pseudoconsole cannot, or provably did not, adopt the geometry.
+
+    Raised by :meth:`ConptyChild.spawn` before a session is handed out when
+    the requested terminal geometry cannot survive the console's signed
+    16-bit ``COORD`` members, or when the adopted size measured by the
+    geometry probe differs from the request. Subclasses ``OSError`` so
+    existing spawn-failure handling applies; the structured members carry
+    the geometry facts for the adapter's failure record (issue #228).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        requested: tuple[int, int],
+        adopted: tuple[int, int] | None,
+    ) -> None:
+        super().__init__(message)
+        #: The requested ``(rows, columns)``.
+        self.requested = requested
+        #: The adopted ``(rows, columns)`` measured by the probe, or ``None``
+        #: when the refusal is predictive (nothing was spawned or measured).
+        self.adopted = adopted
+
+
+#: One ``COORD`` member is a signed 16-bit value; a request is wrapped into
+#: it unchecked at ``CreatePseudoConsole`` time (issue #228).
+_COORD_WRAP_MODULUS: Final = 65_536
+
+#: The largest ``COORD`` member value that stays positive after the wrap.
+_COORD_MAX_VALID: Final = 32_767
+
+
+def _predict_geometry_refusal(rows: int, columns: int) -> str | None:
+    """Why conhost cannot adopt this geometry exactly, or ``None``.
+
+    Measured on the Windows dev host (issue #228): ``PTY()`` and
+    ``CreatePseudoConsole`` range-check nothing, and the request is wrapped
+    into the signed 16-bit ``COORD`` members with three observable misfires:
+
+    - wraps to zero: ``CreatePseudoConsole`` rejects it (``E_INVALIDARG``);
+    - wraps negative: the child dies at console attach with
+      ``STATUS_DLL_INIT_FAILED`` (0xC0000142) — the run *started* and
+      produced a cryptic exit status, not a geometry failure;
+    - wraps to a smaller positive: the console silently adopts the wrapped
+      size and the child runs at a geometry the receipt claims at
+      ``tier="os"`` — the overclaim class this verification exists to close.
+
+    Anything that survives the wrap unchanged (both members in
+    ``[1, 32767]``) was adopted exactly by every host measured, up to
+    32767x32767; the read-back probe guards the residual anyway.
+    """
+    for axis, value in (("rows", rows), ("columns", columns)):
+        wrapped = value % _COORD_WRAP_MODULUS
+        if wrapped == 0:
+            return (
+                f"the requested terminal geometry {columns}x{rows} cannot be"
+                f" adopted: {axis}={value} wraps to zero in the console's"
+                " signed 16-bit COORD member, which CreatePseudoConsole"
+                " rejects"
+            )
+        if wrapped > _COORD_MAX_VALID:
+            return (
+                f"the requested terminal geometry {columns}x{rows} cannot be"
+                f" adopted: {axis}={value} wraps to {wrapped - _COORD_WRAP_MODULUS}"
+                " in the console's signed 16-bit COORD member, and conhost"
+                " kills the child at console attach"
+            )
+        if wrapped != value:
+            return (
+                f"the requested terminal geometry {columns}x{rows} cannot be"
+                f" adopted: {axis}={value} silently truncates to {wrapped} in"
+                " the console's signed 16-bit COORD member, and the child"
+                " would run at a size the receipt never recorded"
+            )
+    return None
+
+
+#: One-liner probe child: read the 22-byte CONSOLE_SCREEN_BUFFER_INFO as raw
+#: bytes (no class statements — compound statements are illegal in ``-c``),
+#: then answer through the exit status, the one channel that is independent
+#: of console size — a long token in the output stream is torn apart by
+#: cursor repositioning at tiny geometries, but a 31-bit exit code survives
+#: every console. Bit layout: ``(columns << 16) | rows`` from the console
+#: window rect; a failed query answers 0, which decodes as invalid.
+_GEOMETRY_PROBE_SOURCE: Final = (
+    "import ctypes,struct;"
+    "k=ctypes.windll.kernel32;"
+    "b=(ctypes.c_ubyte*22)();"
+    "ok=k.GetConsoleScreenBufferInfo(k.GetStdHandle(-11),b);"
+    "d=struct.unpack('<11h',bytes(b));"
+    "import sys;"
+    "sys.exit((((d[7]-d[5]+1)<<16)|(d[8]-d[6]+1)) if ok else 0)"
+)
+
+_GEOMETRY_PROBE_TIMEOUT_SECONDS: Final = 30.0
+
+#: Verified or measured adoptions by requested ``(rows, columns)``, for the
+#: process lifetime — conhost adoption is deterministic per host, so one
+#: probe per distinct geometry bounds the read-back cost. A benign race: two
+#: concurrent first spawns at one geometry may both probe; the answers are
+#: identical and idempotent.
+_GEOMETRY_ADOPTIONS: dict[tuple[int, int], tuple[int, int]] = {}
+
+
+def _probe_geometry(rows: int, columns: int) -> tuple[int, int]:
+    """Measure the geometry the console actually adopts at this request.
+
+    The ConPTY API has no parent-side size getter: ``ResizePseudoConsole``
+    only sets, and the parent's conout handle is a pipe, not a console
+    screen buffer. The adopted size is observable only from inside the
+    console, so a probe child reads it and answers through its exit status.
+    The probe spawns through the same suspended-then-contained machinery as
+    a subject, minus the geometry verification it exists to perform.
+    """
+    child = ConptyChild._spawn_contained(
+        [sys.executable, "-I", "-u", "-c", _GEOMETRY_PROBE_SOURCE],
+        rows=rows,
+        columns=columns,
+    )
+    try:
+        deadline = time.monotonic() + _GEOMETRY_PROBE_TIMEOUT_SECONDS
+        while child.is_alive() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if child.is_alive():
+            raise OSError(
+                "the ConPTY geometry probe child did not exit within"
+                f" {_GEOMETRY_PROBE_TIMEOUT_SECONDS:.0f}s at {columns}x{rows}"
+            )
+        status = child.exit_status
+    finally:
+        child.close(force=True)
+    if status is None:
+        raise OSError("the ConPTY geometry probe produced no exit record")
+    adopted_columns, adopted_rows = status >> 16, status & 0xFFFF
+    if not (
+        1 <= adopted_columns <= _COORD_MAX_VALID
+        and 1 <= adopted_rows <= _COORD_MAX_VALID
+    ):
+        raise OSError(
+            "the ConPTY geometry probe child failed"
+            f" (exit status {status:#010x}) at {columns}x{rows}"
+        )
+    return (adopted_rows, adopted_columns)
+
+
+def _require_int_geometry_axes(rows: int, columns: int) -> None:
+    """Enforce the geometry contract's type half on both axes."""
+    for axis, value in (("rows", rows), ("columns", columns)):
+        if type(value) is not int:
+            raise TypeError(
+                f"terminal geometry {axis} must be an int, got {type(value).__name__}"
+            )
+
+
+def _verify_geometry(rows: int, columns: int) -> None:
+    """Verify the console adopts this geometry exactly, or fail closed.
+
+    The hybrid (issue #228): refuse what the measured model predicts
+    cannot survive the console's signed 16-bit ``COORD`` members, then
+    measure the adopted size of every other geometry with a probe child's
+    read-back, cached per process. Raises :class:`ConptyGeometryMismatchError`
+    on refusal or divergence; subclasses ``OSError`` so existing
+    spawn-failure handling applies. A refusal raises before any session
+    is handed out, so a receipt can never claim ``tier="os"`` for a
+    geometry the subject did not run at (issue #228).
+    """
+    _require_int_geometry_axes(rows, columns)
+    refusal = _predict_geometry_refusal(rows, columns)
+    if refusal is not None:
+        raise ConptyGeometryMismatchError(
+            refusal, requested=(rows, columns), adopted=None
+        )
+    requested = (rows, columns)
+    if requested not in _GEOMETRY_ADOPTIONS:
+        _GEOMETRY_ADOPTIONS[requested] = _probe_geometry(rows, columns)
+    adopted = _GEOMETRY_ADOPTIONS[requested]
+    if adopted != requested:
+        raise ConptyGeometryMismatchError(
+            f"requested terminal geometry {columns}x{rows} but the"
+            f" pseudoconsole adopted {adopted[1]}x{adopted[0]}",
+            requested=requested,
+            adopted=adopted,
+        )
+
+
 if sys.platform == "win32":
     import ctypes
     from ctypes import wintypes
@@ -1220,11 +1407,39 @@ class ConptyChild:
         not evidence and are not recorded, only the overlay is. ``cwd``
         selects the child's working directory; without it, the child starts
         in this process's current directory.
+
+        Before any session is created the requested geometry is verified:
+        predictable ``COORD`` wrap misfires are refused outright, and every
+        other geometry must be proven adopted exactly by the geometry probe
+        (issue #228) — a spawn that cannot run at the requested size raises
+        :class:`ConptyGeometryMismatchError` instead of handing out a
+        session at a size the receipt never recorded.
         """
         if os.name != "nt":
             raise ConptyUnsupportedError(
                 "the ConPTY binding requires Windows; this host has no ConPTY"
             )
+        _verify_geometry(rows, columns)
+        return cls._spawn_contained(
+            argv, rows=rows, columns=columns, env_overlay=env_overlay, cwd=cwd
+        )
+
+    @classmethod
+    def _spawn_contained(
+        cls,
+        argv: Sequence[str],
+        *,
+        rows: int,
+        columns: int,
+        env_overlay: Mapping[str, str] | None = None,
+        cwd: str | None = None,
+    ) -> ConptyChild:
+        """The spawn's mechanical half, with the geometry already verified.
+
+        Split from :meth:`spawn` so the geometry probe can spawn its own
+        child through the identical suspended-then-contained path without
+        re-entering the verification it exists to perform.
+        """
         pty = _open_session(
             argv, rows=rows, columns=columns, env_overlay=env_overlay, cwd=cwd
         )
@@ -1333,8 +1548,44 @@ class ConptyChild:
             self._end_io()
 
     def resize(self, *, rows: int, columns: int) -> None:
-        """Resize the pseudoconsole explicitly."""
-        self._require_open().set_size(columns, rows)
+        """Resize the pseudoconsole explicitly.
+
+        The resize boundary wraps like creation — measured on the dev host,
+        a wrapping request silently truncates (65600 columns adopted as 64)
+        and a wrap-to-zero silently no-ops while reporting success — and adds
+        a kill band creation does not have: an axis of exactly 32767 with an
+        otherwise adoptable geometry kills the attached client while
+        reporting success (observed as STATUS_CONTROL_C_EXIT for a
+        stdin-blocked client). The target geometry is
+        therefore refused predictively for both the wrap model and the kill
+        band, then its adoption measured by the same read-back probe as a
+        spawn's, before the native call (issue #228). A refused resize raises before the
+        native call, so the console provably keeps its previous size.
+        """
+        pty = self._require_open()
+        _require_int_geometry_axes(rows, columns)
+        if rows == _COORD_MAX_VALID or columns == _COORD_MAX_VALID:
+            # Resize-only kill band, measured on the dev host (review round
+            # 2, issue #228): ResizePseudoConsole to an axis of exactly
+            # 32767 with an otherwise adoptable geometry — even a same-size
+            # resize — reports success while the attached client dies
+            # within half a second (observed as STATUS_CONTROL_C_EXIT
+            # (0xC000013A) for a stdin-blocked client; a client blocked
+            # outside console I/O was observed dying STATUS_DLL_INIT_FAILED
+            # (0xC0000142)); every 32766 variant is fine. Creation is
+            # unaffected, so the creation-semantics probe cannot see the
+            # band: refuse it predictively rather than let the run record a
+            # subject exit the resize itself caused.
+            raise ConptyGeometryMismatchError(
+                f"the requested terminal geometry {columns}x{rows} cannot be"
+                f" adopted at resize: measured on this host, a resize to an"
+                f" axis of 32767 with an otherwise adoptable geometry kills"
+                f" the attached client while reporting success",
+                requested=(rows, columns),
+                adopted=None,
+            )
+        _verify_geometry(rows, columns)
+        pty.set_size(columns, rows)
 
     def is_alive(self) -> bool:
         """Report whether the child process is still alive.
