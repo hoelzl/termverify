@@ -344,6 +344,14 @@ A check that costs one comparison should not be gated on an
 argument about what a host can request — the argument is where the defect
 lives, and it is cheaper to check the axis than to be right about it.
 
+> **Follow-up (issue #228, resolved 2026-07-27):** the same unchecked wrap
+> let the terminal receipt claim `tier="os"` for a geometry the console
+> never adopted — a request surviving the recordability gates could still
+> truncate silently in the `COORD` wrap (measured: 65546 rows adopted as
+> 10). The spawn now verifies adoption before handing out a session:
+> predictable wrap misfires are refused from the measured model, and every
+> other geometry is proven by a probe child's read-back of the adopted size.
+
 The general lesson is the one this slice keeps re-learning in new clothes:
 **a bound expressed in one unit does not cover a ceiling charged in
 another.** Cells did not cover bytes (round 4), and bytes cover neither

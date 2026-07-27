@@ -33,6 +33,23 @@ adapter = ConptyAdapter(
 above the disclosed DA-stall floor (~3.1 s on the verified matrix) plus spawn
 overhead, or every real start fails by policy.
 
+## Geometry verification
+
+The `os` tier claim is verified, not assumed: before any session is handed
+out, the binding proves the pseudoconsole adopted the requested geometry
+exactly ([issue #228](https://github.com/hoelzl/termverify/issues/228)). The
+console's `COORD` members are signed 16-bit values the request is wrapped
+into unchecked, and a request that does not survive the wrap misfires in
+three measured ways: a wrapped-to-zero member fails creation with
+`E_INVALIDARG`, a wrapped-negative member kills the child at console attach
+(`STATUS_DLL_INIT_FAILED`), and a member wrapping to a smaller positive
+silently truncates — the child would run at a geometry the receipt claims at
+`tier="os"`. Predictable misfires are refused from the measured model
+without spawning anything; every other geometry is proven by a probe child's
+read-back of the adopted size (one probe per distinct geometry, cached per
+process), and a divergence fails the start as `StartFailed` whose details
+name the requested and adopted sizes.
+
 It bounds an epoch two ways, not one. A watchdog around each blocking read
 force-closes the child when a *single read* exceeds the deadline. That alone
 would not bound the epoch — a subject trickling output just under the

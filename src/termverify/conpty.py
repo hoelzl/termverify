@@ -118,6 +118,7 @@ from termverify._conpty import (
     ConptyClosedError,
     ConptyConcurrentIOError,
     ConptyEndOfStreamError,
+    ConptyGeometryMismatchError,
 )
 from termverify._key_encoding_v1 import encode_key_chord
 from termverify._negotiation import AuthorizedTiers, negotiate
@@ -1197,6 +1198,25 @@ class ConptyAdapter:
                 columns=terminal.columns,
                 env_overlay=env_overlay,
                 cwd=cwd,
+            )
+        except ConptyGeometryMismatchError as mismatch:
+            # The console cannot, or provably did not, adopt the requested
+            # geometry: name what was requested and what was adopted rather
+            # than collapsing into the generic spawn failure — the receipt's
+            # tier="os" claim must never stand for a geometry the subject
+            # did not run at (issue #228).
+            geometry_details: dict[str, JsonInput] = {
+                "during": "spawn",
+                "terminal-rows": terminal.rows,
+                "terminal-columns": terminal.columns,
+                "reason": str(mismatch),
+            }
+            if mismatch.adopted is not None:
+                geometry_details["adopted-rows"] = mismatch.adopted[0]
+                geometry_details["adopted-columns"] = mismatch.adopted[1]
+            return start_failed(
+                "the pseudoconsole did not adopt the requested terminal geometry",
+                geometry_details,
             )
         except Exception:
             return start_failed(
