@@ -102,9 +102,10 @@ specification has stopped moving.
   that sets no precedent" is historical — it dates from the
   2026-07-19 – 2026-07-24 window in which the freeze was considered active.
   The record stands; the precedent pressure is void.
-- `docs/knowledge/protocol.md` "Compatibility and evolution" and the
-  `AGENTS.md` protocol row state the prototyping status and link here, so
-  future agents do not rediscover or re-impose the freeze.
+- `docs/knowledge/protocol.md` "Compatibility and evolution" states the
+  prototyping status and links here; the `AGENTS.md` protocol rows link
+  here for the current status, so future agents do not rediscover or
+  re-impose the freeze.
 - Review finding **P9** is resolved by decision 5 above: the control
   protocol's specification no longer claims the document wins, `AGENTS.md`
   gains a control-protocol sources-of-truth row naming
