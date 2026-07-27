@@ -511,7 +511,10 @@ def test_conpty_adapter_accepts_delivered_injected_receipts() -> None:
     # Negotiation completes; the fake binding then refuses to spawn.
     assert type(result) is StartFailed
     assert len(result.enforced) == 7
-    assert result.failure.details == {"during": "spawn"}
+    assert result.failure.details == {
+        "during": "spawn",
+        "reason": "this negotiation fake refuses to spawn a child",
+    }
     assert binding.spawn_calls == 1
     terminal = result.enforced[4]
     assert type(terminal) is TerminalReceipt

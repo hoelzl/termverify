@@ -357,7 +357,10 @@ def test_spawn_overlay_is_assembled_from_the_validated_receipts() -> None:
     result = adapter.start(RUN_ID, _configuration())
 
     assert type(result) is StartFailed
-    assert result.failure.details == {"during": "spawn"}
+    assert result.failure.details == {
+        "during": "spawn",
+        "reason": "this overlay fake refuses to spawn a child",
+    }
     assert len(binding.spawns) == 1
     argv, rows, columns, overlay, cwd = binding.spawns[0]
     assert argv == ("subject",)

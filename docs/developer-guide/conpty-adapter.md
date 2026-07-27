@@ -50,6 +50,16 @@ read-back of the adopted size (one probe per distinct geometry, cached per
 process), and a divergence fails the start as `StartFailed` whose details
 name the requested and adopted sizes.
 
+The resize boundary is verified the same way: `ResizePseudoConsole` wraps
+identically and is, if anything, sneakier — measured on the dev host, a
+wrapping request silently truncates (65600 columns adopted as 64) and a
+wrap-to-zero silently no-ops while reporting success, so the console keeps a
+size the adapter no longer knows. A `Resize` input event whose geometry
+fails verification never reaches the native call: the console provably keeps
+its previous size, the normalizer is never notified, and the run fails as
+`adapter-runtime-failed` naming the requested geometry (and the adopted one,
+when measured).
+
 It bounds an epoch two ways, not one. A watchdog around each blocking read
 force-closes the child when a *single read* exceeds the deadline. That alone
 would not bound the epoch — a subject trickling output just under the

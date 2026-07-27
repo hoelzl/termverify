@@ -1095,9 +1095,15 @@ class ConptyAdapter:
             if write is not None:
                 try:
                     write()
+                except _EpochFailure:
+                    # A step that already built its structured failure (for
+                    # example the geometry-structured resize refusal) must
+                    # not be re-wrapped into the generic step details.
+                    raise
                 except Exception as error:
                     raise _EpochFailure(
-                        write_failure, {"during": write_step}
+                        write_failure,
+                        {"during": write_step, "reason": str(error)},
                     ) from error
             self._read_epoch_chunks(child, chunks, expired)
             if expired.is_set():
@@ -1218,9 +1224,10 @@ class ConptyAdapter:
                 "the pseudoconsole did not adopt the requested terminal geometry",
                 geometry_details,
             )
-        except Exception:
+        except Exception as error:
             return start_failed(
-                "the ConPTY child could not be spawned", {"during": "spawn"}
+                "the ConPTY child could not be spawned",
+                {"during": "spawn", "reason": str(error)},
             )
         self._columns = terminal.columns
         self._rows = terminal.rows
@@ -1301,7 +1308,28 @@ class ConptyAdapter:
         resize = cast(Resize, input_event)
 
         def apply_resize() -> None:
-            child.resize(rows=resize.rows, columns=resize.columns)
+            try:
+                child.resize(rows=resize.rows, columns=resize.columns)
+            except ConptyGeometryMismatchError as mismatch:
+                # The geometry boundary is evidence, not an opaque write
+                # failure: name what was requested, what the console
+                # adopted (when measured), and why the resize was refused.
+                # The console provably keeps its previous size, so the
+                # normalizer is never told about a geometry the child does
+                # not have (issue #228).
+                details: dict[str, JsonInput] = {
+                    "during": "resize",
+                    "terminal-rows": resize.rows,
+                    "terminal-columns": resize.columns,
+                    "reason": str(mismatch),
+                }
+                if mismatch.adopted is not None:
+                    details["adopted-rows"] = mismatch.adopted[0]
+                    details["adopted-columns"] = mismatch.adopted[1]
+                raise _EpochFailure(
+                    "the pseudoconsole did not adopt the requested resize geometry",
+                    details,
+                ) from mismatch
             cast(TerminalOutputNormalizer, self._normalizer).notify_resize(
                 rows=resize.rows, columns=resize.columns
             )

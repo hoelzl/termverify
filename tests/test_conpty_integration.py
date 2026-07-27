@@ -1205,3 +1205,37 @@ def test_unencodable_chord_fails_closed_on_the_real_adapter() -> None:
     assert os_exit_code == FORCED_TERMINATION_EXIT_CODE
     with pytest.raises(RuntimeError):
         adapter.dispatch(TextInput(ManualTime(0), "late\r\n"))
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY integration evidence")
+def test_a_resize_the_console_cannot_adopt_fails_the_run_structured() -> None:
+    """The #228 resize boundary end to end: refuse what would silently lie.
+
+    Measured on the dev host, 7x65600 silently truncates to 64 columns and
+    65536 columns silently no-ops at resize while reporting success — the
+    normalizer would model a console the child does not have. The refused
+    resize fails the run as adapter-runtime-failed naming the geometry,
+    and the console provably keeps its previous size.
+    """
+    adapter = _adapter(_cooperative_argv())
+
+    with _reaped(adapter):
+        started = adapter.start("run-conpty-integration", _configuration())
+        assert type(started) is Started, started
+
+        outcome = adapter.dispatch(Resize(ManualTime(0), columns=65_600, rows=7))
+
+        assert type(outcome) is TerminalResult, outcome
+        assert outcome.observation is None
+        run_failed = outcome.outcome
+        assert type(run_failed) is RunFailed
+        assert run_failed.failure.code == "adapter-runtime-failed"
+        assert run_failed.failure.details == {
+            "during": "resize",
+            "terminal-rows": 7,
+            "terminal-columns": 65_600,
+            "reason": "the requested terminal geometry 65600x7 cannot be"
+            " adopted: columns=65600 silently truncates to 64 in the"
+            " console's signed 16-bit COORD member, and the child would run"
+            " at a size the receipt never recorded",
+        }

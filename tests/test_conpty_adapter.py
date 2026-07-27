@@ -434,7 +434,10 @@ def test_complete_negotiation_proceeds_to_exactly_one_spawn() -> None:
     assert terminal.run_id == "run-conpty"
     assert terminal.effective == _configuration().terminal
     assert result.failure.code == "adapter-start-failed"
-    assert result.failure.details == {"during": "spawn"}
+    assert result.failure.details == {
+        "during": "spawn",
+        "reason": "this negotiation fake refuses to spawn a child",
+    }
     assert ports.calls == [
         "seed",
         "clock",

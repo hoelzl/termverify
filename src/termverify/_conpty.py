@@ -317,6 +317,11 @@ def _verify_geometry(rows: int, columns: int) -> None:
     so a receipt can never claim ``tier="os"`` for a geometry the subject
     did not run at (issue #228).
     """
+    for axis, value in (("rows", rows), ("columns", columns)):
+        if type(value) is not int:
+            raise TypeError(
+                f"terminal geometry {axis} must be an int, got {type(value).__name__}"
+            )
     refusal = _predict_geometry_refusal(rows, columns)
     if refusal is not None:
         raise ConptyGeometryMismatchError(
@@ -1536,8 +1541,19 @@ class ConptyChild:
             self._end_io()
 
     def resize(self, *, rows: int, columns: int) -> None:
-        """Resize the pseudoconsole explicitly."""
-        self._require_open().set_size(columns, rows)
+        """Resize the pseudoconsole explicitly.
+
+        The resize boundary wraps exactly like creation — measured on the
+        dev host, a wrapping request silently truncates (65600 columns
+        adopted as 64) and a wrap-to-zero silently no-ops while reporting
+        success — so the target geometry is verified with the same
+        predictive refusal and read-back proof as a spawn's before the
+        native call (issue #228). A refused resize raises before the native
+        call, so the console provably keeps its previous size.
+        """
+        pty = self._require_open()
+        _verify_geometry(rows, columns)
+        pty.set_size(columns, rows)
 
     def is_alive(self) -> bool:
         """Report whether the child process is still alive.

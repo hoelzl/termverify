@@ -351,6 +351,10 @@ lives, and it is cheaper to check the axis than to be right about it.
 > 10). The spawn now verifies adoption before handing out a session:
 > predictable wrap misfires are refused from the measured model, and every
 > other geometry is proven by a probe child's read-back of the adopted size.
+> Adversarial review then found the same boundary at *resize* (measured:
+> 65600 columns silently adopted as 64; wrap-to-zero a silent no-op), so
+> `resize` verifies identically and a refused resize provably leaves the
+> console at its previous size.
 
 The general lesson is the one this slice keeps re-learning in new clothes:
 **a bound expressed in one unit does not cover a ceiling charged in
