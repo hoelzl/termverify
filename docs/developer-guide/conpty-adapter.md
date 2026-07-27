@@ -45,8 +45,8 @@ three measured ways: a wrapped-to-zero member fails creation with
 (`STATUS_DLL_INIT_FAILED`), and a member wrapping to a smaller positive
 silently truncates — the child would run at a geometry the receipt claims at
 `tier="os"`. Predictable misfires are refused from the measured model
-without spawning anything; every other geometry is proven by a probe child's
-read-back of the adopted size (one probe per distinct geometry, cached per
+without spawning anything; every other geometry's adoption is measured by a
+probe child's read-back (one probe per distinct geometry, cached per
 process), and a divergence fails the start as `StartFailed` whose details
 name the requested and adopted sizes.
 

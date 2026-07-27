@@ -350,7 +350,7 @@ lives, and it is cheaper to check the axis than to be right about it.
 > truncate silently in the `COORD` wrap (measured: 65546 rows adopted as
 > 10). The spawn now verifies adoption before handing out a session:
 > predictable wrap misfires are refused from the measured model, and every
-> other geometry is proven by a probe child's read-back of the adopted size.
+> other geometry's adoption is measured by a probe child's read-back.
 > Adversarial review then found the same boundary at *resize* (measured:
 > 65600 columns silently adopted as 64; wrap-to-zero a silent no-op), so
 > `resize` verifies too — and review round 2 found resize is NOT creation

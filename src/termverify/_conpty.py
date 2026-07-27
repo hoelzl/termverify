@@ -317,12 +317,12 @@ def _require_int_geometry_axes(rows: int, columns: int) -> None:
 
 
 def _verify_geometry(rows: int, columns: int) -> None:
-    """Prove the console adopts this geometry exactly, or fail closed.
+    """Verify the console adopts this geometry exactly, or fail closed.
 
     The hybrid (issue #228): refuse what the measured model predicts
     cannot survive the console's signed 16-bit ``COORD`` members, then
-    prove every other geometry by a probe child's read-back of the adopted
-    size, cached per process. Raises :class:`ConptyGeometryMismatchError`
+    measure the adopted size of every other geometry with a probe child's
+    read-back, cached per process. Raises :class:`ConptyGeometryMismatchError`
     on refusal or divergence; subclasses ``OSError`` so existing
     spawn-failure handling applies. A refusal raises before any session
     is handed out, so a receipt can never claim ``tier="os"`` for a
@@ -1558,8 +1558,8 @@ class ConptyChild:
         reporting success (observed as STATUS_CONTROL_C_EXIT for a
         stdin-blocked client). The target geometry is
         therefore refused predictively for both the wrap model and the kill
-        band, then proven by the same read-back probe as a spawn's, before
-        the native call (issue #228). A refused resize raises before the
+        band, then its adoption measured by the same read-back probe as a
+        spawn's, before the native call (issue #228). A refused resize raises before the
         native call, so the console provably keeps its previous size.
         """
         pty = self._require_open()
