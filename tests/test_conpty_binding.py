@@ -1835,20 +1835,26 @@ def test_a_resize_to_the_maximum_coord_axis_is_refused(
 ) -> None:
     """The resize-only kill band: an axis of exactly 32767 kills the client.
 
-    Measured on the dev host (review round 2): ResizePseudoConsole to ANY
-    geometry with an axis of exactly 32767 — including a same-size resize —
-    returns success while the attached client dies within half a second
-    with STATUS_CONTROL_C_EXIT (0xC000013A); every 32766 variant is fine.
-    Creation is unaffected (32767x32767 is adopted exactly), so the
-    creation-semantics probe cannot see the band: the run would record a
-    subject exit the adapter's own resize caused. Refuse it predictively.
+    Measured on the dev host (review round 2): ResizePseudoConsole to an
+    axis of exactly 32767 with an otherwise adoptable geometry — including
+    a same-size resize — returns success while the attached client dies
+    within half a second (observed as STATUS_CONTROL_C_EXIT (0xC000013A)
+    for a stdin-blocked client); every 32766 variant is fine. Creation is
+    unaffected (32767x32767 is adopted exactly), so the creation-semantics
+    probe cannot see the band: the run would record a subject exit the
+    adapter's own resize caused. Refuse it predictively.
     """
     child = _spawn_at(_BLOCKING_CHILD, rows=30, columns=120)
     try:
         _refusal_must_not_spawn(monkeypatch)
         for rows, columns in ((1, 32_767), (32_767, 1), (32_767, 32_767)):
-            with pytest.raises(ConptyGeometryMismatchError, match="32767"):
+            with pytest.raises(
+                ConptyGeometryMismatchError, match="otherwise adoptable"
+            ):
                 child.resize(rows=rows, columns=columns)
+        # The type contract precedes even the kill-band check.
+        with pytest.raises(TypeError, match="must be an int"):
+            child.resize(rows=32_767.0, columns=1)  # type: ignore[arg-type]
         # The refused resizes changed nothing: a same-size resize to the
         # cached creation geometry still takes effect.
         child.resize(rows=30, columns=120)

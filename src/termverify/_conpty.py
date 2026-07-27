@@ -307,21 +307,28 @@ def _probe_geometry(rows: int, columns: int) -> tuple[int, int]:
     return (adopted_rows, adopted_columns)
 
 
-def _verify_geometry(rows: int, columns: int) -> None:
-    """Prove the console adopts this geometry exactly, or fail closed.
-
-    Predictable misfires are refused from the measured model without
-    spawning anything; everything else is proven by the probe child's
-    read-back, cached per process. A refusal raises
-    :class:`ConptyGeometryMismatchError` before any session is handed out,
-    so a receipt can never claim ``tier="os"`` for a geometry the subject
-    did not run at (issue #228).
-    """
+def _require_int_geometry_axes(rows: int, columns: int) -> None:
+    """Enforce the geometry contract's type half on both axes."""
     for axis, value in (("rows", rows), ("columns", columns)):
         if type(value) is not int:
             raise TypeError(
                 f"terminal geometry {axis} must be an int, got {type(value).__name__}"
             )
+
+
+def _verify_geometry(rows: int, columns: int) -> None:
+    """Prove the console adopts this geometry exactly, or fail closed.
+
+    The hybrid (issue #228): refuse what the measured model predicts
+    cannot survive the console's signed 16-bit ``COORD`` members, then
+    prove every other geometry by a probe child's read-back of the adopted
+    size, cached per process. Raises :class:`ConptyGeometryMismatchError`
+    on refusal or divergence; subclasses ``OSError`` so existing
+    spawn-failure handling applies. A refusal raises before any session
+    is handed out, so a receipt can never claim ``tier="os"`` for a
+    geometry the subject did not run at (issue #228).
+    """
+    _require_int_geometry_axes(rows, columns)
     refusal = _predict_geometry_refusal(rows, columns)
     if refusal is not None:
         raise ConptyGeometryMismatchError(
@@ -1546,28 +1553,34 @@ class ConptyChild:
         The resize boundary wraps like creation — measured on the dev host,
         a wrapping request silently truncates (65600 columns adopted as 64)
         and a wrap-to-zero silently no-ops while reporting success — and adds
-        a kill band creation does not have: an axis of exactly 32767 kills
-        the attached client while reporting success. The target geometry is
+        a kill band creation does not have: an axis of exactly 32767 with an
+        otherwise adoptable geometry kills the attached client while
+        reporting success (observed as STATUS_CONTROL_C_EXIT for a
+        stdin-blocked client). The target geometry is
         therefore refused predictively for both the wrap model and the kill
         band, then proven by the same read-back probe as a spawn's, before
         the native call (issue #228). A refused resize raises before the
         native call, so the console provably keeps its previous size.
         """
         pty = self._require_open()
+        _require_int_geometry_axes(rows, columns)
         if rows == _COORD_MAX_VALID or columns == _COORD_MAX_VALID:
             # Resize-only kill band, measured on the dev host (review round
-            # 2, issue #228): ResizePseudoConsole to ANY geometry with an
-            # axis of exactly 32767 — even a same-size resize — reports
-            # success while the attached client dies within half a second
-            # with STATUS_CONTROL_C_EXIT (0xC000013A); every 32766 variant
-            # is fine. Creation is unaffected, so the creation-semantics
-            # probe cannot see the band: refuse it predictively rather than
-            # let the run record a subject exit the resize itself caused.
+            # 2, issue #228): ResizePseudoConsole to an axis of exactly
+            # 32767 with an otherwise adoptable geometry — even a same-size
+            # resize — reports success while the attached client dies
+            # within half a second (observed as STATUS_CONTROL_C_EXIT
+            # (0xC000013A) for a stdin-blocked client; a client blocked
+            # outside console I/O was observed dying STATUS_DLL_INIT_FAILED
+            # (0xC0000142)); every 32766 variant is fine. Creation is
+            # unaffected, so the creation-semantics probe cannot see the
+            # band: refuse it predictively rather than let the run record a
+            # subject exit the resize itself caused.
             raise ConptyGeometryMismatchError(
                 f"the requested terminal geometry {columns}x{rows} cannot be"
                 f" adopted at resize: measured on this host, a resize to an"
-                f" axis of 32767 kills the attached client while reporting"
-                f" success",
+                f" axis of 32767 with an otherwise adoptable geometry kills"
+                f" the attached client while reporting success",
                 requested=(rows, columns),
                 adopted=None,
             )

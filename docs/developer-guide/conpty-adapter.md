@@ -54,9 +54,10 @@ The resize boundary wraps identically and is, if anything, sneakier —
 measured on the dev host, a wrapping request silently truncates (65600
 columns adopted as 64) and a wrap-to-zero silently no-ops while reporting
 success, so the console keeps a size the adapter no longer knows. Resize
-also has a kill band creation does not: an axis of exactly 32767 makes
-`ResizePseudoConsole` report success while the attached client dies with
-`STATUS_CONTROL_C_EXIT` (every 32766 variant is fine; creation at 32767 is
+also has a kill band creation does not: an axis of exactly 32767 with an
+otherwise adoptable geometry makes `ResizePseudoConsole` report success
+while the attached client dies (observed as `STATUS_CONTROL_C_EXIT` for a
+stdin-blocked client; every 32766 variant is fine; creation at 32767 is
 unaffected, so the creation-semantics probe cannot see it). The kill band is
 refused predictively; any `Resize` input event whose geometry fails
 verification never reaches the native call: the console provably keeps its

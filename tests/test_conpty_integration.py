@@ -1239,3 +1239,40 @@ def test_a_resize_the_console_cannot_adopt_fails_the_run_structured() -> None:
             " console's signed 16-bit COORD member, and the child would run"
             " at a size the receipt never recorded",
         }
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY integration evidence")
+def test_a_resize_into_the_kill_band_fails_the_run_before_the_subject_dies() -> None:
+    """The #228 kill band end to end: the dishonest sequence cannot recur.
+
+    Measured on the dev host (review round 2), a resize to an axis of
+    exactly 32767 reports success while the attached client dies; the
+    epoch would then read end-of-stream and the run would record the
+    subject's death as ITS exit — with the observation claiming the new
+    size. The refusal fires before the native call, so the run must fail
+    structured (RunFailed naming the geometry), never RunFinished with
+    the kill's exit code: the RunFailed type IS the subject-health
+    assertion here.
+    """
+    adapter = _adapter(_cooperative_argv())
+
+    with _reaped(adapter):
+        started = adapter.start("run-conpty-integration", _configuration())
+        assert type(started) is Started, started
+
+        outcome = adapter.dispatch(Resize(ManualTime(0), columns=32_767, rows=1))
+
+        assert type(outcome) is TerminalResult, outcome
+        assert outcome.observation is None
+        run_failed = outcome.outcome
+        assert type(run_failed) is RunFailed
+        assert run_failed.failure.code == "adapter-runtime-failed"
+        assert run_failed.failure.details == {
+            "during": "resize",
+            "terminal-rows": 1,
+            "terminal-columns": 32_767,
+            "reason": "the requested terminal geometry 32767x1 cannot be"
+            " adopted at resize: measured on this host, a resize to an"
+            " axis of 32767 with an otherwise adoptable geometry kills"
+            " the attached client while reporting success",
+        }
