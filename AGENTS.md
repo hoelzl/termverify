@@ -1,6 +1,6 @@
 # TermVerify — Agent Guide
 
-TermVerify is a Python library and reference tooling for verifying autonomous terminal applications. It treats deterministic behavior, replayable evidence, and human review as product features.
+`README.md` is the canonical home of the public project description; this guide is the agent-facing companion. TermVerify treats deterministic behavior, replayable evidence, and human review as product features.
 
 ## Start Here
 
