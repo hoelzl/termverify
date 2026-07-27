@@ -50,15 +50,21 @@ read-back of the adopted size (one probe per distinct geometry, cached per
 process), and a divergence fails the start as `StartFailed` whose details
 name the requested and adopted sizes.
 
-The resize boundary is verified the same way: `ResizePseudoConsole` wraps
-identically and is, if anything, sneakier — measured on the dev host, a
-wrapping request silently truncates (65600 columns adopted as 64) and a
-wrap-to-zero silently no-ops while reporting success, so the console keeps a
-size the adapter no longer knows. A `Resize` input event whose geometry
-fails verification never reaches the native call: the console provably keeps
-its previous size, the normalizer is never notified, and the run fails as
+The resize boundary wraps identically and is, if anything, sneakier —
+measured on the dev host, a wrapping request silently truncates (65600
+columns adopted as 64) and a wrap-to-zero silently no-ops while reporting
+success, so the console keeps a size the adapter no longer knows. Resize
+also has a kill band creation does not: an axis of exactly 32767 makes
+`ResizePseudoConsole` report success while the attached client dies with
+`STATUS_CONTROL_C_EXIT` (every 32766 variant is fine; creation at 32767 is
+unaffected, so the creation-semantics probe cannot see it). The kill band is
+refused predictively; any `Resize` input event whose geometry fails
+verification never reaches the native call: the console provably keeps its
+previous size, the normalizer is never notified, and the run fails as
 `adapter-runtime-failed` naming the requested geometry (and the adopted one,
-when measured).
+when measured). One disclosed residual: a wedged mid-run probe can block a
+resize epoch up to the 30-second probe timeout outside the abort deadline's
+coverage — bounded and fail-closed, but the deadline does not see it.
 
 It bounds an epoch two ways, not one. A watchdog around each blocking read
 force-closes the child when a *single read* exceeds the deadline. That alone

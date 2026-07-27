@@ -1586,8 +1586,13 @@ def test_a_read_back_mismatch_fails_the_spawn(
     monkeypatch.setattr(
         conpty_module, "_probe_geometry", lambda rows, columns: (rows - 1, columns)
     )
-    with pytest.raises(ConptyGeometryMismatchError, match="adopted"):
-        _spawn_at(_BLOCKING_CHILD, rows=41, columns=121)
+    try:
+        with pytest.raises(ConptyGeometryMismatchError, match="adopted"):
+            _spawn_at(_BLOCKING_CHILD, rows=41, columns=121)
+    finally:
+        # A monkeypatched probe's cached mismatch is poison for later
+        # honest verifications in this process; do not leave it behind.
+        conpty_module._GEOMETRY_ADOPTIONS.pop((41, 121), None)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
@@ -1712,6 +1717,11 @@ def test_a_resize_read_back_mismatch_fails_the_resize(
         assert child.is_alive()
     finally:
         child.close(force=True)
+        # The mismatch is cached by design (fail-closed from cache on
+        # repeat); a monkeypatched probe's entry is poison for every later
+        # honest verification in this process, so the test must not leave
+        # it behind.
+        conpty_module._GEOMETRY_ADOPTIONS.pop((41, 130), None)
 
 
 # --- probe failure-mode guards (issue #228, review round 1, F3) ------------
@@ -1817,3 +1827,31 @@ def test_the_geometry_contract_rejects_non_int_axes() -> None:
         conpty_module._verify_geometry(24, 80.5)  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="rows.*bool"):
         conpty_module._verify_geometry(True, 80)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_a_resize_to_the_maximum_coord_axis_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The resize-only kill band: an axis of exactly 32767 kills the client.
+
+    Measured on the dev host (review round 2): ResizePseudoConsole to ANY
+    geometry with an axis of exactly 32767 — including a same-size resize —
+    returns success while the attached client dies within half a second
+    with STATUS_CONTROL_C_EXIT (0xC000013A); every 32766 variant is fine.
+    Creation is unaffected (32767x32767 is adopted exactly), so the
+    creation-semantics probe cannot see the band: the run would record a
+    subject exit the adapter's own resize caused. Refuse it predictively.
+    """
+    child = _spawn_at(_BLOCKING_CHILD, rows=30, columns=120)
+    try:
+        _refusal_must_not_spawn(monkeypatch)
+        for rows, columns in ((1, 32_767), (32_767, 1), (32_767, 32_767)):
+            with pytest.raises(ConptyGeometryMismatchError, match="32767"):
+                child.resize(rows=rows, columns=columns)
+        # The refused resizes changed nothing: a same-size resize to the
+        # cached creation geometry still takes effect.
+        child.resize(rows=30, columns=120)
+        assert child.is_alive()
+    finally:
+        child.close(force=True)

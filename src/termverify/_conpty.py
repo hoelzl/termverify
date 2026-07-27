@@ -1543,15 +1543,34 @@ class ConptyChild:
     def resize(self, *, rows: int, columns: int) -> None:
         """Resize the pseudoconsole explicitly.
 
-        The resize boundary wraps exactly like creation — measured on the
-        dev host, a wrapping request silently truncates (65600 columns
-        adopted as 64) and a wrap-to-zero silently no-ops while reporting
-        success — so the target geometry is verified with the same
-        predictive refusal and read-back proof as a spawn's before the
-        native call (issue #228). A refused resize raises before the native
-        call, so the console provably keeps its previous size.
+        The resize boundary wraps like creation — measured on the dev host,
+        a wrapping request silently truncates (65600 columns adopted as 64)
+        and a wrap-to-zero silently no-ops while reporting success — and adds
+        a kill band creation does not have: an axis of exactly 32767 kills
+        the attached client while reporting success. The target geometry is
+        therefore refused predictively for both the wrap model and the kill
+        band, then proven by the same read-back probe as a spawn's, before
+        the native call (issue #228). A refused resize raises before the
+        native call, so the console provably keeps its previous size.
         """
         pty = self._require_open()
+        if rows == _COORD_MAX_VALID or columns == _COORD_MAX_VALID:
+            # Resize-only kill band, measured on the dev host (review round
+            # 2, issue #228): ResizePseudoConsole to ANY geometry with an
+            # axis of exactly 32767 — even a same-size resize — reports
+            # success while the attached client dies within half a second
+            # with STATUS_CONTROL_C_EXIT (0xC000013A); every 32766 variant
+            # is fine. Creation is unaffected, so the creation-semantics
+            # probe cannot see the band: refuse it predictively rather than
+            # let the run record a subject exit the resize itself caused.
+            raise ConptyGeometryMismatchError(
+                f"the requested terminal geometry {columns}x{rows} cannot be"
+                f" adopted at resize: measured on this host, a resize to an"
+                f" axis of 32767 kills the attached client while reporting"
+                f" success",
+                requested=(rows, columns),
+                adopted=None,
+            )
         _verify_geometry(rows, columns)
         pty.set_size(columns, rows)
 
