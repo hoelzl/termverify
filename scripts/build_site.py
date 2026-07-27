@@ -80,7 +80,9 @@ def _readme_tagline(repo_root: Path) -> str:
 
     The minimal landing page never hard-codes project descriptions: the
     tagline lives in exactly one place, and a missing or unparsable README
-    fails closed rather than silently publishing stale prose.
+    fails closed rather than silently publishing stale prose. Badge and
+    markup lines (images, reference links, raw HTML) between the title and
+    the prose tagline are skipped.
     """
     readme = repo_root / "README.md"
     if not readme.is_file():
@@ -95,6 +97,8 @@ def _readme_tagline(repo_root: Path) -> str:
             continue
         if line.startswith("#"):
             break
+        if line.lstrip().startswith(("[", "!", "<")):
+            continue
         return line.strip()
     raise ValueError(f"no tagline paragraph found in {readme}")
 
@@ -277,6 +281,9 @@ def build_site(
     published = tuple(
         f"{SITE_SCHEMA_PREFIX}/{resource.as_posix()}" for resource in resources
     )
+    # Extract before any output is written so a missing/unparsable README
+    # fails closed without leaving a partially assembled site behind.
+    tagline = _readme_tagline(repo_root) if not include_docs else ""
     if include_docs:
         _build_docs(repo_root, output_dir)
     for resource in resources:
@@ -285,7 +292,7 @@ def build_site(
         shutil.copyfile(schemas_root / resource, target)
     if not include_docs:
         (output_dir / "index.html").write_text(
-            _landing_page(published, _readme_tagline(repo_root)),
+            _landing_page(published, tagline),
             encoding="utf-8",
             newline="\n",
         )

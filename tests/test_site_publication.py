@@ -7,6 +7,7 @@ required gate depends on the published site being reachable.
 
 from __future__ import annotations
 
+import html
 import importlib.util
 import runpy
 import shutil
@@ -125,12 +126,40 @@ class TestBuildSite:
             for line in Path("README.md").read_text(encoding="utf-8").splitlines()
             if line.strip() and not line.startswith("#")
         )
-        assert readme_tagline in landing
+        assert html.escape(readme_tagline) in landing
         assert "reference tooling for verifying autonomous" not in landing
 
     def test_landing_page_fails_closed_without_readme(self, tmp_path: Path) -> None:
+        output = tmp_path / "site"
         with pytest.raises(ValueError, match="README"):
-            build_site(COMMITTED_SCHEMAS_ROOT, tmp_path / "site", repo_root=tmp_path)
+            build_site(COMMITTED_SCHEMAS_ROOT, output, repo_root=tmp_path)
+        assert not (output / "schemas").exists()
+
+    def test_landing_page_escapes_html_in_the_tagline(self, tmp_path: Path) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / "README.md").write_text(
+            '# TermVerify\n\nA & B <tag> "q".\n', encoding="utf-8"
+        )
+        output = tmp_path / "site"
+        build_site(COMMITTED_SCHEMAS_ROOT, output, repo_root=repo)
+        landing = (output / "index.html").read_text(encoding="utf-8")
+        assert "A &amp; B &lt;tag&gt;" in landing
+        assert "A & B <tag>" not in landing
+
+    def test_landing_page_skips_badge_lines_before_the_tagline(
+        self, tmp_path: Path
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / "README.md").write_text(
+            "# TermVerify\n\n[![ci](x)](y)\n\nThe real tagline.\n", encoding="utf-8"
+        )
+        output = tmp_path / "site"
+        build_site(COMMITTED_SCHEMAS_ROOT, output, repo_root=repo)
+        landing = (output / "index.html").read_text(encoding="utf-8")
+        assert "The real tagline." in landing
+        assert "[![ci]" not in landing
 
     def test_no_content_outside_landing_page_and_schemas(self, tmp_path: Path) -> None:
         output = tmp_path / "site"
