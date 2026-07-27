@@ -5,4 +5,6 @@
   strict codec is authoritative, the packaged schema is a structural aid,
   mismatches are repaired doc-side by default — and link
   `docs/agent/design/prototyping-stage-protocol-governance.md` for the
-  current stage status.
+  current stage status. The governance record's Consequences bullet now
+  reflects that division: `docs/knowledge/protocol.md` states the status,
+  `AGENTS.md` links it.
