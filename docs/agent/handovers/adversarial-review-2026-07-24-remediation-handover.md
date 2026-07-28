@@ -8,8 +8,8 @@
   (reviewed revision: `main` @ `8f33e6c`).
 - **Owner:** project maintainer
 - **Created:** 2026-07-24
-- **Updated:** 2026-07-26 (checkpoint d: **Phases 1–4 complete**, plus #192,
-  Slice 5.1 and **Slice 5.2**; next item is Slice 5.3 / #197)
+- **Updated:** 2026-07-28 (checkpoint e: **Phases 1–5 complete**, 0.1.1
+  released; next item is Phase 6 / #198 + #218)
 - **Review required:** yes — every slice that changes runtime behavior, the
   public API, protocol prose with normative force, or release/security claims
   requires TDD evidence, full validation, and an independent adversarial
@@ -546,7 +546,7 @@ control flow; sequence after Phase 2 merges (they touch the same modules).
 R2 (non-reading subject; marker-less trickle) each produce a structured
 failure within bounded time and memory, demonstrated by tests.
 
-### Phase 5 — Fidelity boundaries: decide, fix, or disclose (review recs 6, 7) [TODO]
+### Phase 5 — Fidelity boundaries: decide, fix, or disclose (review recs 6, 7) [DONE 2026-07-26]
 
 Findings: **R6**, **R4**, **R7**. Each starts with an owner decision recorded
 in its issue.
@@ -654,6 +654,31 @@ re-deriving them.
      observable outcomes on every platform" claim (`jsonl.py:208-215`) to
      identical failure classification with a disclosed platform difference
      in containment strength.
+- **Slice 5.3 — ConPTY decode boundary (R7). [DONE 2026-07-26 — PR #234]**
+  Merged with #232 (the defect the slice exposed) after two adversarial
+  rounds, **both Critical**, and with #233's separate marker-protocol review
+  folded in. The mechanism owner touchpoint resolved toward the larger
+  option: pywinpty 3.0.5 exposes no bytes-returning read and no route to the
+  conout handle, and the loss is unrepairable above it, so TermVerify now
+  owns `CreatePseudoConsole` and the `STARTUPINFOEX` spawn and decodes
+  incrementally. The measured red: a 200,000-character `U+65E5` burst
+  produced **29 replacement characters across 21 reads and lost 12
+  characters outright**. `docs/agent/design/terminal-adapter-dependency-decision.md`
+  was amended in the same change (pywinpty is off the read side).
+
+  Both review rounds were found by the reviewer *running* the code, and both
+  were in the marker scanner rather than the decoder: round 1, a resume past
+  a rejected candidate's *end*, so a stray prefix in subject output swallowed
+  the next real marker; round 2, the fix for it off by `len(terminator) - 1`,
+  losing any 64-character token whose `>>` straddled two reads. Follow-ups
+  filed and since closed: **#233** (owner-requested fresh review of the
+  marker protocol — its fixes landed in this PR by fast-forward, so #237 was
+  auto-marked merged), **#235** (the job-assignment window, now closable
+  because we own `CreateProcessW`), **#236** (the coverage-omit rationale had
+  gone stale — the binding tripled in size and both rounds' defects were in
+  unmeasured code).
+
+  Original slice text follows.
 - **Slice 5.3 — ConPTY decode boundary (R7).**
   **Owner decision 2026-07-24: eliminate the bug class now (Option C).**
   Rebuild the ConPTY read path on raw bytes with incremental UTF-8 decoding
@@ -739,8 +764,11 @@ is fix, disclose, or a recorded won't-fix; none silently dropped. See review
   tables and manual-clock chain or add a drift test
   (`transcript.py:56-63` etc.); docstring caveat for the RFC 8785
   integral-float / `_json_equivalent` asymmetry (`transcript.py:1092-1106`).
-- **Slice 8.3 — Tests/CI minors:** per-OS supplemental (non-gating) coverage
-  for `_conpty.py` (`pyproject.toml:67`); direct invalid-UTF-8 fixture for
+- **Slice 8.3 — Tests/CI minors** (two items **already done** out of order,
+  because Phase 5 made them urgent: the `_conpty.py` supplemental coverage
+  landed as PR #240 (#236) and the per-OS pragma overlays as PR #241 (#230)
+  — see checkpoint e)**:** ~~per-OS supplemental (non-gating) coverage
+  for `_conpty.py` (`pyproject.toml:67`)~~; direct invalid-UTF-8 fixture for
   `_parse_line`'s `UnicodeDecodeError` leg (`transcript.py:301`); add
   `timeout-minutes` to quality/package/docs CI jobs; review the race-window
   arrangement sleeps (`test_conpty_binding.py:412,836`,
@@ -853,6 +881,43 @@ implementation gets its own future handover/boundary, not this one.
   already resolved by PR #183.
 - **Phase 0 complete (2026-07-24):** issues #184–#204 filed under the
   `review-2026-07-24` label (mapping table in Phase 0 above).
+- **Checkpoint 2026-07-28e (fifth session).**
+  - **Merged:** Slice 5.3 with #232 (PR #234, closes #197 and #232, with
+    #233's review fixes folded in); #235 (PR #239); #236 (PR #240); #230
+    (PR #241); #228 (PR #243). **Phase 5 is complete — all of Phases 1–5
+    are done.** Working state clean: no open feature PRs, no worktrees, no
+    local branches. Suite green on `main` @ `0509afe`: 1859 passed, 3
+    skipped (the three skips are POSIX containment mechanisms).
+  - **0.1.1 was released (PR #242, tag `v0.1.1` @ `d8dbaf2`, 2026-07-27).**
+    The gated pipeline ran end to end — CI-green wait, tag, build and
+    attest, PyPI via OIDC, GitHub release — folding 35 changelog fragments.
+    This is the first release the checklist drove without manual repair.
+    Two doc slices followed: #244 (PR #246, the volatile stage status left
+    the Tier-1 `AGENTS.md` table) and #245 (PR #247, the project
+    description is single-sourced from `README.md`).
+  - **Part of Phase 8 was executed early, by necessity.** #236 and #230 are
+    Slice 8.3 items that the Phase 5 work made urgent — the ConPTY binding
+    tripled in size while excluded from coverage, and the bare pragmas hid
+    both platforms' native legs. `_conpty.py` now has a supplemental
+    non-gating Windows-leg measurement (82.34% at the time) and
+    `_jsonl_pipe.py`'s 21 pragmas became per-OS markers with per-OS
+    overlays, so each leg is ratcheted where it actually runs. Slice 8.3
+    keeps its remaining items; deduct these two when sizing it.
+  - **New issue: #238** — the JSONL transport still has the Windows
+    job-assignment window that #235 closed for ConPTY. It cannot be closed
+    the same way: `subprocess.Popen` accepts `CREATE_SUSPENDED` but never
+    exposes the main thread handle `ResumeThread` needs, so the choice is
+    owning the Windows spawn (the #197 pattern) or recording the
+    disclosure. It joins the reopened Windows halves of **#213/#217** —
+    three findings that are all one question, *does TermVerify own the
+    Windows spawn and its pipe handles in the JSONL transport too*, and
+    they should be sized as one slice rather than three.
+  - **The standing lesson holds at a fifth instance.** #228 took five
+    commits and three of them corrected sentences, not code: the kill-band
+    claims were stronger than the measurements, and the last commit exists
+    only to reword "prove" as "measure" throughout. The pattern this
+    handover has recorded since checkpoint b — reviews above nit level find
+    *false statements* — did not break.
 - **Checkpoint 2026-07-26d (fourth session).**
   - **Merged:** the Slice 4.2 follow-up (PR #227, closes #226) and Slice 5.2
     (PR #229, closes #196). **Phase 5 has only 5.3 (#197) left.** Working
@@ -994,21 +1059,31 @@ implementation gets its own future handover/boundary, not this one.
    **Phases 1–4 are complete.**
 7. ~~Slice 5.2 (#196)~~ **done 2026-07-26** — PR #229, plus the Slice 4.2
    follow-up PR #227 (#226) that a round-7 review of the merged #194 produced.
-8. **Resume with Slice 5.3 (#197)** — the raw-byte ConPTY read path with
-   incremental UTF-8 decoding. It is a **design-first** slice: pywinpty's
-   `PTY.read` returns pre-decoded `str`, so the issue must first settle how to
-   obtain raw conout bytes, and the answer may amend
-   `docs/agent/design/terminal-adapter-dependency-decision.md`. That is a
-   recorded owner touchpoint (§4), so surface the mechanism choice before
-   implementing. Note it converges with #228 and with `_conpty.py`'s existing
-   conclusion that the conin-write boundary "closes only when this binding
-   owns its handles" — three findings now point at the same answer, which is
-   worth weighing when sizing the slice.
+8. ~~Slice 5.3 (#197)~~ **done 2026-07-26** — PR #234, together with #232 and
+   #233; then #235 (PR #239), #236 (PR #240), #230 (PR #241) and #228
+   (PR #243). **Phase 5 is complete**, and 0.1.1 shipped (PR #242).
+9. **Resume with Phase 6 (#198 plus #218).** #198 exports the authoritative
+   codec and key registries from the public `termverify` package; #218
+   renames the in-process receipts that still say `enforced` after the wire
+   became `applied`. Both are public-API changes, so both need export/name
+   assertions, the adapter-author guide and README mentions updated in the
+   same change, and a changelog fragment. Cheap now, expensive after 0.2.0
+   — and note the rename is not what Phase 6's original text covered, so
+   read #218 rather than the phase prose.
 
-   Then Phase 6 (#198 plus #218), Phase 7 (#199), Phase 8 (#200–#203, plus
-   **#230**), and the reopened Windows halves of #213/#217 need a home —
-   they are not Phase 5 work any more and belong with a Windows-mechanism
-   slice or an accepted disclosure.
+   Then Phase 7 (#199) and Phase 8 (#200–#203, minus the two 8.3 items
+   #240/#241 already executed — see checkpoint e).
+
+   **Give the Windows containment findings one home.** #238 (JSONL spawn
+   keeps the job-assignment window) and the reopened Windows halves of
+   #213/#217 are the same question asked three times: whether the JSONL
+   transport owns its Windows spawn and pipe handles the way `_conpty.py`
+   now does. Size them as one slice with a recorded owner decision on
+   own-the-spawn versus disclose, not as three minors. They are no longer
+   Phase 5 work.
+
+   Housekeeping when convenient: five dependabot PRs are open (#248–#252);
+   only the `astral-sh/setup-uv` 8→9 major bump needs reading before merge.
 
 Superseded next-step detail from the previous checkpoint, kept because the
 file survey is still accurate:
