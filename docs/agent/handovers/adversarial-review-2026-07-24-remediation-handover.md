@@ -8,8 +8,8 @@
   (reviewed revision: `main` @ `8f33e6c`).
 - **Owner:** project maintainer
 - **Created:** 2026-07-24
-- **Updated:** 2026-07-28 (checkpoint e: **Phases 1–5 complete**, 0.1.1
-  released; next item is Phase 6 / #198 + #218)
+- **Updated:** 2026-07-29 (checkpoint e: **Phases 1–5 complete**, 0.1.1
+  released; Phase 6 half done — #198 landed as PR #254, next item is #218)
 - **Review required:** yes — every slice that changes runtime behavior, the
   public API, protocol prose with normative force, or release/security claims
   requires TDD evidence, full validation, and an independent adversarial
@@ -701,7 +701,16 @@ re-deriving them.
 **Acceptance:** each finding has a recorded decision and its chosen
 disposition implemented; no undisclosed fidelity gap remains.
 
-### Phase 6 — Public API exports (review rec 8) [TODO]
+### Phase 6 — Public API exports (review rec 8) [IN PROGRESS]
+
+**#198 done 2026-07-29 — PR #254.** The codec (`parse_transcript`,
+`serialize_transcript`, `TranscriptValidationError`) and the registries
+(`KEY_NAMES`, `is_key_chord`, `encode_key_chord`) are exported; the registry
+names are public while their defining modules stay private, which is the one
+deliberate exception to the guide's interchangeable-import rule.
+**#218 (the `enforced` → `applied` in-process rename) remains open** and is
+what completes this phase. Original slice text follows for the record.
+
 
 Finding: minor `__init__.py` bullet. Export the authoritative codec
 (`parse_transcript`, `serialize_transcript`, `TranscriptValidationError`) and
@@ -1062,14 +1071,17 @@ implementation gets its own future handover/boundary, not this one.
 8. ~~Slice 5.3 (#197)~~ **done 2026-07-26** — PR #234, together with #232 and
    #233; then #235 (PR #239), #236 (PR #240), #230 (PR #241) and #228
    (PR #243). **Phase 5 is complete**, and 0.1.1 shipped (PR #242).
-9. **Resume with Phase 6 (#198 plus #218).** #198 exports the authoritative
-   codec and key registries from the public `termverify` package; #218
-   renames the in-process receipts that still say `enforced` after the wire
-   became `applied`. Both are public-API changes, so both need export/name
-   assertions, the adapter-author guide and README mentions updated in the
-   same change, and a changelog fragment. Cheap now, expensive after 0.2.0
-   — and note the rename is not what Phase 6's original text covered, so
-   read #218 rather than the phase prose.
+9. ~~Phase 6, #198~~ **done 2026-07-29** — PR #254 exported the
+   authoritative codec and the key registries. **Resume with #218**, the
+   other half of Phase 6: rename the in-process receipts that still say
+   `enforced` after the wire became `applied` (`EnforcedConstraints`,
+   `AdapterResult.enforced`, `StartOk`/`StartUnsupported`/`StartFailed`
+   `.enforced`, `UnenforcedConstraintPorts`). It is a public-API change, so
+   it needs name assertions, the adapter-author guide and README mentions
+   updated in the same change, and a changelog fragment carrying the
+   migration note. Cheap now, expensive after 0.2.0 — and note the rename is
+   not what Phase 6's original text covered, so read #218 rather than the
+   phase prose. The `constraint-not-enforced` wire code deliberately stays.
 
    Then Phase 7 (#199) and Phase 8 (#200–#203, minus the two 8.3 items
    #240/#241 already executed — see checkpoint e).
