@@ -466,7 +466,7 @@ UTF-8 names with a final LF; its SHA-256 is
 
 The registry and its membership predicate are on the package's public
 surface as `termverify.KEY_NAMES` and `termverify.is_key_chord`; the module
-that defines them is private and is not an import path.
+that defines them is private and is not a supported import path.
 
 #### Companion registry: `termverify.key-encoding/v1`
 

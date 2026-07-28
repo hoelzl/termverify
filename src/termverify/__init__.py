@@ -10,9 +10,10 @@ pre-1.0: compatibility intent and changes are recorded in ``CHANGELOG.md``.
 The surface also carries the authoritative transcript codec
 (:func:`parse_transcript`, :func:`serialize_transcript`,
 :class:`TranscriptValidationError`) alongside the non-authoritative schema
-aid, and the closed key registries (:data:`KEY_NAMES`,
-:func:`is_key_chord`, :func:`encode_key_chord`). The registries are defined
-in private modules; the names are public, their module paths are not.
+aid, and the key registries' entry points (:data:`KEY_NAMES`,
+:func:`is_key_chord`, :func:`encode_key_chord`). Those three are defined in
+private modules; the names are public, their module paths are not, and the
+rest of those modules stays private.
 """
 
 from importlib.metadata import version

@@ -12,6 +12,7 @@ authoritative transcript codec and the closed ``termverify.key/v1`` and
 ``termverify.key-encoding/v1`` registries.
 """
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
 
@@ -97,11 +98,26 @@ class _Chord(NamedTuple):
 
 
 def test_the_promoted_encoder_rejects_a_chord_by_exact_container_type() -> None:
-    """The documented strictness: a NamedTuple of key names is not a chord."""
+    """The documented strictness: a NamedTuple of key names is not a chord.
+
+    The adapter-author guide promises the container rejection is
+    indistinguishable from an invalid-chord rejection, and that a type
+    checker cannot warn about it — both are pinned here, since the guide
+    tells authors to model chords as plain tuples because of it.
+    """
     assert termverify.is_key_chord(list(_Chord("Control", "c")))
     assert not termverify.is_key_chord(_Chord("Control", "c"))
-    with pytest.raises(ValueError):
-        termverify.encode_key_chord(_Chord("Control", "c"))
+
+    valid_names = _Chord("Control", "c")
+    container = _message_of(lambda: termverify.encode_key_chord(valid_names))
+    invalid = _message_of(lambda: termverify.encode_key_chord(["Ctrl", "c"]))
+    assert container == invalid == "keys must be one canonical termverify.key/v1 chord"
+
+
+def _message_of(call: Callable[[], object]) -> str:
+    with pytest.raises(ValueError) as raised:
+        call()
+    return str(raised.value)
 
 
 def test_the_promoted_codec_round_trips_from_the_top_level() -> None:

@@ -67,20 +67,24 @@ underscore path.
   non-exhaustive structural aid and schema acceptance is not conformance
   (`docs/knowledge/protocol.md`). The aid and the validator are both on the
   surface, so the authoritative one is never the harder import. Records are
-  plain `dict`s; the alias `Record` and the `JsonValue` it is built from stay
-  at `termverify.transcript`, which is a public module path.
+  plain `dict`s; the alias `Record` is defined at `termverify.transcript`, a
+  public module path, and the `JsonValue` it is built from is re-exported
+  there from a private module — use it via `termverify.transcript`, whose
+  re-export is the supported spelling.
 - **The closed key registries' entry points**: `KEY_NAMES` and `is_key_chord`
   from `termverify.key/v1`, and `encode_key_chord` from
   `termverify.key-encoding/v1`. Use `is_key_chord` to validate a chord
   before putting it in a `KeyInput`, and `encode_key_chord` when your
   adapter drives a real terminal — it returns the xterm-legacy bytes, or
-  `None` for the explicit fail-closed verdict *unencodable*. Both accept a
-  chord by **exact type**: a `list` or `tuple` of `str`, matching the codec's
-  fail-closed discipline. A `NamedTuple` of key names or any other
+  `None` for the explicit fail-closed verdict *unencodable*. Both functions
+  take a chord by **exact type**: a `list` or `tuple` of `str`, matching the
+  codec's fail-closed discipline. A `NamedTuple` of key names or any other
   `Sequence` is rejected even when the names it carries are valid, and
   `encode_key_chord` raises `ValueError` — with the same message it uses for
   a genuinely invalid chord — rather than returning the *unencodable*
-  verdict. Model chords as plain tuples.
+  verdict. **Your type checker will not catch the `NamedTuple` case**: it is
+  a `tuple` statically and a rejection at runtime. Model chords as plain
+  tuples.
 
 ## What the surface deliberately excludes
 

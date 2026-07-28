@@ -104,7 +104,11 @@ def encode_key_chord(keys: list[str] | tuple[str, ...]) -> str | None:
     invalidity is a caller error, never a verdict. That includes the
     container — acceptance is by exact type, so a ``str``, a ``NamedTuple``
     of key names, or any other :class:`~collections.abc.Sequence` raises even
-    when the names it carries would form a valid chord in a plain ``list``.
+    when the names it carries would form a valid chord in a plain ``list``,
+    and the message is the same one an invalid chord gets. The annotation
+    catches ``str`` and the abstract sequences statically; it cannot catch a
+    ``NamedTuple``, which is a ``tuple`` to a type checker and a rejection at
+    runtime.
     """
     if not is_key_chord(keys):
         raise ValueError("keys must be one canonical termverify.key/v1 chord")

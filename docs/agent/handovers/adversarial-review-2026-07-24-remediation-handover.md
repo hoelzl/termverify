@@ -899,20 +899,33 @@ implementation gets its own future handover/boundary, not this one.
     because the one #218 inherited from the review names two symbols
     (`AdapterResult`, `StartOk`) that do not exist.
   - **The standing lesson held again, this time against this handover
-    itself.** The review of PR #254 found no defect in the exported surface;
-    what it found were four false or unrepaired *statements* — the stale
-    #218 symbol list quoted above, a compatibility promise that still
-    extended to module paths the same page had just declared private, a
-    public `encode_key_chord` annotated `Sequence[str]` while accepting only
-    exact `list`/`tuple`, and a test named `..._round_trips` that never
-    round-tripped. Sixth instance; the pattern has not broken.
+    itself.** Two review rounds on PR #254 returned no Critical finding and
+    nothing wrong with *which* names were exported, their identity, or the
+    `__all__` curation. What they returned — 9 Important and 17 Minor across
+    the two rounds — was dominated by untrue or unrepaired **statements**:
+    the stale #218 symbol list quoted above (`AdapterResult` and `StartOk`
+    do not exist); a compatibility promise still extending to module paths
+    the same page had just declared private; a docstring calling every
+    `KEY_MODIFIED_BASES` entry an "ordinary printable character" when
+    `Space` is in that tuple; a test named `..._round_trips` that never
+    round-tripped; and — the sharpest one — a first draft of *this very
+    checkpoint* that claimed the review "found no defect in the exported
+    surface" while the same paragraph listed a defect in exported
+    `encode_key_chord`, and miscounted the findings it was recording.
+    One genuine code fix came out of it: `encode_key_chord` was annotated
+    `Sequence[str]` while accepting only exact `list`/`tuple`, so `str`
+    itself type-checked. Sixth instance; the pattern has not broken, and it
+    now demonstrably applies to the records this project writes about its
+    own reviews.
   - **One flake observed, not fixed:** `test_conpty_binding.py::
     test_a_containment_setup_failure_leaves_no_suspended_orphan[handle-open]`
     failed once in a pre-push run with `OpenProcess` →
     `ERROR_INVALID_PARAMETER` (the PID was fully reaped before the test
     opened its handle), then passed 10 isolated reruns and a full-file run
-    on unmodified sources. It is an instance of the race-window arrangement
-    already owned by Slice 8.3 (#202); recorded there.
+    on unmodified sources. Slice 8.3's race-window item names the
+    arrangement *sleeps*, and this failure is in `_assert_os_terminated`,
+    which has none — same slice, adjacent defect. Recorded on #202 with the
+    traceback; not fixed here.
 - **Checkpoint 2026-07-28e (fifth session).**
   - **Merged:** Slice 5.3 with #232 (PR #234, closes #197 and #232, with
     #233's review fixes folded in); #235 (PR #239); #236 (PR #240); #230
@@ -1106,16 +1119,26 @@ implementation gets its own future handover/boundary, not this one.
    | Symbol | Location | Note |
    | --- | --- | --- |
    | `EnforcedConstraints` | `adapter.py` | exported from `termverify` |
-   | `Started.constraints: EnforcedConstraints` | `adapter.py:951` | the field is already named `constraints`; only its *type* carries the vocabulary |
+   | `Started.constraints: EnforcedConstraints` | `adapter.py:954` | the field is already named `constraints`; only its *type* carries the vocabulary |
+   | `StartTerminated.constraints: EnforcedConstraints` | `adapter.py:1127` | same shape as `Started`; easy to miss |
    | `StartUnsupported.enforced` | `adapter.py:995` | exported |
    | `StartFailed.enforced` | `adapter.py:1035` | exported |
-   | `_validate_receipt_prefix` messages | `adapter.py:982-987` | three `ValueError`/`TypeError` strings say "enforced receipts" |
+   | `_validate_receipt_prefix` messages | `adapter.py:982-987` | two strings say "enforced receipts", one says "enforced receipt prefix" |
    | `UnenforcedConstraintPorts` | `conpty.py:368` | **not** on the top-level surface — `termverify.conpty` is deliberately excluded, so this one needs no README or surface-test change, only the ConPTY guide |
 
-   Confirm that list is still current before starting; it is prose, and the
-   code is authoritative. The rename is a public-API change, so it needs name
-   assertions in `tests/test_public_surface.py`, the adapter-author guide and
-   README mentions updated in the same change, and a changelog fragment under
+   Those are the *declarations*. The `enforced=` keyword construction sites
+   are in `_negotiation.py`, `direct.py`, `conpty.py`, and `jsonl.py`;
+   regenerate the current list rather than trusting a copy here —
+   `rg -n 'enforced=|\.enforced\b|EnforcedConstraints|Unenforced' src tests`.
+   Line numbers above were correct on 2026-07-29 and are the least durable
+   part of this table: re-confirm before relying on them, because the code is
+   authoritative and this is prose. (Round 2 of the PR #254 review caught one
+   of them already off by three, in the table written to replace an untrusted
+   list — the hazard is not hypothetical.)
+
+   The rename is a public-API change, so it needs name assertions in
+   `tests/test_public_surface.py`, the adapter-author guide and README
+   mentions updated in the same change, and a changelog fragment under
    `changed` carrying the migration note. Cheap now, expensive after 0.2.0.
    The `constraint-not-enforced` wire code deliberately stays (#218 records
    why).
