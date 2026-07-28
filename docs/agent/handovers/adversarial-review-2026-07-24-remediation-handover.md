@@ -8,8 +8,8 @@
   (reviewed revision: `main` @ `8f33e6c`).
 - **Owner:** project maintainer
 - **Created:** 2026-07-24
-- **Updated:** 2026-07-29 (checkpoint f: **Phases 1–5 complete**, 0.1.1
-  released, Phase 6 half done — #198 merged as PR #254; next item is #218)
+- **Updated:** 2026-07-29 (checkpoint f: **Phases 1–6 complete**, 0.1.1
+  released; next item is Phase 7 / #199)
 - **Review required:** yes — every slice that changes runtime behavior, the
   public API, protocol prose with normative force, or release/security claims
   requires TDD evidence, full validation, and an independent adversarial
@@ -701,16 +701,29 @@ re-deriving them.
 **Acceptance:** each finding has a recorded decision and its chosen
 disposition implemented; no undisclosed fidelity gap remains.
 
-### Phase 6 — Public API exports (review rec 8) [IN PROGRESS]
+### Phase 6 — Public API exports (review rec 8) [DONE 2026-07-29]
 
-**#198 merged as PR #254 (2026-07-29).** The codec (`parse_transcript`,
+**#198 merged as PR #254.** The codec (`parse_transcript`,
 `serialize_transcript`, `TranscriptValidationError`) and the registry entry
 points (`KEY_NAMES`, `is_key_chord`, `encode_key_chord`) are exported; the
 registry names are public while their defining modules stay private, which is
 the one deliberate exception to the guide's interchangeable-import rule.
-**#218 (the `enforced` → `applied` in-process rename) remains open** and is
-what completes this phase; read the corrected symbol list in §5, not the
-prose below. Original slice text follows for the record.
+
+**#218 merged as PR #255**, completing the phase. The in-process vocabulary
+now matches the wire: `ConstraintPorts.enforce_*` → `apply_*`,
+`EnforcedConstraints` → `AppliedConstraints`, `.enforced` → `.applied`,
+`UnenforcedConstraintPorts` → `ApplyNothingConstraintPorts`. The owner
+decided to include the `enforce_*` ports — #218's own list stopped at the
+data types, which would have moved the seam rather than closed it — and chose
+`ApplyNothingConstraintPorts` over the mechanical `Unapplied…`. The
+enforcement-**tier** vocabulary (`EnforcementReceipt`, `EnforcementTier`,
+`ENFORCEMENT_TIERS`, `termverify.enforcement-tier/v1`) and the
+`constraint-not-enforced` wire code deliberately keep their names: they name
+the axis of claim strength, on which `delivered` honestly means nothing is
+enforced. A test pins that so the exception cannot decay into a
+search-and-replace.
+
+Original slice text follows for the record.
 
 Finding: minor `__init__.py` bullet. Export the authoritative codec
 (`parse_transcript`, `serialize_transcript`, `TranscriptValidationError`) and
@@ -894,10 +907,28 @@ implementation gets its own future handover/boundary, not this one.
   - **Merged:** #198 (PR #254) — the authoritative codec and the key
     registries' entry points are now exported from `termverify`, so the
     non-authoritative schema aid is no longer the easier import and adapter
-    authors need no underscore path. **Phase 6 is half done; #218 completes
-    it**, and §5 carries a symbol list for it verified against `src/`
-    because the one #218 inherited from the review names two symbols
-    (`AdapterResult`, `StartOk`) that do not exist.
+    authors need no underscore path. Then #218 (PR #255) — the in-process
+    `enforced` vocabulary became `applied`, matching the wire. **Phase 6 is
+    complete; Phases 1–6 are done.**
+  - **Two owner decisions on #218, taken before implementing.** The issue's
+    scope stopped at the data types (`EnforcedConstraints`, the `.enforced`
+    fields), which would have left `ports.enforce_seed()` returning something
+    stored in `AppliedConstraints` — moving the seam, not closing it. Owner
+    chose to rename the seven `ConstraintPorts.enforce_*` ports too, breaking
+    every external implementation including GlyphWright's, on the grounds
+    that prototyping stage owes no shim and deferring costs the same break
+    plus a second migration note. Owner also chose
+    `ApplyNothingConstraintPorts` over the mechanical `Unapplied…`. The
+    enforcement-*tier* names and `constraint-not-enforced` stay, pinned by a
+    test: they name the axis of claim strength, on which `delivered` honestly
+    means nothing is enforced.
+  - **Two scripted-rename hazards worth carrying.** A blanket `sed` rewrote
+    the string literals in `tests/test_public_surface.py` that assert the
+    *old* names are gone, turning the guard into a tautology — the one place
+    in the repo where a correct global rename is wrong. And `ruff --fix`
+    re-sorts imports but not `__all__` literals; the existing sorted-surface
+    test caught that. Both were caught before any green run, but only because
+    the surface tests exist.
   - **The standing lesson held again, this time against this handover
     itself.** Two review rounds on PR #254 returned no Critical finding and
     nothing wrong with *which* names were exported, their identity, or the
@@ -1107,55 +1138,36 @@ implementation gets its own future handover/boundary, not this one.
 8. ~~Slice 5.3 (#197)~~ **done 2026-07-26** — PR #234, together with #232 and
    #233; then #235 (PR #239), #236 (PR #240), #230 (PR #241) and #228
    (PR #243). **Phase 5 is complete**, and 0.1.1 shipped (PR #242).
-9. ~~Phase 6, #198~~ **done 2026-07-29** — PR #254 exported the
-   authoritative codec and the key registries' entry points. **Resume with
-   #218**, the other half of Phase 6: rename the in-process receipts that
-   still say `enforced` after the wire became `applied`.
+9. ~~Phase 6 (#198 and #218)~~ **done 2026-07-29** — PRs #254 and #255.
+   #254 exported the authoritative codec and the key registries' entry
+   points; #255 renamed the in-process `enforced` vocabulary to `applied`,
+   including the `ConstraintPorts.enforce_*` ports by owner decision, and
+   kept the enforcement-*tier* names and the `constraint-not-enforced` wire
+   code by the same decision. **Phase 6 is complete.**
 
-   **#218's inherited symbol list is wrong; use this one instead**, verified
-   against `src/` on 2026-07-29. `AdapterResult` and `StartOk` do not exist
-   in the codebase, and `Started` carries no `.enforced` field:
+   Two method notes worth carrying, both from #255's sweep: a blanket `sed`
+   silently rewrote the string literals in `tests/test_public_surface.py`
+   that assert the *old* names are gone, turning the guard into a tautology
+   (caught before the first test run); and `ruff --fix` re-sorts imports but
+   not `__all__` literals, which the existing sorted-surface test caught.
+   A scripted rename needs both checks.
 
-   | Symbol | Location | Note |
-   | --- | --- | --- |
-   | `EnforcedConstraints` | `adapter.py` | exported from `termverify` |
-   | `Started.constraints: EnforcedConstraints` | `adapter.py:954` | the field is already named `constraints`; only its *type* carries the vocabulary |
-   | `StartTerminated.constraints: EnforcedConstraints` | `adapter.py:1127` | same shape as `Started`; easy to miss |
-   | `StartUnsupported.enforced` | `adapter.py:995` | exported |
-   | `StartFailed.enforced` | `adapter.py:1035` | exported |
-   | `_validate_receipt_prefix` messages | `adapter.py:982-987` | two strings say "enforced receipts", one says "enforced receipt prefix" |
-   | `UnenforcedConstraintPorts` | `conpty.py:368` | **not** on the top-level surface — `termverify.conpty` is deliberately excluded, so this one needs no README or surface-test change, only the ConPTY guide |
+10. **Resume with Phase 7 (#199)** — README lists current capabilities only,
+    plus a single-sourced vision doc. Note `docs/knowledge/product-vision.md`
+    already exists; check whether it is the doc Phase 7 asks for before
+    creating another. Then Phase 8 (#200–#203, minus the two 8.3 items
+    #240/#241 already executed — see checkpoint e).
 
-   Those are the *declarations*. The `enforced=` keyword construction sites
-   are in `_negotiation.py`, `direct.py`, `conpty.py`, and `jsonl.py`;
-   regenerate the current list rather than trusting a copy here —
-   `rg -n 'enforced=|\.enforced\b|EnforcedConstraints|Unenforced' src tests`.
-   Line numbers above were correct on 2026-07-29 and are the least durable
-   part of this table: re-confirm before relying on them, because the code is
-   authoritative and this is prose. (Round 2 of the PR #254 review caught one
-   of them already off by three, in the table written to replace an untrusted
-   list — the hazard is not hypothetical.)
+    **Give the Windows containment findings one home.** #238 (JSONL spawn
+    keeps the job-assignment window) and the reopened Windows halves of
+    #213/#217 are the same question asked three times: whether the JSONL
+    transport owns its Windows spawn and pipe handles the way `_conpty.py`
+    now does. Size them as one slice with a recorded owner decision on
+    own-the-spawn versus disclose, not as three minors. They are no longer
+    Phase 5 work.
 
-   The rename is a public-API change, so it needs name assertions in
-   `tests/test_public_surface.py`, the adapter-author guide and README
-   mentions updated in the same change, and a changelog fragment under
-   `changed` carrying the migration note. Cheap now, expensive after 0.2.0.
-   The `constraint-not-enforced` wire code deliberately stays (#218 records
-   why).
-
-   Then Phase 7 (#199) and Phase 8 (#200–#203, minus the two 8.3 items
-   #240/#241 already executed — see checkpoint e).
-
-   **Give the Windows containment findings one home.** #238 (JSONL spawn
-   keeps the job-assignment window) and the reopened Windows halves of
-   #213/#217 are the same question asked three times: whether the JSONL
-   transport owns its Windows spawn and pipe handles the way `_conpty.py`
-   now does. Size them as one slice with a recorded owner decision on
-   own-the-spawn versus disclose, not as three minors. They are no longer
-   Phase 5 work.
-
-   Housekeeping when convenient: five dependabot PRs are open (#248–#252);
-   only the `astral-sh/setup-uv` 8→9 major bump needs reading before merge.
+    Housekeeping when convenient: five dependabot PRs are open (#248–#252);
+    only the `astral-sh/setup-uv` 8→9 major bump needs reading before merge.
 
 Superseded next-step detail from the previous checkpoint, kept because the
 file survey is still accurate:
