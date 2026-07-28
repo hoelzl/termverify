@@ -39,6 +39,12 @@ fresh parsed object, and `termverify.TRANSCRIPT_SCHEMA_V1_ID` names the
 documented `$id`. Isolated installed-artifact checks verify byte identity
 between the installed resource and the committed schema.
 
+The authoritative validator is reachable from the same place, so the aid is
+never the easier import: `termverify.parse_transcript()`,
+`termverify.serialize_transcript()`, and `termverify.TranscriptValidationError`
+are on the public surface alongside the schema accessors, and remain
+importable from `termverify.transcript` as identical objects.
+
 The `$id` resolves: the canonical publication at
 `https://termverify.dev/schemas/termverify.transcript/v1.schema.json` is a
 byte-for-byte mirror of the committed resource, deployed from `main` by the
@@ -458,10 +464,15 @@ reviewed registry order is digest-bound in executable tests using newline-joined
 UTF-8 names with a final LF; its SHA-256 is
 `51955be77ab11b23240c642edd0e4f08dbd56389b82f99bbe2ee87871ce9d0a0`.
 
+The registry and its membership predicate are on the package's public
+surface as `termverify.KEY_NAMES` and `termverify.is_key_chord`; the module
+that defines them is private and is not an import path.
+
 #### Companion registry: `termverify.key-encoding/v1`
 
 The terminal execution path has a companion registry,
-`termverify.key-encoding/v1` (`src/termverify/_key_encoding_v1.py`), that maps
+`termverify.key-encoding/v1` (public entry point: `termverify.encode_key_chord`),
+that maps
 each of the 1382 valid `termverify.key/v1` chords either to exactly one
 xterm-legacy normal-mode byte string or to the explicit fail-closed verdict
 **unencodable**. It is committed data plus committed arithmetic owned by

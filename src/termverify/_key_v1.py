@@ -1,3 +1,14 @@
+"""The ``termverify.key/v1`` registry.
+
+The closed set of semantic key names an ``input.key`` record may carry, and
+the predicate that decides whether a value is one canonical chord. Names are
+exact and case-sensitive; v1 performs no trimming, case folding, Unicode
+normalization, alias rewriting, or modifier reordering (see
+``docs/knowledge/protocol.md``). :data:`KEY_NAMES` and :func:`is_key_chord`
+are re-exported from the top-level ``termverify`` package: the names are
+public, this module path is not.
+"""
+
 from __future__ import annotations
 
 from typing import cast
@@ -110,6 +121,10 @@ KEY_MODIFIED_BASES = (
     "~",
 )
 
+#: Every valid ``termverify.key/v1`` name, in reviewed registry order:
+#: modifiers, then bases valid unmodified, then bases valid only when
+#: modified. Membership here is necessary but not sufficient for a chord —
+#: use :func:`is_key_chord` for that.
 KEY_NAMES = KEY_MODIFIERS + KEY_NAMED_BASES + KEY_MODIFIED_BASES
 
 _KEY_MODIFIER_SET = frozenset(KEY_MODIFIERS)
@@ -119,6 +134,16 @@ _KEY_MODIFIED_TRIGGERS = frozenset(("Control", "Alt", "Meta"))
 
 
 def is_key_chord(value: object) -> bool:
+    """Report whether *value* is one canonical ``termverify.key/v1`` chord.
+
+    A chord is a non-empty list or tuple of exact :data:`KEY_NAMES` entries:
+    zero or more distinct modifiers in :data:`KEY_MODIFIERS` order followed
+    by exactly one base. Bases in :data:`KEY_MODIFIED_BASES` require at least
+    one of ``Control``, ``Alt``, or ``Meta`` — unmodified printable insertion
+    is ``input.text``, not ``input.key``. Total and side-effect free: any
+    other value, including a modifier-only or misordered sequence, is
+    ``False`` rather than an error.
+    """
     if type(value) not in (list, tuple) or not value:
         return False
     components = cast(list[object] | tuple[object, ...], value)

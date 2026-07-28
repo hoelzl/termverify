@@ -15,14 +15,24 @@ from termverify import (
     DirectApplication,
     RunConfiguration,
     TextInput,
+    is_key_chord,
+    parse_transcript,
 )
 ```
 
 The module paths remain public and documented — `termverify.adapter` defines
-the contract, `termverify.direct` the deterministic in-process runtime.
+the contract, `termverify.direct` the deterministic in-process runtime,
+`termverify.transcript` the authoritative codec.
 `tests/test_public_surface.py` pins the guarantee that the two surfaces never
 drift: every name in `termverify.adapter.__all__` and
-`termverify.direct.__all__` is importable from `termverify`.
+`termverify.direct.__all__` is importable from `termverify`, and the codec
+names re-exported at the top level are identical objects to their
+module-path definitions.
+
+The key registries are the one exception to the interchangeable-import rule:
+`KEY_NAMES`, `is_key_chord`, and `encode_key_chord` are public **names** whose
+defining modules stay private. Import them from `termverify`, never from an
+underscore path.
 
 ## What the surface contains
 
@@ -50,6 +60,19 @@ drift: every name in `termverify.adapter.__all__` and
   transcript-schema access API (`TRANSCRIPT_SCHEMA_V1_ID`,
   `transcript_schema_v1_bytes`, `transcript_schema_v1_json`,
   `persist_transcript_evidence`).
+- **The authoritative transcript codec**: `parse_transcript`,
+  `serialize_transcript`, and `TranscriptValidationError`. These decide
+  `termverify.transcript/v1` acceptance; the schema access API above is a
+  non-exhaustive structural aid and schema acceptance is not conformance
+  (`docs/knowledge/protocol.md`). Both are on the surface so the
+  authoritative one is never the harder import.
+- **The closed key registries**: `KEY_NAMES` and `is_key_chord` from
+  `termverify.key/v1`, and `encode_key_chord` from
+  `termverify.key-encoding/v1`. Use `is_key_chord` to validate a chord
+  before putting it in a `KeyInput`, and `encode_key_chord` when your
+  adapter drives a real terminal — it returns the xterm-legacy bytes, or
+  `None` for the explicit fail-closed verdict *unencodable*, and raises
+  `ValueError` when the chord itself is invalid.
 
 ## What the surface deliberately excludes
 
@@ -60,8 +83,13 @@ drift: every name in `termverify.adapter.__all__` and
 - The verification core (`termverify.recorder`, `termverify.comparator`,
   `termverify.replay`) is consumer-side, not adapter-author-side; it stays at
   its module paths until a consumer-surface decision curates it separately.
-- Private helpers (any `_`-prefixed module or name) are never part of the
-  surface, regardless of importability.
+  The codec above is not part of that core — it is the shared contract both
+  sides validate against.
+- `_`-prefixed **modules** are never part of the surface, and neither is any
+  name they define that is not listed in `termverify.__all__` — including the
+  rest of `termverify._key_v1` (`KEY_MODIFIERS`, `KEY_NAMED_BASES`,
+  `KEY_MODIFIED_BASES`) and `termverify._key_encoding_v1.all_key_chords`.
+  Importability is not membership; `termverify.__all__` is.
 
 ## Compatibility intent
 

@@ -5,11 +5,21 @@ External subjects implement ``Adapter``, ``ConstraintPorts``, and
 curated top-level re-export surface: every adapter-author contract name is
 importable from ``termverify`` itself and is identical to its module-path
 definition, so both import styles stay interchangeable.
+
+Issue #198 extended the surface with the two things an adapter author
+otherwise had to reach for behind an underscore or a module path: the
+authoritative transcript codec and the closed ``termverify.key/v1`` and
+``termverify.key-encoding/v1`` registries.
 """
 
+import pytest
+
 import termverify
+import termverify._key_encoding_v1
+import termverify._key_v1
 import termverify.adapter
 import termverify.direct
+import termverify.transcript
 
 _HEADLINE_NAMES = (
     "Adapter",
@@ -17,6 +27,21 @@ _HEADLINE_NAMES = (
     "DirectAdapter",
     "DirectApplication",
 )
+
+#: Codec names re-exported from ``termverify.transcript``.
+_CODEC_NAMES = (
+    "TranscriptValidationError",
+    "parse_transcript",
+    "serialize_transcript",
+)
+
+#: Registry names promoted out of private modules by issue #198, mapped to
+#: the module that defines them.
+_REGISTRY_SOURCES = {
+    "KEY_NAMES": termverify._key_v1,
+    "is_key_chord": termverify._key_v1,
+    "encode_key_chord": termverify._key_encoding_v1,
+}
 
 
 def test_headline_contract_names_are_importable_from_the_top_level() -> None:
@@ -37,10 +62,42 @@ def test_every_direct_runtime_name_is_reexported_identically() -> None:
         assert getattr(termverify, name) is getattr(termverify.direct, name), name
 
 
+def test_every_codec_name_is_reexported_identically() -> None:
+    for name in _CODEC_NAMES:
+        assert name in termverify.__all__, name
+        assert getattr(termverify, name) is getattr(termverify.transcript, name), name
+
+
+def test_every_registry_name_is_reexported_identically() -> None:
+    for name, module in _REGISTRY_SOURCES.items():
+        assert name in termverify.__all__, name
+        assert getattr(termverify, name) is getattr(module, name), name
+
+
+def test_the_promoted_registries_need_no_private_import() -> None:
+    """The point of the promotion: chord validation and encoding from the top."""
+    assert "Control" in termverify.KEY_NAMES
+    assert "ArrowUp" in termverify.KEY_NAMES
+    assert "Ctrl" not in termverify.KEY_NAMES
+    assert termverify.is_key_chord(["Control", "c"])
+    assert not termverify.is_key_chord(["Ctrl", "c"])
+    assert termverify.encode_key_chord(["Control", "c"]) == "\x03"
+
+
+def test_the_promoted_codec_round_trips_from_the_top_level() -> None:
+    """The authoritative codec, reachable without a module-path import."""
+    data = termverify.transcript_schema_v1_bytes()
+    assert data  # sanity: the schema aid is still exported alongside the codec
+    with pytest.raises(termverify.TranscriptValidationError):
+        termverify.parse_transcript(b"not a transcript\n")
+
+
 def test_dunder_all_is_exactly_the_curated_surface() -> None:
     curated = (
         set(termverify.adapter.__all__)
         | set(termverify.direct.__all__)
+        | set(_CODEC_NAMES)
+        | set(_REGISTRY_SOURCES)
         | {
             "TRANSCRIPT_SCHEMA_V1_ID",
             "__version__",

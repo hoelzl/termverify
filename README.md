@@ -30,7 +30,8 @@ public access API, and isolated installation checks verify the wheel and sdist
 resource contract; the schema's `$id` resolves at
 [termverify.dev](https://termverify.dev/schemas/termverify.transcript/v1.schema.json)
 as a byte-identical mirror of the committed resource, and runtime validation
-remains authoritative. A strict no-regression coverage floor gates the full
+remains authoritative — that authoritative codec, and the closed key
+registries, are exported from `termverify` alongside the schema accessors. A strict no-regression coverage floor gates the full
 suite. Release governance is defined — changelog policy, private security
 disclosure, reviewed release checklist, and a tag-triggered attested release
 workflow — and termverify 0.1.0 was published to PyPI on 2026-07-19 through
