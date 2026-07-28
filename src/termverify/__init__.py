@@ -6,10 +6,20 @@ in-process subjects, :mod:`termverify.direct`; every contract name is
 importable from ``termverify`` directly and is identical to its module-path
 definition, so both import styles stay interchangeable. The surface is
 pre-1.0: compatibility intent and changes are recorded in ``CHANGELOG.md``.
+
+The surface also carries the authoritative transcript codec
+(:func:`parse_transcript`, :func:`serialize_transcript`,
+:class:`TranscriptValidationError`) alongside the non-authoritative schema
+aid, and the key registries' entry points (:data:`KEY_NAMES`,
+:func:`is_key_chord`, :func:`encode_key_chord`). Those three are defined in
+private modules; the names are public, their module paths are not, and the
+rest of those modules stays private.
 """
 
 from importlib.metadata import version
 
+from termverify._key_encoding_v1 import encode_key_chord
+from termverify._key_v1 import KEY_NAMES, is_key_chord
 from termverify.adapter import (
     ENFORCEMENT_TIERS,
     Adapter,
@@ -71,6 +81,11 @@ from termverify.schema import (
     transcript_schema_v1_bytes,
     transcript_schema_v1_json,
 )
+from termverify.transcript import (
+    TranscriptValidationError,
+    parse_transcript,
+    serialize_transcript,
+)
 
 __all__ = [
     "Adapter",
@@ -100,6 +115,7 @@ __all__ = [
     "Frame",
     "FrozenJsonValue",
     "JsonInput",
+    "KEY_NAMES",
     "KeyInput",
     "LocaleReceipt",
     "ManualTime",
@@ -126,10 +142,15 @@ __all__ = [
     "TerminalResult",
     "TextInput",
     "TimezoneReceipt",
+    "TranscriptValidationError",
     "UiObservation",
     "__version__",
+    "encode_key_chord",
     "freeze_json",
+    "is_key_chord",
+    "parse_transcript",
     "persist_transcript_evidence",
+    "serialize_transcript",
     "transcript_schema_v1_bytes",
     "transcript_schema_v1_json",
 ]
