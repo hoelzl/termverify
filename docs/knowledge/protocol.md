@@ -471,10 +471,10 @@ that defines them is private and is not an import path.
 #### Companion registry: `termverify.key-encoding/v1`
 
 The terminal execution path has a companion registry,
-`termverify.key-encoding/v1` (public entry point: `termverify.encode_key_chord`),
-that maps
-each of the 1382 valid `termverify.key/v1` chords either to exactly one
-xterm-legacy normal-mode byte string or to the explicit fail-closed verdict
+`termverify.key-encoding/v1` (public entry point:
+`termverify.encode_key_chord`), that maps each of the 1382 valid
+`termverify.key/v1` chords either to exactly one xterm-legacy normal-mode
+byte string or to the explicit fail-closed verdict
 **unencodable**. It is committed data plus committed arithmetic owned by
 TermVerify — never derived from terminfo, toolkit enums, OS virtual-key
 codes, or other ambient host state — and it is not a transcript value: an

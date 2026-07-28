@@ -121,10 +121,11 @@ KEY_MODIFIED_BASES = (
     "~",
 )
 
-#: Every valid ``termverify.key/v1`` name, in reviewed registry order:
-#: modifiers, then bases valid unmodified, then bases valid only when
-#: modified. Membership here is necessary but not sufficient for a chord —
-#: use :func:`is_key_chord` for that.
+#: Every valid ``termverify.key/v1`` name, in reviewed registry order: the
+#: four modifiers, then the bases valid with or without a modifier, then the
+#: bases valid only in a chord carrying ``Control``, ``Alt``, or ``Meta``
+#: (``Shift`` alone does not qualify them). Membership here is necessary but
+#: not sufficient for a chord — use :func:`is_key_chord` for that.
 KEY_NAMES = KEY_MODIFIERS + KEY_NAMED_BASES + KEY_MODIFIED_BASES
 
 _KEY_MODIFIER_SET = frozenset(KEY_MODIFIERS)
@@ -136,13 +137,22 @@ _KEY_MODIFIED_TRIGGERS = frozenset(("Control", "Alt", "Meta"))
 def is_key_chord(value: object) -> bool:
     """Report whether *value* is one canonical ``termverify.key/v1`` chord.
 
-    A chord is a non-empty list or tuple of exact :data:`KEY_NAMES` entries:
-    zero or more distinct modifiers in :data:`KEY_MODIFIERS` order followed
-    by exactly one base. Bases in :data:`KEY_MODIFIED_BASES` require at least
-    one of ``Control``, ``Alt``, or ``Meta`` — unmodified printable insertion
-    is ``input.text``, not ``input.key``. Total and side-effect free: any
-    other value, including a modifier-only or misordered sequence, is
-    ``False`` rather than an error.
+    A chord is a non-empty sequence of exact :data:`KEY_NAMES` entries: zero
+    or more distinct modifiers in the canonical ``Control``, ``Alt``,
+    ``Shift``, ``Meta`` order, followed by exactly one base. Bases that are
+    ordinary printable characters require at least one of ``Control``,
+    ``Alt``, or ``Meta`` — unmodified printable insertion, including
+    ``Shift``-ed uppercase, is ``input.text``, not ``input.key``.
+
+    Acceptance is by **exact type**, matching the fail-closed discipline of
+    the transcript codec: the sequence must be a ``list`` or ``tuple`` itself
+    and every component must be a ``str`` itself. A subclass, a ``NamedTuple``
+    of key names, or any other :class:`~collections.abc.Sequence` is
+    ``False``, not a chord.
+
+    Total and side-effect free: any other value, including a modifier-only,
+    misordered, or duplicated-modifier sequence, is ``False`` rather than an
+    error.
     """
     if type(value) not in (list, tuple) or not value:
         return False

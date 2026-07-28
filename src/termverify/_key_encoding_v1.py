@@ -18,7 +18,6 @@ disclosed byte collisions are inherent to the legacy byte space:
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import Final
 
 from termverify._key_v1 import (
@@ -98,12 +97,14 @@ def all_key_chords() -> tuple[tuple[str, ...], ...]:
     return tuple(chords)
 
 
-def encode_key_chord(keys: Sequence[str]) -> str | None:
+def encode_key_chord(keys: list[str] | tuple[str, ...]) -> str | None:
     """Encode one valid chord, or return ``None`` for unencodable.
 
-    Raises :class:`ValueError` for anything that is not a canonical
-    ``termverify.key/v1`` chord: invalidity is a caller error, never a
-    verdict.
+    Raises :class:`ValueError` for anything :func:`is_key_chord` rejects:
+    invalidity is a caller error, never a verdict. That includes the
+    container — acceptance is by exact type, so a ``str``, a ``NamedTuple``
+    of key names, or any other :class:`~collections.abc.Sequence` raises even
+    when the names it carries would form a valid chord in a plain ``list``.
     """
     if not is_key_chord(keys):
         raise ValueError("keys must be one canonical termverify.key/v1 chord")

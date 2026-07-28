@@ -8,8 +8,8 @@
   (reviewed revision: `main` @ `8f33e6c`).
 - **Owner:** project maintainer
 - **Created:** 2026-07-24
-- **Updated:** 2026-07-29 (checkpoint e: **Phases 1–5 complete**, 0.1.1
-  released; Phase 6 half done — #198 landed as PR #254, next item is #218)
+- **Updated:** 2026-07-29 (checkpoint f: **Phases 1–5 complete**, 0.1.1
+  released, Phase 6 half done — #198 merged as PR #254; next item is #218)
 - **Review required:** yes — every slice that changes runtime behavior, the
   public API, protocol prose with normative force, or release/security claims
   requires TDD evidence, full validation, and an independent adversarial
@@ -703,14 +703,14 @@ disposition implemented; no undisclosed fidelity gap remains.
 
 ### Phase 6 — Public API exports (review rec 8) [IN PROGRESS]
 
-**#198 done 2026-07-29 — PR #254.** The codec (`parse_transcript`,
-`serialize_transcript`, `TranscriptValidationError`) and the registries
-(`KEY_NAMES`, `is_key_chord`, `encode_key_chord`) are exported; the registry
-names are public while their defining modules stay private, which is the one
-deliberate exception to the guide's interchangeable-import rule.
+**#198 merged as PR #254 (2026-07-29).** The codec (`parse_transcript`,
+`serialize_transcript`, `TranscriptValidationError`) and the registry entry
+points (`KEY_NAMES`, `is_key_chord`, `encode_key_chord`) are exported; the
+registry names are public while their defining modules stay private, which is
+the one deliberate exception to the guide's interchangeable-import rule.
 **#218 (the `enforced` → `applied` in-process rename) remains open** and is
-what completes this phase. Original slice text follows for the record.
-
+what completes this phase; read the corrected symbol list in §5, not the
+prose below. Original slice text follows for the record.
 
 Finding: minor `__init__.py` bullet. Export the authoritative codec
 (`parse_transcript`, `serialize_transcript`, `TranscriptValidationError`) and
@@ -723,11 +723,11 @@ asserting the exports, doc updates (adapter-author guide, README API
 mentions), and a changelog fragment. Do it pre-0.2.0 while cheap.
 
 **Also in this phase's scope: #218** — the in-process API still calls its
-receipts `enforced` after the wire became `applied`
-(`EnforcedConstraints`, `AdapterResult.enforced`, `StartOk`/
-`StartUnsupported`/`StartFailed` `.enforced`, `UnenforcedConstraintPorts`).
-Renaming existing public names is not something this phase's original text
-covered, hence the issue.
+receipts `enforced` after the wire became `applied`. Renaming existing public
+names is not something this phase's original text covered, hence the issue.
+**The symbol list #218 inherited from the review is stale** — `AdapterResult`
+and `StartOk` do not exist in the codebase; §5 carries the list verified
+against `src/` on 2026-07-29.
 
 **Acceptance:** documented names importable from `termverify`; no doc tells
 users to import private paths.
@@ -890,6 +890,29 @@ implementation gets its own future handover/boundary, not this one.
   already resolved by PR #183.
 - **Phase 0 complete (2026-07-24):** issues #184–#204 filed under the
   `review-2026-07-24` label (mapping table in Phase 0 above).
+- **Checkpoint 2026-07-29f (sixth session).**
+  - **Merged:** #198 (PR #254) — the authoritative codec and the key
+    registries' entry points are now exported from `termverify`, so the
+    non-authoritative schema aid is no longer the easier import and adapter
+    authors need no underscore path. **Phase 6 is half done; #218 completes
+    it**, and §5 carries a symbol list for it verified against `src/`
+    because the one #218 inherited from the review names two symbols
+    (`AdapterResult`, `StartOk`) that do not exist.
+  - **The standing lesson held again, this time against this handover
+    itself.** The review of PR #254 found no defect in the exported surface;
+    what it found were four false or unrepaired *statements* — the stale
+    #218 symbol list quoted above, a compatibility promise that still
+    extended to module paths the same page had just declared private, a
+    public `encode_key_chord` annotated `Sequence[str]` while accepting only
+    exact `list`/`tuple`, and a test named `..._round_trips` that never
+    round-tripped. Sixth instance; the pattern has not broken.
+  - **One flake observed, not fixed:** `test_conpty_binding.py::
+    test_a_containment_setup_failure_leaves_no_suspended_orphan[handle-open]`
+    failed once in a pre-push run with `OpenProcess` →
+    `ERROR_INVALID_PARAMETER` (the PID was fully reaped before the test
+    opened its handle), then passed 10 isolated reruns and a full-file run
+    on unmodified sources. It is an instance of the race-window arrangement
+    already owned by Slice 8.3 (#202); recorded there.
 - **Checkpoint 2026-07-28e (fifth session).**
   - **Merged:** Slice 5.3 with #232 (PR #234, closes #197 and #232, with
     #233's review fixes folded in); #235 (PR #239); #236 (PR #240); #230
@@ -1072,16 +1095,30 @@ implementation gets its own future handover/boundary, not this one.
    #233; then #235 (PR #239), #236 (PR #240), #230 (PR #241) and #228
    (PR #243). **Phase 5 is complete**, and 0.1.1 shipped (PR #242).
 9. ~~Phase 6, #198~~ **done 2026-07-29** — PR #254 exported the
-   authoritative codec and the key registries. **Resume with #218**, the
-   other half of Phase 6: rename the in-process receipts that still say
-   `enforced` after the wire became `applied` (`EnforcedConstraints`,
-   `AdapterResult.enforced`, `StartOk`/`StartUnsupported`/`StartFailed`
-   `.enforced`, `UnenforcedConstraintPorts`). It is a public-API change, so
-   it needs name assertions, the adapter-author guide and README mentions
-   updated in the same change, and a changelog fragment carrying the
-   migration note. Cheap now, expensive after 0.2.0 — and note the rename is
-   not what Phase 6's original text covered, so read #218 rather than the
-   phase prose. The `constraint-not-enforced` wire code deliberately stays.
+   authoritative codec and the key registries' entry points. **Resume with
+   #218**, the other half of Phase 6: rename the in-process receipts that
+   still say `enforced` after the wire became `applied`.
+
+   **#218's inherited symbol list is wrong; use this one instead**, verified
+   against `src/` on 2026-07-29. `AdapterResult` and `StartOk` do not exist
+   in the codebase, and `Started` carries no `.enforced` field:
+
+   | Symbol | Location | Note |
+   | --- | --- | --- |
+   | `EnforcedConstraints` | `adapter.py` | exported from `termverify` |
+   | `Started.constraints: EnforcedConstraints` | `adapter.py:951` | the field is already named `constraints`; only its *type* carries the vocabulary |
+   | `StartUnsupported.enforced` | `adapter.py:995` | exported |
+   | `StartFailed.enforced` | `adapter.py:1035` | exported |
+   | `_validate_receipt_prefix` messages | `adapter.py:982-987` | three `ValueError`/`TypeError` strings say "enforced receipts" |
+   | `UnenforcedConstraintPorts` | `conpty.py:368` | **not** on the top-level surface — `termverify.conpty` is deliberately excluded, so this one needs no README or surface-test change, only the ConPTY guide |
+
+   Confirm that list is still current before starting; it is prose, and the
+   code is authoritative. The rename is a public-API change, so it needs name
+   assertions in `tests/test_public_surface.py`, the adapter-author guide and
+   README mentions updated in the same change, and a changelog fragment under
+   `changed` carrying the migration note. Cheap now, expensive after 0.2.0.
+   The `constraint-not-enforced` wire code deliberately stays (#218 records
+   why).
 
    Then Phase 7 (#199) and Phase 8 (#200–#203, minus the two 8.3 items
    #240/#241 already executed — see checkpoint e).

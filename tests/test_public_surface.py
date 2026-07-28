@@ -12,6 +12,9 @@ authoritative transcript codec and the closed ``termverify.key/v1`` and
 ``termverify.key-encoding/v1`` registries.
 """
 
+from pathlib import Path
+from typing import NamedTuple
+
 import pytest
 
 import termverify
@@ -20,6 +23,8 @@ import termverify._key_v1
 import termverify.adapter
 import termverify.direct
 import termverify.transcript
+
+_FIXTURES = Path(__file__).parent / "fixtures" / "transcripts" / "v1"
 
 _HEADLINE_NAMES = (
     "Adapter",
@@ -84,12 +89,33 @@ def test_the_promoted_registries_need_no_private_import() -> None:
     assert termverify.encode_key_chord(["Control", "c"]) == "\x03"
 
 
+class _Chord(NamedTuple):
+    """A plausible adapter-author modelling of a chord — and not one."""
+
+    modifier: str
+    base: str
+
+
+def test_the_promoted_encoder_rejects_a_chord_by_exact_container_type() -> None:
+    """The documented strictness: a NamedTuple of key names is not a chord."""
+    assert termverify.is_key_chord(list(_Chord("Control", "c")))
+    assert not termverify.is_key_chord(_Chord("Control", "c"))
+    with pytest.raises(ValueError):
+        termverify.encode_key_chord(_Chord("Control", "c"))
+
+
 def test_the_promoted_codec_round_trips_from_the_top_level() -> None:
-    """The authoritative codec, reachable without a module-path import."""
-    data = termverify.transcript_schema_v1_bytes()
-    assert data  # sanity: the schema aid is still exported alongside the codec
+    """Both codec halves, exercised without a module-path import."""
+    data = (_FIXTURES / "valid" / "basic.jsonl").read_bytes()
+    assert termverify.serialize_transcript(termverify.parse_transcript(data)) == data
+
+
+def test_the_promoted_codec_rejects_a_non_transcript_from_the_top_level() -> None:
+    """The exported error type is the one the exported codec actually raises."""
     with pytest.raises(termverify.TranscriptValidationError):
         termverify.parse_transcript(b"not a transcript\n")
+    with pytest.raises(termverify.TranscriptValidationError):
+        termverify.serialize_transcript([])
 
 
 def test_dunder_all_is_exactly_the_curated_surface() -> None:
