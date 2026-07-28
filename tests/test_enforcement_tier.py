@@ -349,33 +349,33 @@ class _DirectPorts:
         delivery = _delivery(constraint) if self._delivery else None
         return _receipt(constraint, self._tier, delivery, run_id=run_id)
 
-    def enforce_seed(self, run_id: str, requested: int) -> object:
+    def apply_seed(self, run_id: str, requested: int) -> object:
         del requested
         return self._stamped("seed", run_id)
 
-    def enforce_clock(self, run_id: str, requested: ClockConfiguration) -> object:
+    def apply_clock(self, run_id: str, requested: ClockConfiguration) -> object:
         del requested
         return self._stamped("clock", run_id)
 
-    def enforce_locale(self, run_id: str, requested: str) -> object:
+    def apply_locale(self, run_id: str, requested: str) -> object:
         del requested
         return self._stamped("locale", run_id)
 
-    def enforce_timezone(self, run_id: str, requested: str) -> object:
+    def apply_timezone(self, run_id: str, requested: str) -> object:
         del requested
         return self._stamped("timezone", run_id)
 
-    def enforce_terminal(self, run_id: str, requested: TerminalConfiguration) -> object:
+    def apply_terminal(self, run_id: str, requested: TerminalConfiguration) -> object:
         del requested
         return self._stamped("terminal", run_id)
 
-    def enforce_filesystem(
+    def apply_filesystem(
         self, run_id: str, requested: FilesystemConfiguration
     ) -> object:
         del requested
         return self._stamped("filesystem", run_id)
 
-    def enforce_network(self, run_id: str, requested: NetworkConfiguration) -> object:
+    def apply_network(self, run_id: str, requested: NetworkConfiguration) -> object:
         del requested
         return self._stamped("network", run_id)
 
@@ -405,7 +405,7 @@ def test_direct_adapter_rejects_non_constructive_tiers_as_start_failed(
 
     assert type(result) is StartFailed
     assert result.failure.code == "adapter-start-failed"
-    assert result.enforced == ()
+    assert result.applied == ()
     details = cast(dict[str, object], result.failure.details)
     assert details["constraint"] == "seed"
 
@@ -446,32 +446,32 @@ class _InjectedPorts:
         delivery = _delivery(constraint) if self._delivery else None
         return _receipt(constraint, self._tier, delivery, run_id=run_id)
 
-    def enforce_seed(self, run_id: str, requested: int) -> object:
+    def apply_seed(self, run_id: str, requested: int) -> object:
         del requested
         return self._stamped("seed", run_id)
 
-    def enforce_clock(self, run_id: str, requested: ClockConfiguration) -> object:
+    def apply_clock(self, run_id: str, requested: ClockConfiguration) -> object:
         del requested
         return self._stamped("clock", run_id)
 
-    def enforce_locale(self, run_id: str, requested: str) -> object:
+    def apply_locale(self, run_id: str, requested: str) -> object:
         del requested
         return self._stamped("locale", run_id)
 
-    def enforce_timezone(self, run_id: str, requested: str) -> object:
+    def apply_timezone(self, run_id: str, requested: str) -> object:
         del requested
         return self._stamped("timezone", run_id)
 
-    def enforce_terminal(self, run_id: str, requested: TerminalConfiguration) -> object:
+    def apply_terminal(self, run_id: str, requested: TerminalConfiguration) -> object:
         raise AssertionError("terminal enforcement must never be delegated")
 
-    def enforce_filesystem(
+    def apply_filesystem(
         self, run_id: str, requested: FilesystemConfiguration
     ) -> object:
         del requested
         return self._stamped("filesystem", run_id)
 
-    def enforce_network(self, run_id: str, requested: NetworkConfiguration) -> object:
+    def apply_network(self, run_id: str, requested: NetworkConfiguration) -> object:
         del requested
         return self._stamped("network", run_id)
 
@@ -497,7 +497,7 @@ def test_conpty_adapter_rejects_non_delivered_injected_tiers_as_start_failed(
 
     assert type(result) is StartFailed
     assert result.failure.code == "adapter-start-failed"
-    assert result.enforced == ()
+    assert result.applied == ()
     details = cast(dict[str, object], result.failure.details)
     assert details["constraint"] == "seed"
     assert binding.spawn_calls == 0
@@ -510,17 +510,17 @@ def test_conpty_adapter_accepts_delivered_injected_receipts() -> None:
 
     # Negotiation completes; the fake binding then refuses to spawn.
     assert type(result) is StartFailed
-    assert len(result.enforced) == 7
+    assert len(result.applied) == 7
     assert result.failure.details == {
         "during": "spawn",
         "reason": "this negotiation fake refuses to spawn a child",
     }
     assert binding.spawn_calls == 1
-    terminal = result.enforced[4]
+    terminal = result.applied[4]
     assert type(terminal) is TerminalReceipt
     assert terminal.tier == "os"
     assert terminal.delivery is None
-    seed = result.enforced[0]
+    seed = result.applied[0]
     assert type(seed) is SeedReceipt
     assert seed.tier == "delivered"
     assert seed.delivery == _delivery("seed")
@@ -532,7 +532,7 @@ def test_conpty_terminal_receipt_states_the_os_tier() -> None:
     result = adapter.start(RUN_ID, _configuration())
 
     assert type(result) is StartFailed
-    receipt = result.enforced[4]
+    receipt = result.applied[4]
     assert type(receipt) is TerminalReceipt
     assert receipt.tier == "os"
 

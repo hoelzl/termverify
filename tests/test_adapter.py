@@ -8,6 +8,7 @@ import pytest
 from termverify.adapter import (
     Adapter,
     AdapterFailure,
+    AppliedConstraints,
     ClockAdvance,
     ClockConfiguration,
     ClockReceipt,
@@ -17,7 +18,6 @@ from termverify.adapter import (
     Cursor,
     Diagnostic,
     DispatchInput,
-    EnforcedConstraints,
     EpochCompleted,
     Event,
     ExitStatus,
@@ -97,9 +97,9 @@ def _observation(at_ms: int = 0) -> Observation:
 def _constraints(
     run_id: str = "run-contract",
     configuration: RunConfiguration | None = None,
-) -> EnforcedConstraints:
+) -> AppliedConstraints:
     configuration = configuration or _configuration()
-    return EnforcedConstraints(
+    return AppliedConstraints(
         run_id=run_id,
         requested=configuration,
         seed=SeedReceipt(
@@ -365,7 +365,7 @@ def test_receipts_are_constraint_specific_run_bound_and_immutable() -> None:
     with pytest.raises(FrozenInstanceError):
         constraints.seed.effective = 7  # type: ignore[misc]
     with pytest.raises(TypeError, match="seed"):
-        EnforcedConstraints(
+        AppliedConstraints(
             run_id="run-contract",
             requested=_configuration(),
             seed=cast(SeedReceipt, constraints.clock),
@@ -377,7 +377,7 @@ def test_receipts_are_constraint_specific_run_bound_and_immutable() -> None:
             network=constraints.network,
         )
     with pytest.raises(ValueError, match="same run"):
-        EnforcedConstraints(
+        AppliedConstraints(
             run_id="run-contract",
             requested=_configuration(),
             seed=constraints.seed,
@@ -393,7 +393,7 @@ def test_receipts_are_constraint_specific_run_bound_and_immutable() -> None:
             ),
         )
     with pytest.raises(ValueError, match="requested seed"):
-        EnforcedConstraints(
+        AppliedConstraints(
             run_id="run-contract",
             requested=_configuration(),
             seed=SeedReceipt("run-contract", 41, "constructive"),
@@ -441,37 +441,37 @@ def test_constraint_unsupported_is_immutable_and_freezes_details() -> None:
 
 
 class _ConstraintPorts:
-    def enforce_seed(
+    def apply_seed(
         self, run_id: str, requested: int
     ) -> SeedReceipt | ConstraintUnsupported | AdapterFailure:
         return SeedReceipt(run_id, requested, "constructive")
 
-    def enforce_clock(
+    def apply_clock(
         self, run_id: str, requested: ClockConfiguration
     ) -> ClockReceipt | ConstraintUnsupported | AdapterFailure:
         return ClockReceipt(run_id, requested, "constructive")
 
-    def enforce_locale(
+    def apply_locale(
         self, run_id: str, requested: str
     ) -> LocaleReceipt | ConstraintUnsupported | AdapterFailure:
         return LocaleReceipt(run_id, requested, "constructive")
 
-    def enforce_timezone(
+    def apply_timezone(
         self, run_id: str, requested: str
     ) -> TimezoneReceipt | ConstraintUnsupported | AdapterFailure:
         return TimezoneReceipt(run_id, requested, "constructive")
 
-    def enforce_terminal(
+    def apply_terminal(
         self, run_id: str, requested: TerminalConfiguration
     ) -> TerminalReceipt | ConstraintUnsupported | AdapterFailure:
         return TerminalReceipt(run_id, requested, "constructive")
 
-    def enforce_filesystem(
+    def apply_filesystem(
         self, run_id: str, requested: FilesystemConfiguration
     ) -> FilesystemReceipt | ConstraintUnsupported | AdapterFailure:
         return FilesystemReceipt(run_id, requested, "constructive")
 
-    def enforce_network(
+    def apply_network(
         self, run_id: str, requested: NetworkConfiguration
     ) -> NetworkReceipt | ConstraintUnsupported | AdapterFailure:
         return NetworkReceipt(run_id, requested, "constructive")
@@ -481,8 +481,8 @@ def test_constraint_ports_return_constraint_specific_receipts() -> None:
     ports: ConstraintPorts = _ConstraintPorts()
     configuration = _configuration()
 
-    seed = ports.enforce_seed("run-contract", configuration.seed)
-    clock = ports.enforce_clock("run-contract", configuration.clock)
+    seed = ports.apply_seed("run-contract", configuration.seed)
+    clock = ports.apply_clock("run-contract", configuration.clock)
     assert isinstance(seed, SeedReceipt)
     assert isinstance(clock, ClockReceipt)
     assert seed.effective == 42
@@ -499,7 +499,7 @@ def test_structured_start_outcomes_are_immutable() -> None:
     unsupported = StartUnsupported(
         run_id="run-contract",
         requested=_configuration(),
-        enforced=(started.constraints.seed,),
+        applied=(started.constraints.seed,),
         constraint="clock",
         code="constraint-unsupported",
         message="clock port unavailable",
@@ -507,7 +507,7 @@ def test_structured_start_outcomes_are_immutable() -> None:
     failed = StartFailed(
         run_id="run-contract",
         requested=_configuration(),
-        enforced=(started.constraints.seed,),
+        applied=(started.constraints.seed,),
         failure=AdapterFailure(code="adapter-start-failed", message="failed"),
     )
 
@@ -519,7 +519,7 @@ def test_structured_start_outcomes_are_immutable() -> None:
         StartUnsupported(
             run_id="run-contract",
             requested=_configuration(),
-            enforced=(started.constraints.clock,),
+            applied=(started.constraints.clock,),
             constraint="seed",
             code="constraint-unsupported",
             message="bad prefix",
@@ -530,7 +530,7 @@ def test_structured_start_outcomes_are_immutable() -> None:
         StartUnsupported(
             run_id="run-contract",
             requested=_configuration(),
-            enforced=(started.constraints.seed,),
+            applied=(started.constraints.seed,),
             constraint="clock",
             code="other",
             message="bad code",
@@ -539,7 +539,7 @@ def test_structured_start_outcomes_are_immutable() -> None:
         StartUnsupported(
             run_id="run-contract",
             requested=_configuration(),
-            enforced=(SeedReceipt("run-contract", 41, "constructive"),),
+            applied=(SeedReceipt("run-contract", 41, "constructive"),),
             constraint="clock",
             code="constraint-unsupported",
             message="wrong effective value",
@@ -548,7 +548,7 @@ def test_structured_start_outcomes_are_immutable() -> None:
         StartUnsupported(
             run_id="run-contract",
             requested=_configuration(),
-            enforced=(SeedReceipt("another-run", 42, "constructive"),),
+            applied=(SeedReceipt("another-run", 42, "constructive"),),
             constraint="clock",
             code="constraint-unsupported",
             message="wrong run",
@@ -557,14 +557,14 @@ def test_structured_start_outcomes_are_immutable() -> None:
         StartFailed(
             run_id="run-contract",
             requested=_configuration(),
-            enforced=(SeedReceipt("another-run", 42, "constructive"),),
+            applied=(SeedReceipt("another-run", 42, "constructive"),),
             failure=AdapterFailure(code="adapter-start-failed", message="failed"),
         )
     with pytest.raises(ValueError, match="start failure code"):
         StartFailed(
             run_id="run-contract",
             requested=_configuration(),
-            enforced=(),
+            applied=(),
             failure=AdapterFailure(code="adapter-runtime-failed", message="bad"),
         )
 
@@ -687,7 +687,7 @@ def test_start_failed_rejects_mismatched_diagnostic_after_negotiation() -> None:
         StartFailed(
             run_id=constraints.run_id,
             requested=constraints.requested,
-            enforced=enforced,
+            applied=enforced,
             failure=AdapterFailure("adapter-start-failed", "failed"),
             diagnostics=(Diagnostic(ManualTime(8), "startup", "late"),),
         )
@@ -700,7 +700,7 @@ def test_start_failed_still_forbids_diagnostics_before_complete_negotiation() ->
         StartFailed(
             run_id=constraints.run_id,
             requested=constraints.requested,
-            enforced=(constraints.seed,),
+            applied=(constraints.seed,),
             failure=AdapterFailure("adapter-start-failed", "failed"),
             diagnostics=(Diagnostic(ManualTime(0), "startup", "message"),),
         )
@@ -745,7 +745,7 @@ def test_result_aggregates_accept_matching_diagnostic_times() -> None:
     assert StartFailed(
         run_id=constraints.run_id,
         requested=constraints.requested,
-        enforced=enforced,
+        applied=enforced,
         failure=AdapterFailure("adapter-start-failed", "failed"),
         diagnostics=(initial_diagnostic,),
     ).diagnostics == (initial_diagnostic,)
@@ -869,12 +869,12 @@ def test_test_double_can_implement_adapter_contract_without_ambient_state() -> N
         lambda: NetworkReceipt(
             "run-contract", cast(NetworkConfiguration, object()), "constructive"
         ),
-        lambda: Started(cast(EnforcedConstraints, object()), _observation()),
+        lambda: Started(cast(AppliedConstraints, object()), _observation()),
         lambda: Started(_constraints(), cast(Observation, object())),
         lambda: StartUnsupported(
             run_id="run-contract",
             requested=_configuration(),
-            enforced=cast(
+            applied=cast(
                 tuple[SeedReceipt], [SeedReceipt("run-contract", 42, "constructive")]
             ),
             constraint="clock",
@@ -884,7 +884,7 @@ def test_test_double_can_implement_adapter_contract_without_ambient_state() -> N
         lambda: StartUnsupported(
             run_id="run-contract",
             requested=_configuration(),
-            enforced=(),
+            applied=(),
             constraint=cast(ConstraintName, "invalid"),
             code="constraint-unsupported",
             message="bad constraint",
@@ -892,7 +892,7 @@ def test_test_double_can_implement_adapter_contract_without_ambient_state() -> N
         lambda: StartUnsupported(
             run_id="run-contract",
             requested=_configuration(),
-            enforced=(),
+            applied=(),
             constraint="seed",
             code="constraint-unsupported",
             message=cast(str, 1),
@@ -900,13 +900,13 @@ def test_test_double_can_implement_adapter_contract_without_ambient_state() -> N
         lambda: StartFailed(
             run_id="run-contract",
             requested=_configuration(),
-            enforced=(),
+            applied=(),
             failure=cast(AdapterFailure, object()),
         ),
         lambda: StartFailed(
             run_id="run-contract",
             requested=_configuration(),
-            enforced=(),
+            applied=(),
             failure=AdapterFailure("adapter-start-failed", "failed"),
             diagnostics=(Diagnostic(ManualTime(0), "startup", "message"),),
         ),
@@ -915,7 +915,7 @@ def test_test_double_can_implement_adapter_contract_without_ambient_state() -> N
         lambda: TerminalResult(cast(Observation | None, object()), RunFinished.code(0)),
         lambda: TerminalResult(None, cast(RunFinished | RunFailed, object())),
         lambda: StartTerminated(
-            cast(EnforcedConstraints, object()),
+            cast(AppliedConstraints, object()),
             TerminalResult(None, RunFinished.code(0)),
         ),
         lambda: StartTerminated(_constraints(), cast(TerminalResult, object())),

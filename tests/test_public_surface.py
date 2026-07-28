@@ -151,6 +151,52 @@ def test_dunder_all_is_exactly_the_curated_surface() -> None:
     assert set(termverify.__all__) == curated
 
 
+#: Issue #218: the in-process API said ``enforced`` after the wire became
+#: ``applied``. These names must be gone from the whole public surface.
+_RETIRED_ENFORCED_NAMES = (
+    "EnforcedConstraints",
+    "UnenforcedConstraintPorts",
+    "enforce_seed",
+    "enforce_clock",
+    "enforce_locale",
+    "enforce_timezone",
+    "enforce_terminal",
+    "enforce_filesystem",
+    "enforce_network",
+)
+
+#: The vocabulary that deliberately keeps saying "enforcement": it names the
+#: *axis* of claim strength, on which ``delivered`` honestly means nothing is
+#: enforced. Renaming it would make the tier vocabulary less truthful, not
+#: more (see #218 and `docs/agent/design/cooperation-tier-constraint-ports.md`).
+_RETAINED_ENFORCEMENT_NAMES = (
+    "ENFORCEMENT_TIERS",
+    "EnforcementReceipt",
+    "EnforcementTier",
+)
+
+
+def test_the_applied_vocabulary_replaced_the_enforced_one() -> None:
+    assert "AppliedConstraints" in termverify.__all__
+    assert termverify.AppliedConstraints is termverify.adapter.AppliedConstraints
+    for method in ("apply_seed", "apply_clock", "apply_network"):
+        assert hasattr(termverify.ConstraintPorts, method), method
+
+
+def test_no_retired_enforced_name_survives_on_the_surface() -> None:
+    for name in _RETIRED_ENFORCED_NAMES:
+        assert name not in termverify.__all__, name
+        assert not hasattr(termverify, name), name
+        assert not hasattr(termverify.ConstraintPorts, name), name
+
+
+def test_the_enforcement_tier_axis_keeps_its_name() -> None:
+    """The rename is a truthfulness fix, not a search-and-replace."""
+    for name in _RETAINED_ENFORCEMENT_NAMES:
+        assert name in termverify.__all__, name
+    assert "delivered" in termverify.ENFORCEMENT_TIERS
+
+
 def test_dunder_all_is_sorted_deduplicated_and_resolvable() -> None:
     assert list(termverify.__all__) == sorted(set(termverify.__all__))
     for name in termverify.__all__:

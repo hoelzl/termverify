@@ -86,7 +86,7 @@ def _ports(
 
 
 def test_seed_delivery_is_the_exact_decimal() -> None:
-    receipt = _ports().enforce_seed(RUN_ID, 42)
+    receipt = _ports().apply_seed(RUN_ID, 42)
 
     assert type(receipt) is SeedReceipt
     assert receipt.run_id == RUN_ID
@@ -96,7 +96,7 @@ def test_seed_delivery_is_the_exact_decimal() -> None:
 
 
 def test_seed_delivery_zero_is_delivered() -> None:
-    receipt = _ports().enforce_seed(RUN_ID, 0)
+    receipt = _ports().apply_seed(RUN_ID, 0)
 
     assert type(receipt) is SeedReceipt
     assert receipt.delivery is not None
@@ -104,7 +104,7 @@ def test_seed_delivery_zero_is_delivered() -> None:
 
 
 def test_clock_delivery_is_the_initial_manual_time_only() -> None:
-    receipt = _ports().enforce_clock(RUN_ID, ClockConfiguration(initial_ms=1_000))
+    receipt = _ports().apply_clock(RUN_ID, ClockConfiguration(initial_ms=1_000))
 
     assert receipt == ClockReceipt(
         RUN_ID,
@@ -115,7 +115,7 @@ def test_clock_delivery_is_the_initial_manual_time_only() -> None:
 
 
 def test_locale_delivery_is_the_validated_tag_without_platform_variables() -> None:
-    receipt = _ports().enforce_locale(RUN_ID, "en-US")
+    receipt = _ports().apply_locale(RUN_ID, "en-US")
 
     assert receipt.tier == "delivered"  # type: ignore[union-attr]
     delivery = cast(DeliveryRecord, receipt.delivery)  # type: ignore[union-attr]
@@ -125,7 +125,7 @@ def test_locale_delivery_is_the_validated_tag_without_platform_variables() -> No
 
 
 def test_timezone_delivery_is_utc_with_the_portable_posix_spelling() -> None:
-    receipt = _ports().enforce_timezone(RUN_ID, "UTC")
+    receipt = _ports().apply_timezone(RUN_ID, "UTC")
 
     assert receipt.tier == "delivered"  # type: ignore[union-attr]
     delivery = cast(DeliveryRecord, receipt.delivery)  # type: ignore[union-attr]
@@ -133,7 +133,7 @@ def test_timezone_delivery_is_utc_with_the_portable_posix_spelling() -> None:
 
 
 def test_non_utc_timezone_request_is_unsupported() -> None:
-    result = _ports().enforce_timezone(RUN_ID, "Europe/Berlin")
+    result = _ports().apply_timezone(RUN_ID, "Europe/Berlin")
 
     assert type(result) is ConstraintUnsupported
     assert result.constraint == "timezone"
@@ -141,7 +141,7 @@ def test_non_utc_timezone_request_is_unsupported() -> None:
 
 
 def test_terminal_enforcement_is_truthfully_not_enforced() -> None:
-    result = _ports().enforce_terminal(
+    result = _ports().apply_terminal(
         RUN_ID, TerminalConfiguration(columns=80, rows=24, capabilities=())
     )
 
@@ -151,7 +151,7 @@ def test_terminal_enforcement_is_truthfully_not_enforced() -> None:
 
 
 def test_network_deny_delivery() -> None:
-    receipt = _ports().enforce_network(RUN_ID, NetworkConfiguration.deny())
+    receipt = _ports().apply_network(RUN_ID, NetworkConfiguration.deny())
 
     assert receipt.tier == "delivered"  # type: ignore[union-attr]
     delivery = cast(DeliveryRecord, receipt.delivery)  # type: ignore[union-attr]
@@ -159,7 +159,7 @@ def test_network_deny_delivery() -> None:
 
 
 def test_network_allow_list_request_is_unsupported() -> None:
-    result = _ports().enforce_network(
+    result = _ports().apply_network(
         RUN_ID, NetworkConfiguration.allow_list((("example.test", 443),))
     )
 
@@ -175,9 +175,7 @@ def test_filesystem_delivery_resolves_through_the_probe() -> None:
     probe = _FakeProbe({"C:\\hosts\\sandbox": "C:\\resolved\\sandbox"})
     ports = _ports(probe=probe)
 
-    receipt = ports.enforce_filesystem(
-        RUN_ID, FilesystemConfiguration(root_id="sandbox")
-    )
+    receipt = ports.apply_filesystem(RUN_ID, FilesystemConfiguration(root_id="sandbox"))
 
     assert type(receipt) is FilesystemReceipt
     assert receipt.tier == "delivered"
@@ -191,9 +189,7 @@ def test_unknown_sandbox_root_is_unsupported() -> None:
     probe = _FakeProbe({})
     ports = _ports(probe=probe)
 
-    result = ports.enforce_filesystem(
-        RUN_ID, FilesystemConfiguration(root_id="unmapped")
-    )
+    result = ports.apply_filesystem(RUN_ID, FilesystemConfiguration(root_id="unmapped"))
 
     assert type(result) is ConstraintUnsupported
     assert result.constraint == "filesystem"
@@ -205,9 +201,7 @@ def test_unresolvable_sandbox_root_is_unsupported() -> None:
     probe = _FakeProbe({"C:\\hosts\\sandbox": None})
     ports = _ports(probe=probe)
 
-    result = ports.enforce_filesystem(
-        RUN_ID, FilesystemConfiguration(root_id="sandbox")
-    )
+    result = ports.apply_filesystem(RUN_ID, FilesystemConfiguration(root_id="sandbox"))
 
     assert type(result) is ConstraintUnsupported
     assert result.constraint == "filesystem"
@@ -232,9 +226,7 @@ def test_ports_do_not_share_mutable_root_state() -> None:
     ports = CooperationConstraintPorts(roots, directory_probe=probe)
     roots["sandbox"] = "C:\\mutated"
 
-    receipt = ports.enforce_filesystem(
-        RUN_ID, FilesystemConfiguration(root_id="sandbox")
-    )
+    receipt = ports.apply_filesystem(RUN_ID, FilesystemConfiguration(root_id="sandbox"))
 
     assert type(receipt) is FilesystemReceipt
     assert probe.calls == ["C:\\hosts\\sandbox"]
@@ -268,9 +260,7 @@ def test_ports_create_and_delete_nothing(tmp_path: Path) -> None:
     (root / "existing.txt").write_text("host-owned", encoding="utf-8")
     ports = CooperationConstraintPorts({"sandbox": str(root)})
 
-    receipt = ports.enforce_filesystem(
-        RUN_ID, FilesystemConfiguration(root_id="sandbox")
-    )
+    receipt = ports.apply_filesystem(RUN_ID, FilesystemConfiguration(root_id="sandbox"))
 
     assert type(receipt) is FilesystemReceipt
     assert sorted(p.name for p in root.iterdir()) == ["existing.txt"]
@@ -390,7 +380,7 @@ def test_unsupported_cooperation_request_still_ends_before_any_child() -> None:
 class _CollidingPorts(CooperationConstraintPorts):
     """Hostile ports delivering a colliding variable name for the network."""
 
-    def enforce_network(
+    def apply_network(
         self, run_id: str, requested: NetworkConfiguration
     ) -> NetworkReceipt | ConstraintUnsupported | AdapterFailure:
         del requested
@@ -413,7 +403,7 @@ def test_colliding_delivery_records_are_an_invariant_breach() -> None:
 
     assert type(result) is StartFailed
     assert result.failure.code == "adapter-start-failed"
-    assert len(result.enforced) == 7
+    assert len(result.applied) == 7
     details = cast(dict[str, object], result.failure.details)
     assert details.get("invariant") == "delivery-disjoint"
     assert binding.spawns == []
@@ -480,8 +470,8 @@ def test_cooperation_ports_satisfy_the_conpty_authorization_matrix() -> None:
     result = adapter.start(RUN_ID, _configuration())
 
     assert type(result) is StartFailed
-    assert len(result.enforced) == 7
-    for index, receipt in enumerate(result.enforced):
+    assert len(result.applied) == 7
+    for index, receipt in enumerate(result.applied):
         if index == 4:
             assert receipt.tier == "os"
         else:
@@ -509,9 +499,7 @@ def test_a_raising_probe_is_a_raising_port_classified_start_failed() -> None:
 def test_default_construction_maps_no_roots_and_fails_unsupported() -> None:
     ports = CooperationConstraintPorts()
 
-    result = ports.enforce_filesystem(
-        RUN_ID, FilesystemConfiguration(root_id="sandbox")
-    )
+    result = ports.apply_filesystem(RUN_ID, FilesystemConfiguration(root_id="sandbox"))
 
     assert type(result) is ConstraintUnsupported
     assert result.constraint == "filesystem"

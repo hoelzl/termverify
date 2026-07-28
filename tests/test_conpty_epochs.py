@@ -143,39 +143,39 @@ def _delivery(constraint: str) -> DeliveryRecord:
 class _EnforcingPorts:
     """Fake injected ports stating the delivered tier for every constraint."""
 
-    def enforce_seed(
+    def apply_seed(
         self, run_id: str, requested: int
     ) -> SeedReceipt | ConstraintUnsupported | AdapterFailure:
         return SeedReceipt(run_id, requested, "delivered", _delivery("seed"))
 
-    def enforce_clock(
+    def apply_clock(
         self, run_id: str, requested: ClockConfiguration
     ) -> ClockReceipt | ConstraintUnsupported | AdapterFailure:
         return ClockReceipt(run_id, requested, "delivered", _delivery("clock"))
 
-    def enforce_locale(
+    def apply_locale(
         self, run_id: str, requested: str
     ) -> LocaleReceipt | ConstraintUnsupported | AdapterFailure:
         return LocaleReceipt(run_id, requested, "delivered", _delivery("locale"))
 
-    def enforce_timezone(
+    def apply_timezone(
         self, run_id: str, requested: str
     ) -> TimezoneReceipt | ConstraintUnsupported | AdapterFailure:
         return TimezoneReceipt(run_id, requested, "delivered", _delivery("timezone"))
 
-    def enforce_terminal(
+    def apply_terminal(
         self, run_id: str, requested: TerminalConfiguration
     ) -> TerminalReceipt | ConstraintUnsupported | AdapterFailure:
         raise AssertionError("terminal enforcement must never be delegated")
 
-    def enforce_filesystem(
+    def apply_filesystem(
         self, run_id: str, requested: FilesystemConfiguration
     ) -> FilesystemReceipt | ConstraintUnsupported | AdapterFailure:
         return FilesystemReceipt(
             run_id, requested, "delivered", _delivery("filesystem")
         )
 
-    def enforce_network(
+    def apply_network(
         self, run_id: str, requested: NetworkConfiguration
     ) -> NetworkReceipt | ConstraintUnsupported | AdapterFailure:
         return NetworkReceipt(run_id, requested, "delivered", _delivery("network"))
@@ -749,7 +749,7 @@ def test_start_spawn_failure_is_start_failed() -> None:
         "during": "spawn",
         "reason": "no such command",
     }
-    assert len(result.enforced) == 7
+    assert len(result.applied) == 7
 
 
 def test_start_normalizer_construction_failure_closes_the_child() -> None:

@@ -66,6 +66,7 @@ from termverify._json import JsonValue
 from termverify._negotiation import AuthorizedTiers, negotiate
 from termverify.adapter import (
     AdapterFailure,
+    AppliedConstraints,
     ClockAdvance,
     ClockReceipt,
     ConstraintPorts,
@@ -73,7 +74,6 @@ from termverify.adapter import (
     DeliveryRecord,
     Diagnostic,
     DispatchInput,
-    EnforcedConstraints,
     EnforcementReceipt,
     EpochCompleted,
     EpochResult,
@@ -426,7 +426,7 @@ class JsonlAdapter:
 
     # --- negotiation -------------------------------------------------------
 
-    def _enforce_terminal(
+    def _apply_terminal(
         self, run_id: str, requested: TerminalConfiguration
     ) -> TerminalReceipt | AdapterFailure:
         if requested.capabilities:
@@ -1055,19 +1055,17 @@ class JsonlAdapter:
             run_id,
             configuration,
             (
-                lambda: self._constraints.enforce_seed(run_id, configuration.seed),
-                lambda: self._constraints.enforce_clock(run_id, configuration.clock),
-                lambda: self._constraints.enforce_locale(run_id, configuration.locale),
-                lambda: self._constraints.enforce_timezone(
+                lambda: self._constraints.apply_seed(run_id, configuration.seed),
+                lambda: self._constraints.apply_clock(run_id, configuration.clock),
+                lambda: self._constraints.apply_locale(run_id, configuration.locale),
+                lambda: self._constraints.apply_timezone(
                     run_id, configuration.timezone
                 ),
-                lambda: self._enforce_terminal(run_id, configuration.terminal),
-                lambda: self._constraints.enforce_filesystem(
+                lambda: self._apply_terminal(run_id, configuration.terminal),
+                lambda: self._constraints.apply_filesystem(
                     run_id, configuration.filesystem
                 ),
-                lambda: self._constraints.enforce_network(
-                    run_id, configuration.network
-                ),
+                lambda: self._constraints.apply_network(run_id, configuration.network),
             ),
             _AUTHORIZED_TIERS,
         )
@@ -1083,14 +1081,14 @@ class JsonlAdapter:
             return StartFailed(
                 run_id=run_id,
                 requested=configuration,
-                enforced=receipts,
+                applied=receipts,
                 failure=AdapterFailure(
                     "adapter-start-failed", message, {**details, "failure": code}
                 ),
             )
 
         self._set_state("initializing")
-        constraints = EnforcedConstraints(
+        constraints = AppliedConstraints(
             run_id=run_id,
             requested=configuration,
             seed=cast(SeedReceipt, receipts[0]),
@@ -1168,7 +1166,7 @@ class JsonlAdapter:
         self,
         run_id: str,
         configuration: RunConfiguration,
-        constraints: EnforcedConstraints,
+        constraints: AppliedConstraints,
         initial_ms: ManualTime,
     ) -> StartResult:
         """Read and classify the child's handshake reply."""
@@ -1184,7 +1182,7 @@ class JsonlAdapter:
             return StartFailed(
                 run_id=run_id,
                 requested=configuration,
-                enforced=(
+                applied=(
                     constraints.seed,
                     constraints.clock,
                     constraints.locale,
@@ -1265,7 +1263,7 @@ class JsonlAdapter:
                 return StartFailed(
                     run_id=run_id,
                     requested=configuration,
-                    enforced=(
+                    applied=(
                         constraints.seed,
                         constraints.clock,
                         constraints.locale,
@@ -1312,9 +1310,9 @@ class JsonlAdapter:
 
         The child refuses one constraint. The run already negotiated every
         constraint successfully through the ports, so the honest contract
-        shape is StartUnsupported against the full enforced prefix — which
+        shape is StartUnsupported against the full applied prefix — which
         the contract cannot express (StartUnsupported requires the
-        unsupported constraint to follow the enforced prefix in
+        unsupported constraint to follow the applied prefix in
         configuration-table order). The truthful shape available is
         StartFailed carrying the child's refusal, because claiming an
         enforcement failure that did not happen would fabricate evidence.
@@ -1322,7 +1320,7 @@ class JsonlAdapter:
         return StartFailed(
             run_id=run_id,
             requested=configuration,
-            enforced=receipts,
+            applied=receipts,
             failure=AdapterFailure(
                 "adapter-start-failed",
                 f"the subject cannot serve the negotiated {constraint}"

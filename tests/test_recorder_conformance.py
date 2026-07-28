@@ -17,13 +17,13 @@ from pathlib import Path
 from typing import Any, cast
 
 from termverify.adapter import (
+    AppliedConstraints,
     ClockAdvance,
     ClockConfiguration,
     ClockReceipt,
     Cursor,
     Diagnostic,
     DispatchInput,
-    EnforcedConstraints,
     EpochCompleted,
     Event,
     ExitStatus,
@@ -84,8 +84,8 @@ def _configuration_from_payload(config: dict[str, Any]) -> RunConfiguration:
 
 def _constructive_constraints(
     run_id: str, configuration: RunConfiguration
-) -> EnforcedConstraints:
-    return EnforcedConstraints(
+) -> AppliedConstraints:
+    return AppliedConstraints(
         run_id=run_id,
         requested=configuration,
         seed=SeedReceipt(run_id, configuration.seed, "constructive"),

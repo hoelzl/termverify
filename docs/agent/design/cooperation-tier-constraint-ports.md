@@ -5,6 +5,13 @@
   document records owner decisions taken in session on 2026-07-18; it
   authorizes the implementation slices listed at the end and does not itself
   add code or claim any port exists.
+- **Renamed 2026-07-29 (#218):** this document uses the pre-rename
+  vocabulary. `ConstraintPorts.enforce_*` is now `apply_*`,
+  `EnforcedConstraints` is `AppliedConstraints`, and
+  `UnenforcedConstraintPorts` is `ApplyNothingConstraintPorts`, matching
+  the wire's `applied` status. The decisions recorded below are unchanged;
+  only the names are. `EnforcementReceipt`, `EnforcementTier`, and
+  `termverify.enforcement-tier/v1` deliberately keep their names.
 - **Issue:** [#123](https://github.com/hoelzl/termverify/issues/123)
 - **Date:** 2026-07-18
 - **Inputs:** the `Adapter`/`ConstraintPorts` contract in `termverify.adapter`;

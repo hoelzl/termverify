@@ -11,7 +11,7 @@ subject complied, and OS containment remains an explicit non-goal by
 recorded owner decision.
 
 Using these ports is an explicit host decision:
-``UnenforcedConstraintPorts`` remains the ConPTY adapter's default, so
+``ApplyNothingConstraintPorts`` remains the ConPTY adapter's default, so
 nothing is implicitly claimed.
 
 Per-constraint delivery contracts (conventional platform variables are
@@ -126,7 +126,7 @@ class CooperationConstraintPorts:
             directory_probe if directory_probe is not None else RealDirectoryProbe()
         )
 
-    def enforce_seed(
+    def apply_seed(
         self, run_id: str, requested: int
     ) -> SeedReceipt | ConstraintUnsupported | AdapterFailure:
         return SeedReceipt(
@@ -136,7 +136,7 @@ class CooperationConstraintPorts:
             DeliveryRecord(env={"TERMVERIFY_SEED": str(requested)}),
         )
 
-    def enforce_clock(
+    def apply_clock(
         self, run_id: str, requested: ClockConfiguration
     ) -> ClockReceipt | ConstraintUnsupported | AdapterFailure:
         return ClockReceipt(
@@ -148,7 +148,7 @@ class CooperationConstraintPorts:
             ),
         )
 
-    def enforce_locale(
+    def apply_locale(
         self, run_id: str, requested: str
     ) -> LocaleReceipt | ConstraintUnsupported | AdapterFailure:
         return LocaleReceipt(
@@ -158,7 +158,7 @@ class CooperationConstraintPorts:
             DeliveryRecord(env={"TERMVERIFY_LOCALE": requested}),
         )
 
-    def enforce_timezone(
+    def apply_timezone(
         self, run_id: str, requested: str
     ) -> TimezoneReceipt | ConstraintUnsupported | AdapterFailure:
         if requested != "UTC":
@@ -176,7 +176,7 @@ class CooperationConstraintPorts:
             DeliveryRecord(env={"TZ": "UTC0", "TERMVERIFY_TIMEZONE": "UTC"}),
         )
 
-    def enforce_terminal(
+    def apply_terminal(
         self, run_id: str, requested: TerminalConfiguration
     ) -> TerminalReceipt | ConstraintUnsupported | AdapterFailure:
         del run_id, requested
@@ -187,7 +187,7 @@ class CooperationConstraintPorts:
             " delegates it; these cooperation ports cannot deliver it",
         )
 
-    def enforce_filesystem(
+    def apply_filesystem(
         self, run_id: str, requested: FilesystemConfiguration
     ) -> FilesystemReceipt | ConstraintUnsupported | AdapterFailure:
         mapped = self._roots.get(requested.root_id)
@@ -215,7 +215,7 @@ class CooperationConstraintPorts:
             DeliveryRecord(env={"TERMVERIFY_FS_ROOT": resolved}, cwd=resolved),
         )
 
-    def enforce_network(
+    def apply_network(
         self, run_id: str, requested: NetworkConfiguration
     ) -> NetworkReceipt | ConstraintUnsupported | AdapterFailure:
         if requested.mode != "deny":

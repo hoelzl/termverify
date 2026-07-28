@@ -9,6 +9,7 @@ import pytest
 from termverify.adapter import (
     Adapter,
     AdapterFailure,
+    AppliedConstraints,
     ClockAdvance,
     ClockConfiguration,
     ClockReceipt,
@@ -16,7 +17,6 @@ from termverify.adapter import (
     Cursor,
     Diagnostic,
     DispatchInput,
-    EnforcedConstraints,
     EpochCompleted,
     FilesystemConfiguration,
     FilesystemReceipt,
@@ -78,43 +78,43 @@ class _Ports:
         self.calls: list[str] = []
         self.aborts: list[ManualTime] = []
 
-    def enforce_seed(
+    def apply_seed(
         self, run_id: str, requested: int
     ) -> SeedReceipt | ConstraintUnsupported | AdapterFailure:
         self.calls.append("seed")
         return SeedReceipt(run_id, requested, "constructive")
 
-    def enforce_clock(
+    def apply_clock(
         self, run_id: str, requested: ClockConfiguration
     ) -> ClockReceipt | ConstraintUnsupported | AdapterFailure:
         self.calls.append("clock")
         return ClockReceipt(run_id, requested, "constructive")
 
-    def enforce_locale(
+    def apply_locale(
         self, run_id: str, requested: str
     ) -> LocaleReceipt | ConstraintUnsupported | AdapterFailure:
         self.calls.append("locale")
         return LocaleReceipt(run_id, requested, "constructive")
 
-    def enforce_timezone(
+    def apply_timezone(
         self, run_id: str, requested: str
     ) -> TimezoneReceipt | ConstraintUnsupported | AdapterFailure:
         self.calls.append("timezone")
         return TimezoneReceipt(run_id, requested, "constructive")
 
-    def enforce_terminal(
+    def apply_terminal(
         self, run_id: str, requested: TerminalConfiguration
     ) -> TerminalReceipt | ConstraintUnsupported | AdapterFailure:
         self.calls.append("terminal")
         return TerminalReceipt(run_id, requested, "constructive")
 
-    def enforce_filesystem(
+    def apply_filesystem(
         self, run_id: str, requested: FilesystemConfiguration
     ) -> FilesystemReceipt | ConstraintUnsupported | AdapterFailure:
         self.calls.append("filesystem")
         return FilesystemReceipt(run_id, requested, "constructive")
 
-    def enforce_network(
+    def apply_network(
         self, run_id: str, requested: NetworkConfiguration
     ) -> NetworkReceipt | ConstraintUnsupported | AdapterFailure:
         self.calls.append("network")
@@ -149,7 +149,7 @@ def test_start_negotiates_constraints_in_order_before_readiness() -> None:
     result = adapter.start("run-direct", _configuration())
 
     assert isinstance(result, Started)
-    assert isinstance(result.constraints, EnforcedConstraints)
+    assert isinstance(result.constraints, AppliedConstraints)
     assert result.observation == _observation()
     assert application.calls == [
         "seed",
@@ -183,7 +183,7 @@ def test_start_stops_at_first_unsupported_constraint(constraint: str) -> None:
             "port unavailable",
         )
 
-    method_name = f"enforce_{constraint}"
+    method_name = f"apply_{constraint}"
     setattr(application, method_name, unsupported)
     adapter = DirectAdapter(application)
 
@@ -201,12 +201,12 @@ def test_start_stops_at_first_unsupported_constraint(constraint: str) -> None:
         "network",
     ]
     index = order.index(constraint)
-    assert len(result.enforced) == index
+    assert len(result.applied) == index
     assert application.calls == order[: index + 1]
 
 
 class _NamedTimezoneUnsupportedApplication(_NeverApplication):
-    def enforce_timezone(
+    def apply_timezone(
         self, run_id: str, requested: str
     ) -> TimezoneReceipt | ConstraintUnsupported | AdapterFailure:
         del run_id
@@ -229,7 +229,7 @@ def test_canonical_named_timezone_request_can_report_structured_unsupported() ->
     assert isinstance(result, StartUnsupported)
     assert result.constraint == "timezone"
     assert result.code == "constraint-unsupported"
-    assert result.enforced == (
+    assert result.applied == (
         SeedReceipt("run-direct", 42, "constructive"),
         ClockReceipt("run-direct", ClockConfiguration(0), "constructive"),
         LocaleReceipt("run-direct", "en-US", "constructive"),
@@ -238,7 +238,7 @@ def test_canonical_named_timezone_request_can_report_structured_unsupported() ->
 
 
 class _RaisingLocaleApplication(_NeverApplication):
-    def enforce_locale(
+    def apply_locale(
         self, run_id: str, requested: str
     ) -> LocaleReceipt | ConstraintUnsupported | AdapterFailure:
         del run_id, requested
@@ -253,7 +253,7 @@ def test_start_converts_constraint_port_exception_to_stable_failure() -> None:
     result = adapter.start("run-direct", _configuration())
 
     assert isinstance(result, StartFailed)
-    assert len(result.enforced) == 2
+    assert len(result.applied) == 2
     assert result.failure == AdapterFailure(
         "adapter-start-failed",
         "constraint enforcement failed",
@@ -458,7 +458,7 @@ def test_initialization_exception_becomes_start_failure() -> None:
     result = adapter.start("run-direct", _configuration())
 
     assert isinstance(result, StartFailed)
-    assert len(result.enforced) == 7
+    assert len(result.applied) == 7
     assert result.failure == AdapterFailure(
         "adapter-start-failed", "application initialization failed"
     )
@@ -1229,7 +1229,7 @@ class _SeedResponseApplication(_NeverApplication):
         super().__init__()
         self.response = response
 
-    def enforce_seed(
+    def apply_seed(
         self, run_id: str, requested: int
     ) -> SeedReceipt | ConstraintUnsupported | AdapterFailure:
         del run_id, requested
@@ -1300,6 +1300,6 @@ def test_constraint_port_results_fail_closed(
     result = adapter.start("run-direct", _configuration())
 
     assert isinstance(result, StartFailed)
-    assert result.enforced == ()
+    assert result.applied == ()
     assert result.failure == expected_failure
     assert application.calls == ["seed"]

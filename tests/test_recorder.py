@@ -8,6 +8,7 @@ from hypothesis import strategies as st
 
 from termverify.adapter import (
     AdapterFailure,
+    AppliedConstraints,
     ClockAdvance,
     ClockConfiguration,
     ClockReceipt,
@@ -16,7 +17,6 @@ from termverify.adapter import (
     DeliveryRecord,
     Diagnostic,
     DispatchInput,
-    EnforcedConstraints,
     EpochCompleted,
     EpochResult,
     Event,
@@ -84,9 +84,9 @@ def _configuration(initial_ms: int = 0) -> RunConfiguration:
 
 def _constraints(
     run_id: str = RUN_ID, configuration: RunConfiguration | None = None
-) -> EnforcedConstraints:
+) -> AppliedConstraints:
     configuration = configuration or _configuration()
-    return EnforcedConstraints(
+    return AppliedConstraints(
         run_id=run_id,
         requested=configuration,
         seed=SeedReceipt(run_id, configuration.seed, "constructive"),
@@ -563,7 +563,7 @@ def test_terminal_output_events_without_exact_chunk_shape_pass_through() -> None
 
 def test_delivered_tier_receipts_record_delivery() -> None:
     configuration = _configuration()
-    constraints = EnforcedConstraints(
+    constraints = AppliedConstraints(
         run_id=RUN_ID,
         requested=configuration,
         seed=SeedReceipt(
@@ -1104,29 +1104,29 @@ class _CooperativeApplication:
             else ProcessObservation.running(),
         )
 
-    def enforce_seed(self, run_id: str, requested: int) -> SeedReceipt:
+    def apply_seed(self, run_id: str, requested: int) -> SeedReceipt:
         return SeedReceipt(run_id, requested, "constructive")
 
-    def enforce_clock(self, run_id: str, requested: ClockConfiguration) -> ClockReceipt:
+    def apply_clock(self, run_id: str, requested: ClockConfiguration) -> ClockReceipt:
         return ClockReceipt(run_id, requested, "constructive")
 
-    def enforce_locale(self, run_id: str, requested: str) -> LocaleReceipt:
+    def apply_locale(self, run_id: str, requested: str) -> LocaleReceipt:
         return LocaleReceipt(run_id, requested, "constructive")
 
-    def enforce_timezone(self, run_id: str, requested: str) -> TimezoneReceipt:
+    def apply_timezone(self, run_id: str, requested: str) -> TimezoneReceipt:
         return TimezoneReceipt(run_id, requested, "constructive")
 
-    def enforce_terminal(
+    def apply_terminal(
         self, run_id: str, requested: TerminalConfiguration
     ) -> TerminalReceipt:
         return TerminalReceipt(run_id, requested, "constructive")
 
-    def enforce_filesystem(
+    def apply_filesystem(
         self, run_id: str, requested: FilesystemConfiguration
     ) -> FilesystemReceipt:
         return FilesystemReceipt(run_id, requested, "constructive")
 
-    def enforce_network(
+    def apply_network(
         self, run_id: str, requested: NetworkConfiguration
     ) -> NetworkReceipt:
         return NetworkReceipt(run_id, requested, "constructive")

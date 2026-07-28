@@ -73,13 +73,13 @@ type AuthorizedTiers = tuple[
 def start_failure(
     run_id: str,
     configuration: RunConfiguration,
-    enforced: tuple[EnforcementReceipt, ...],
+    applied: tuple[EnforcementReceipt, ...],
     constraint: ConstraintName,
 ) -> StartFailed:
     return StartFailed(
         run_id=run_id,
         requested=configuration,
-        enforced=enforced,
+        applied=applied,
         failure=AdapterFailure(
             "adapter-start-failed",
             "constraint enforcement failed",
@@ -96,12 +96,12 @@ def negotiate_constraint(
     constraint: ConstraintName,
     run_id: str,
     configuration: RunConfiguration,
-    enforced: tuple[EnforcementReceipt, ...],
+    applied: tuple[EnforcementReceipt, ...],
 ) -> EnforcementReceipt | StartUnsupported | StartFailed:
     try:
         value = operation()
     except Exception:
-        return start_failure(run_id, configuration, enforced, constraint)
+        return start_failure(run_id, configuration, applied, constraint)
 
     if type(value) is expected_type:
         receipt = value
@@ -111,14 +111,14 @@ def negotiate_constraint(
             and receipt.tier == authorized_tier
         ):
             return receipt
-        return start_failure(run_id, configuration, enforced, constraint)
+        return start_failure(run_id, configuration, applied, constraint)
     if type(value) is ConstraintUnsupported:
         if value.constraint != constraint:
-            return start_failure(run_id, configuration, enforced, constraint)
+            return start_failure(run_id, configuration, applied, constraint)
         return StartUnsupported(
             run_id=run_id,
             requested=configuration,
-            enforced=enforced,
+            applied=applied,
             constraint=value.constraint,
             code=value.code,
             message=value.message,
@@ -128,10 +128,10 @@ def negotiate_constraint(
         return StartFailed(
             run_id=run_id,
             requested=configuration,
-            enforced=enforced,
+            applied=applied,
             failure=value,
         )
-    return start_failure(run_id, configuration, enforced, constraint)
+    return start_failure(run_id, configuration, applied, constraint)
 
 
 def negotiate(

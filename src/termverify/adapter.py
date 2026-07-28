@@ -20,9 +20,9 @@ from termverify._language_tag import is_well_formed_language_tag
 from termverify._protocol_v1 import CONSTRAINT_NAMES, ConstraintName
 
 __all__ = [
-    "ENFORCEMENT_TIERS",
     "Adapter",
     "AdapterFailure",
+    "AppliedConstraints",
     "ClockAdvance",
     "ClockConfiguration",
     "ClockReceipt",
@@ -33,7 +33,7 @@ __all__ = [
     "DeliveryRecord",
     "Diagnostic",
     "DispatchInput",
-    "EnforcedConstraints",
+    "ENFORCEMENT_TIERS",
     "EnforcementReceipt",
     "EnforcementTier",
     "EpochCompleted",
@@ -60,10 +60,10 @@ __all__ = [
     "RunFinished",
     "SeedReceipt",
     "StartFailed",
-    "Started",
     "StartResult",
     "StartTerminated",
     "StartUnsupported",
+    "Started",
     "Stop",
     "TerminalConfiguration",
     "TerminalReceipt",
@@ -864,37 +864,37 @@ class ConstraintUnsupported:
 class ConstraintPorts(Protocol):  # pragma: no cover - structural declarations
     """Application-facing paths that apply deterministic constraints."""
 
-    def enforce_seed(
+    def apply_seed(
         self, run_id: str, requested: int
     ) -> SeedReceipt | ConstraintUnsupported | AdapterFailure: ...
 
-    def enforce_clock(
+    def apply_clock(
         self, run_id: str, requested: ClockConfiguration
     ) -> ClockReceipt | ConstraintUnsupported | AdapterFailure: ...
 
-    def enforce_locale(
+    def apply_locale(
         self, run_id: str, requested: str
     ) -> LocaleReceipt | ConstraintUnsupported | AdapterFailure: ...
 
-    def enforce_timezone(
+    def apply_timezone(
         self, run_id: str, requested: str
     ) -> TimezoneReceipt | ConstraintUnsupported | AdapterFailure: ...
 
-    def enforce_terminal(
+    def apply_terminal(
         self, run_id: str, requested: TerminalConfiguration
     ) -> TerminalReceipt | ConstraintUnsupported | AdapterFailure: ...
 
-    def enforce_filesystem(
+    def apply_filesystem(
         self, run_id: str, requested: FilesystemConfiguration
     ) -> FilesystemReceipt | ConstraintUnsupported | AdapterFailure: ...
 
-    def enforce_network(
+    def apply_network(
         self, run_id: str, requested: NetworkConfiguration
     ) -> NetworkReceipt | ConstraintUnsupported | AdapterFailure: ...
 
 
 @dataclass(frozen=True, slots=True)
-class EnforcedConstraints:
+class AppliedConstraints:
     run_id: str
     requested: RunConfiguration
     seed: SeedReceipt
@@ -951,12 +951,12 @@ def _validate_receipt_binding(
 
 @dataclass(frozen=True, slots=True)
 class Started:
-    constraints: EnforcedConstraints
+    constraints: AppliedConstraints
     observation: Observation
     diagnostics: tuple[Diagnostic, ...] = ()
 
     def __post_init__(self) -> None:
-        if type(self.constraints) is not EnforcedConstraints:
+        if type(self.constraints) is not AppliedConstraints:
             raise TypeError("constraints have the wrong type")
         if type(self.observation) is not Observation:
             raise TypeError("observation has the wrong type")
@@ -979,12 +979,12 @@ def _validate_receipt_prefix(
     if type(requested) is not RunConfiguration:
         raise TypeError("requested configuration has the wrong type")
     if type(receipts) is not tuple:
-        raise TypeError("enforced receipts must be a tuple")
+        raise TypeError("applied receipts must be a tuple")
     if len(receipts) > len(CONSTRAINT_NAMES):
-        raise ValueError("enforced receipt prefix is too long")
+        raise ValueError("applied receipt prefix is too long")
     for index, receipt in enumerate(receipts):
         if type(receipt) is not _RECEIPT_TYPES[index]:
-            raise ValueError("enforced receipts are out of configuration order")
+            raise ValueError("applied receipts are out of configuration order")
     _validate_receipt_binding(run_id, requested, receipts)
 
 
@@ -992,7 +992,7 @@ def _validate_receipt_prefix(
 class StartUnsupported:
     run_id: str
     requested: RunConfiguration
-    enforced: tuple[EnforcementReceipt, ...]
+    applied: tuple[EnforcementReceipt, ...]
     constraint: ConstraintName
     code: str
     message: str
@@ -1002,19 +1002,19 @@ class StartUnsupported:
         self,
         run_id: str,
         requested: RunConfiguration,
-        enforced: tuple[EnforcementReceipt, ...],
+        applied: tuple[EnforcementReceipt, ...],
         constraint: ConstraintName,
         code: str,
         message: str,
         details: JsonInput = None,
     ) -> None:
-        _validate_receipt_prefix(run_id, requested, enforced)
+        _validate_receipt_prefix(run_id, requested, applied)
         _require_choice(constraint, "unsupported constraint", CONSTRAINT_NAMES)
-        if len(enforced) != CONSTRAINT_NAMES.index(constraint):
+        if len(applied) != CONSTRAINT_NAMES.index(constraint):
             raise ValueError("unsupported constraint does not follow receipt order")
         object.__setattr__(self, "run_id", run_id)
         object.__setattr__(self, "requested", requested)
-        object.__setattr__(self, "enforced", enforced)
+        object.__setattr__(self, "applied", applied)
         object.__setattr__(self, "constraint", constraint)
         _require_choice(
             code,
@@ -1032,21 +1032,21 @@ class StartUnsupported:
 class StartFailed:
     run_id: str
     requested: RunConfiguration
-    enforced: tuple[EnforcementReceipt, ...]
+    applied: tuple[EnforcementReceipt, ...]
     failure: AdapterFailure
     diagnostics: tuple[Diagnostic, ...] = ()
 
     def __post_init__(self) -> None:
-        _validate_receipt_prefix(self.run_id, self.requested, self.enforced)
+        _validate_receipt_prefix(self.run_id, self.requested, self.applied)
         if type(self.failure) is not AdapterFailure:
             raise TypeError("failure has the wrong type")
         if self.failure.code != "adapter-start-failed":
             raise ValueError("start failure code must be adapter-start-failed")
         _validate_diagnostics(self.diagnostics)
-        if self.diagnostics and len(self.enforced) != len(CONSTRAINT_NAMES):
+        if self.diagnostics and len(self.applied) != len(CONSTRAINT_NAMES):
             raise ValueError("startup diagnostics require complete negotiation")
-        if len(self.enforced) == len(CONSTRAINT_NAMES):
-            clock = cast(ClockReceipt, self.enforced[CONSTRAINT_NAMES.index("clock")])
+        if len(self.applied) == len(CONSTRAINT_NAMES):
+            clock = cast(ClockReceipt, self.applied[CONSTRAINT_NAMES.index("clock")])
             _validate_diagnostics(self.diagnostics, clock.effective.initial_ms)
 
 
@@ -1124,11 +1124,11 @@ class TerminalResult:
 
 @dataclass(frozen=True, slots=True)
 class StartTerminated:
-    constraints: EnforcedConstraints
+    constraints: AppliedConstraints
     result: TerminalResult
 
     def __post_init__(self) -> None:
-        if type(self.constraints) is not EnforcedConstraints:
+        if type(self.constraints) is not AppliedConstraints:
             raise TypeError("constraints have the wrong type")
         if type(self.result) is not TerminalResult:
             raise TypeError("terminal result has the wrong type")
