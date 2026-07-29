@@ -11,17 +11,20 @@ TermVerify separates application control from verification policy.
 
 ```text
 Application under test
-  ├── direct adapter: fast commands and structured observation
-  └── production adapter: PTY/subprocess terminal path
+  ├── direct adapter: fast commands and structured observation   [built]
+  └── production adapter: PTY/subprocess terminal path           [built: Windows ConPTY + JSONL]
                          │
                     TermVerify runners
-  ├── deterministic run configuration
-  ├── transcript dispatch and replay
-  ├── observation normalization
-  ├── comparator/oracle policies
-  ├── property and state-machine integration
-  └── reports and failure artifacts
+  ├── deterministic run configuration                            [built]
+  ├── transcript dispatch and replay                             [built]
+  ├── observation normalization                                  [built]
+  ├── comparator/oracle policies                                 [built: exact comparator]
+  ├── property and state-machine integration                     [planned]
+  └── reports and failure artifacts                              [planned]
 ```
+
+Sequencing and rationale for the planned rows live once, in
+[the product vision](product-vision.md).
 
 The runner, comparison/replay, oracle-policy, and reporting rows describe the
 Phase 2 verification-core layer, active under the accepted

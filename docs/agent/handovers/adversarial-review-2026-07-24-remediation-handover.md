@@ -8,8 +8,8 @@
   (reviewed revision: `main` @ `8f33e6c`).
 - **Owner:** project maintainer
 - **Created:** 2026-07-24
-- **Updated:** 2026-07-29 (checkpoint f: **Phases 1–6 complete**, 0.1.1
-  released; next item is Phase 7 / #199)
+- **Updated:** 2026-07-29 (checkpoint f: **Phases 1–7 complete**, 0.1.1
+  released; next item is Phase 8 / #200–#203)
 - **Review required:** yes — every slice that changes runtime behavior, the
   public API, protocol prose with normative force, or release/security claims
   requires TDD evidence, full validation, and an independent adversarial
@@ -757,7 +757,24 @@ authoritative record of what was renamed is now the migration table in
 **Acceptance:** documented names importable from `termverify`; no doc tells
 users to import private paths.
 
-### Phase 7 — README capability truth (review rec 9) [TODO]
+### Phase 7 — README capability truth (review rec 9) [DONE 2026-07-29]
+
+**#199 merged as PR #256.** One deviation from the slice text below, which
+said "one **new** vision document": `docs/knowledge/product-vision.md` already
+existed, so it was extended rather than duplicated — creating a second vision
+doc would have been the exact drift P5 is about. Its own opening sentence
+carried the same overpromise ("supplies … property testing, and CI artifacts")
+and was corrected in the same change. The README's "Planned architecture"
+diagram moved there rather than being deleted, since it restated the
+aspirational scope a second time in the same file.
+
+`tests/test_readme_capability_truth.py` gives the split a ratchet — every
+module the README names must import, the vision doc must be linked exactly
+once, and the five deferred capabilities may not reappear in the
+current-capability section. That is a narrow, README-specific check on
+purpose; the general prose-status validator stays with Slice 8.4 (#203).
+
+Original slice text follows for the record.
 
 Finding: **P5**. **Owner decision 2026-07-24: current capabilities only in
 the README, plus one link to a single-sourced vision document (Option C).**
@@ -954,6 +971,14 @@ implementation gets its own future handover/boundary, not this one.
     from `CONSTRAINT_NAMES` instead of hand-copying it. Every assertion was
     then mutation-tested — five deliberate half-renames, all caught.
     A test that pins a rename deserves the same suspicion as the rename.
+  - **Phase 7 (#199) followed as PR #256**, so **Phases 1–7 are complete**
+    and only Phase 8's minors sweep remains inside this handover. The slice
+    text asked for "one new vision document"; `docs/knowledge/product-vision.md`
+    already existed, so it was extended instead — writing a second vision doc
+    to satisfy a single-sourcing remedy would have been self-defeating, and
+    that document's own opening sentence carried the same P5 overpromise it
+    was being made the home for. Read the phase before assuming its
+    instructions still describe the tree.
   - **The standing lesson held again, this time against this handover
     itself.** Two review rounds on PR #254 returned no Critical finding and
     nothing wrong with *which* names were exported, their identity, or the
@@ -1182,11 +1207,15 @@ implementation gets its own future handover/boundary, not this one.
    pointed out that `adapter`/`conpty`/`direct` had no net at all, and the
    test now covers all four. A scripted rename needs both checks.
 
-10. **Resume with Phase 7 (#199)** — README lists current capabilities only,
-    plus a single-sourced vision doc. Note `docs/knowledge/product-vision.md`
-    already exists; check whether it is the doc Phase 7 asks for before
-    creating another. Then Phase 8 (#200–#203, minus the two 8.3 items
-    #240/#241 already executed — see checkpoint e).
+10. ~~Phase 7 (#199)~~ **done 2026-07-29** — PR #256. The README lists only
+    implemented capabilities, each naming its module;
+    `docs/knowledge/product-vision.md` (which already existed, and was
+    extended rather than duplicated) is the single source for planned scope.
+
+11. **Resume with Phase 8 (#200–#203)**, minus the two 8.3 items #240/#241
+    already executed — see checkpoint e, and deduct them when sizing 8.3.
+    Note #203 owns the general prose-status validator; #199 deliberately
+    added only a README-specific check, so that scope is untouched.
 
     **Give the Windows containment findings one home.** #238 (JSONL spawn
     keeps the job-assignment window) and the reopened Windows halves of
