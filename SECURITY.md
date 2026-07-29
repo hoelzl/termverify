@@ -4,15 +4,16 @@
 
 TermVerify is in its prototyping stage (see the
 [recorded governance decision](docs/agent/design/prototyping-stage-protocol-governance.md)).
-termverify 0.1.0 was published to PyPI on 2026-07-19 as a
-distribution-pipeline exercise; it is **not** a supported artifact — it
-receives no security fixes and carries no compatibility guarantee. Security
+termverify 0.1.0 was published to PyPI on 2026-07-19 and 0.1.1 on 2026-07-27,
+both as distribution-pipeline exercises; neither is a **supported** artifact —
+they receive no security fixes and carry no compatibility guarantee. Security
 fixes land on the `main` branch only. When supported releases exist, this
 table will list which versions receive fixes.
 
 | Version | Supported |
 | --- | --- |
 | `main` | ✅ latest commit only |
+| 0.1.1 (PyPI) | ❌ pipeline exercise; use `main` |
 | 0.1.0 (PyPI) | ❌ pipeline exercise; use `main` |
 
 ## Reporting a vulnerability

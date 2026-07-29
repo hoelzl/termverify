@@ -121,10 +121,19 @@ Prefer, in order:
 
 1. direct semantic assertions over internal state/events;
 2. deterministic transcript replay;
-3. property/state-machine checks;
-4. differential comparisons where a genuine reference exists;
-5. reviewed UI semantic snapshots;
+3. property/state-machine checks — write these directly with Hypothesis
+   today, as this repository's own suite does; TermVerify-specific harnesses
+   are `[planned]`;
+4. differential comparisons where a genuine reference exists; `[planned]`
+5. reviewed UI semantic snapshots; `[planned]`
 6. raw ANSI text only as diagnostic evidence.
+
+`[planned]` marks machinery TermVerify does not ship yet — see
+[the product vision](../knowledge/product-vision.md) for its sequencing. The
+marker does not demote a layer: where stock tools can already produce the
+evidence, as Hypothesis does for layer 3, the preference order stands as
+written. The full model is in
+[the verification model](../knowledge/verification-model.md).
 
 ## Review boundaries
 

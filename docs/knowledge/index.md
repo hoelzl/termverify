@@ -4,9 +4,11 @@ This directory is an [Open Knowledge Format (OKF) v0.1](https://github.com/Googl
 
 ## Foundation
 
-- [Product vision](product-vision.md) — scope, users, and non-goals.
+- [Product vision](product-vision.md) — scope, users, non-goals, and the
+  single source for capability that is planned but does not exist yet.
 - [Architecture](architecture.md) — boundaries, adapters, and package model.
-- [Verification model](verification-model.md) — evidence layers and oracle types.
+- [Verification model](verification-model.md) — evidence layers and oracle
+  types, marking the ones TermVerify supplies no machinery for yet.
 - [Evidence governance](evidence-governance.md) — accepted redaction, capture,
   and baseline-approval controls.
 - [Protocol](protocol.md) — the planned interaction and observation contract.

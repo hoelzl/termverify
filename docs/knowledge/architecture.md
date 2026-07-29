@@ -11,17 +11,20 @@ TermVerify separates application control from verification policy.
 
 ```text
 Application under test
-  ├── direct adapter: fast commands and structured observation
-  └── production adapter: PTY/subprocess terminal path
+  ├── direct adapter: fast commands and structured observation   [built]
+  └── production adapter: PTY/subprocess terminal path           [built: Windows ConPTY + JSONL]
                          │
                     TermVerify runners
-  ├── deterministic run configuration
-  ├── transcript dispatch and replay
-  ├── observation normalization
-  ├── comparator/oracle policies
-  ├── property and state-machine integration
-  └── reports and failure artifacts
+  ├── deterministic run configuration                            [built]
+  ├── transcript dispatch and replay                             [built]
+  ├── observation normalization                                  [built]
+  ├── comparator/oracle policies                                 [partial: exact comparator only]
+  ├── property and state-machine integration                     [planned]
+  └── reports and failure artifacts                              [planned]
 ```
+
+Sequencing and rationale for the planned rows live once, in
+[the product vision](product-vision.md).
 
 The runner, comparison/replay, oracle-policy, and reporting rows describe the
 Phase 2 verification-core layer, active under the accepted
@@ -54,7 +57,8 @@ lifecycle semantics. `termverify.direct.DirectAdapter` composes explicit
 constraint and application ports without consulting ambient time, terminal, or
 process state.
 
-The direct adapter is the default for fast unit and property tests. The Windows
+The direct adapter is the default for fast unit tests, and is the path
+property testing will use when it exists (`[planned]` above). The Windows
 production path is `termverify.conpty.ConptyAdapter`, layered over the reviewed
 ConPTY binding and fail-closed `termverify.vt.VtScreenNormalizer`. It verifies
 real terminal input, rendering, resize, EOF/exit evidence, forced teardown, and
