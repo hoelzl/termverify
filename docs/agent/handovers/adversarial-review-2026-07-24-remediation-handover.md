@@ -798,8 +798,23 @@ lookalike heading re-point every check — deferred-term guards included — at
 a decoy body. Both closed in-branch with the shapes pinned as tests:
 continuation lines now require the markdown content column, exotic
 whitespace counts as content, and the section heading must match a whole
-line exactly once. The standing lesson: a ratchet's parser is itself an
-attack surface, and each fix earns its own focused review round.
+line exactly once. Round 4 (on those fixes) returned no Critical; its
+findings — duplicate headings rendering identically to the capability
+title while differing at the byte level, an NBSP-led marker-shaped line
+routed as a bullet against the parser comment's claim, a pin-coverage gap
+on the space-only indent rule, zero-width splits defeating the guard
+terms — were closed the same way: heading titles and guard text now
+compare *folded* (format characters stripped, whitespace collapsed), with
+ATX and single-line setext headings recognized at CommonMark's legal
+indents, every shape pinned. A round-5 replay of all shapes from rounds
+2–4 came back clean; its one residual (the new heading scanner missing
+CommonMark's 0–3-space indent, plus an overclaiming docstring) was fixed,
+and the genuinely unreachable shapes — multi-line setext titles, raw-HTML
+headings, homoglyphs — moved to the docstring's disclosed-uncatchable
+list. Rounds ended there: every demonstrated shape is either caught by a
+pinned test or explicitly disclosed. The standing lesson: a ratchet's
+parser is itself an attack surface, and each fix earns its own focused
+review round.
 
 Original slice text follows for the record.
 

@@ -12,12 +12,17 @@ drift happened, so this module gives the split one. What it enforces, exactly:
 * the current-capability section is a pinned intro sentence plus top-level
   ``- `` bullets and nothing else — inserted prose, alternate or numbered
   markers, and nested lists all fail structurally;
+* the section heading anchors as a whole line exactly once, and no other
+  markdown heading may *render* as the same title — ATX at any legal
+  indent with or without closers, single-line setext, and invisible
+  characters do not create a second home for the checks to miss;
 * every bullet must name at least one ``termverify.<module>``, and every
   named module must import;
 * no term belonging to a *planned* capability may appear anywhere in the
-  section, and the guard terms are checked for coverage against the vision
-  document's own planned-scope headings, so the two files ratchet each other
-  rather than drifting independently.
+  section — searched over folded text, so zero-width splits and line wraps
+  do not hide a guarded word — and the guard terms are checked for coverage
+  against the vision document's own planned-scope headings, so the two
+  files ratchet each other rather than drifting independently.
 
 Equally load-bearing is what it **cannot** catch — each shape demonstrated by
 adversarial review of PR #256:
@@ -27,7 +32,12 @@ adversarial review of PR #256:
   renders inside the bullet — everything inside a bullet is semantic and
   belongs to human review;
 * false claims in *other* README sections;
-* planned capabilities described with synonyms the guard list lacks.
+* a duplicate title the heading scanner cannot see — a setext title
+  wrapped over multiple source lines, or a raw-HTML heading — which lands
+  in the other-sections class above;
+* planned capabilities described with synonyms the guard list lacks;
+* text that merely *looks* similar to a reader without rendering
+  identically — homoglyph tricks are review's problem, not a parser's.
 
 Those bounds belong to review and to the general prose-status validator
 (Slice 8.4, #203); this module is the README-local structural ratchet, not
@@ -36,6 +46,7 @@ that validator.
 
 import importlib
 import re
+import unicodedata
 from pathlib import Path
 
 import pytest
@@ -56,10 +67,12 @@ _MODULE_REFERENCE = re.compile(r"`termverify\.([a-z_]+)`")
 #: numbered ``1.``/``1)`` item, followed by a literal space.
 _LIST_MARKER = re.compile(r"([-*+]|\d+[.)]) ")
 
-#: Markdown attaches a continuation line to a ``- `` item only from the
-#: item's content column onward. A line indented less than this renders as
-#: a standalone paragraph *between* the lists — which is how review round 3
-#: slipped prose past the round-2 fix with a single leading space.
+#: Markdown attaches a continuation line to a ``- `` item by indentation
+#: only from the item's content column onward. A line indented less than
+#: this is not attached — it renders as a standalone paragraph, or joins
+#: the item only via lazy continuation when it directly abuts the bullet
+#: line — which is how review round 3 slipped prose past the round-2 fix
+#: with a single leading space. Either way it is a violation here.
 _CONTINUATION_INDENT = 2
 
 #: The section's only permitted non-bullet prose, whitespace-normalized. Any
@@ -124,6 +137,49 @@ def _level(heading: str) -> int:
     return len(heading) - len(heading.lstrip("#"))
 
 
+def _fold(text: str) -> str:
+    """Normalize *text* to what it renders as.
+
+    Strips format characters (Unicode ``Cf`` — zero-width spaces, joiners,
+    BOM), then collapses all whitespace to single spaces. Two strings that
+    fold equal are indistinguishable to a reader even when their bytes
+    differ (round 4's title-spoof and guard-splitting shapes).
+    """
+    visible = "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
+    return re.sub(r"\s+", " ", visible).strip()
+
+
+def _normalized_heading_titles(text: str) -> list[str]:
+    """Every heading title in *text*, folded — ATX and setext alike.
+
+    ATX headings at CommonMark's 0-3 legal indent spaces, with or without
+    closing sequences (``## title ##``), and single-line setext titles
+    (``title`` over ``---``/``===``, either indented up to 3 spaces) are
+    recognized, so a duplicate heading that renders identically to the
+    capability title cannot hide behind a byte-level difference the literal
+    anchor in ``_section`` does not see. Fenced code blocks are skipped.
+    A setext title wrapped over multiple source lines and a raw-HTML
+    heading are *not* seen here; the module docstring discloses both.
+    """
+    titles: list[str] = []
+    fenced = False
+    previous = ""
+    for line in text.splitlines():
+        if line.startswith(("```", "~~~")):
+            fenced = not fenced
+            previous = ""
+            continue
+        if fenced:
+            continue
+        atx = re.match(r" {0,3}#{1,6}\s+(.*?)\s*#*\s*$", line)
+        if atx:
+            titles.append(_fold(atx.group(1)))
+        elif re.fullmatch(r" {0,3}(-+|=+)[ \t]*", line) and previous:
+            titles.append(_fold(previous))
+        previous = line.strip()
+    return titles
+
+
 def _capability_section() -> str:
     return _section(_README.read_text(encoding="utf-8"), _CAPABILITY_HEADING)
 
@@ -148,10 +204,12 @@ def _parse_structure(section: str) -> tuple[str, list[str], list[str]]:
         stripped = line.strip()
         if not stripped:
             continue
-        # Count only true spaces: exotic whitespace such as NBSP is content
-        # to markdown, so it must land in the indent-0 prose branch below.
+        # Count only true spaces, and match the marker after them rather
+        # than after a full strip: exotic whitespace such as NBSP is
+        # content to markdown, so lines led by it — marker-shaped or not —
+        # must land in the indent-0 prose branch below.
         indent = len(line) - len(line.lstrip(" "))
-        marker = _LIST_MARKER.match(stripped)
+        marker = _LIST_MARKER.match(line[indent:])
         if marker and indent == 0:
             bullets.append(stripped)
             if marker.group(1) != "-":
@@ -162,7 +220,8 @@ def _parse_structure(section: str) -> tuple[str, list[str], list[str]]:
             bullets[-1] += "\n" + stripped
         elif indent > 0 and bullets:
             violations.append(
-                f"under-indented, renders outside any bullet: {stripped!r}"
+                f"under-indented, not attached to any bullet by its "
+                f"indentation: {stripped!r}"
             )
         else:
             prose.append(stripped)
@@ -219,6 +278,10 @@ _REVIEW_EXPLOITS = {
     "prose between bullets": "TermVerify also verifies overall correctness.",
     "prose indented one space": " TermVerify also verifies overall correctness.",
     "prose behind a no-break space": "\xa0TermVerify verifies whole programs.",
+    "prose behind two no-break spaces": "\xa0\xa0TermVerify verifies programs.",
+    "a bullet behind a no-break space": (
+        "\xa0- **Certification** — `termverify.comparator` certifies programs."
+    ),
 }
 
 
@@ -250,6 +313,44 @@ def test_a_duplicated_section_heading_fails_loudly() -> None:
     twice = f"{_CAPABILITY_HEADING}\n\na\n\n# unrelated\n\n{_CAPABILITY_HEADING}\n\nb\n"
     with pytest.raises(AssertionError):
         _section(twice, _CAPABILITY_HEADING)
+
+
+#: Round 4's title spoofs: each renders as the same ``<h2>`` as the real
+#: capability heading while differing at the byte level, so the literal
+#: exactly-once anchor alone cannot see the duplicate.
+_TITLE_SPOOFS = {
+    "an ATX closing sequence": f"{_CAPABILITY_HEADING} ##",
+    "a no-break space in the title": _CAPABILITY_HEADING.replace(" ", "\xa0", 1),
+    "a setext underline": f"{_CAPABILITY_HEADING.lstrip('# ')}\n---",
+    "a one-space-indented ATX heading": f" {_CAPABILITY_HEADING}",
+    "an indented setext underline": f"{_CAPABILITY_HEADING.lstrip('# ')}\n ---",
+}
+
+
+def test_the_readme_has_exactly_one_heading_rendering_the_capability_title() -> None:
+    """The anchor is byte-literal; this closes the render-identical gap."""
+    titles = _normalized_heading_titles(_README.read_text(encoding="utf-8"))
+    title = _fold(_CAPABILITY_HEADING.lstrip("# "))
+    assert titles.count(title) == 1, titles
+
+
+@pytest.mark.parametrize("spoof", _TITLE_SPOOFS.values(), ids=list(_TITLE_SPOOFS))
+def test_a_render_identical_duplicate_title_is_detected(spoof: str) -> None:
+    doctored = _README.read_text(encoding="utf-8") + f"\n\n{spoof}\n\nlies\n"
+    titles = _normalized_heading_titles(doctored)
+    title = _fold(_CAPABILITY_HEADING.lstrip("# "))
+    assert titles.count(title) == 2, titles
+
+
+def test_invisible_characters_cannot_hide_guard_terms() -> None:
+    """Round 4 split guard terms with zero-width spaces.
+
+    ``gol\\u200bden`` renders identically to ``golden``; format characters
+    are stripped before the guard search so the dodge fails.
+    """
+    smuggled = "offers reviewed gol​den snap​shots today"
+    assert re.search(r"\bgolden\b", _fold(smuggled), re.IGNORECASE)
+    assert re.search(r"\bsnapshot\w*\b", _fold(smuggled), re.IGNORECASE)
 
 
 @pytest.mark.parametrize("module", _CLAIMED_MODULES)
@@ -293,8 +394,13 @@ def test_every_planned_capability_is_guarded() -> None:
 
 @pytest.mark.parametrize(("heading", "pattern"), _GUARDS)
 def test_no_planned_capability_is_claimed_by_readme(heading: str, pattern: str) -> None:
-    """Deferred scope may be linked from the README, never claimed in it."""
-    found = re.search(rf"\b{pattern}\b", _capability_section(), re.IGNORECASE)
+    """Deferred scope may be linked from the README, never claimed in it.
+
+    The search runs over the folded section — format characters stripped,
+    whitespace collapsed — so zero-width splits and line wraps cannot hide
+    a guarded term that renders as the guarded word.
+    """
+    found = re.search(rf"\b{pattern}\b", _fold(_capability_section()), re.IGNORECASE)
     assert not found, (
         f"{found.group(0)!r} appears in the README's current-capability "
         f"section, but {heading!r} is planned scope; it belongs in "
