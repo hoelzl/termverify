@@ -23,8 +23,10 @@ import termverify._key_encoding_v1
 import termverify._key_v1
 import termverify.adapter
 import termverify.conpty
+import termverify.cooperation
 import termverify.direct
 import termverify.transcript
+from termverify._protocol_v1 import CONSTRAINT_NAMES
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "transcripts" / "v1"
 
@@ -152,27 +154,20 @@ def test_dunder_all_is_exactly_the_curated_surface() -> None:
     assert set(termverify.__all__) == curated
 
 
-#: The seven constraint ports, by the suffix they share.
-_CONSTRAINTS = (
-    "seed",
-    "clock",
-    "locale",
-    "timezone",
-    "terminal",
-    "filesystem",
-    "network",
-)
+#: Issue #218 renamed one port per constraint, so the pins below are derived
+#: from the protocol's own constraint list rather than hand-copied: an eighth
+#: constraint then joins the rename pin automatically.
+_CONSTRAINTS = CONSTRAINT_NAMES
 
-#: Issue #218: the in-process API said ``enforced`` after the wire became
-#: ``applied``. These names must be gone from the whole public surface —
-#: which includes ``termverify.conpty``, where the ports default lives. It is
-#: excluded from the *top-level* surface but is a public module path, so a
-#: check confined to ``termverify`` would pass vacuously for it.
-_RETIRED_ENFORCED_NAMES = (
-    "EnforcedConstraints",
-    "UnenforcedConstraintPorts",
-    *(f"enforce_{constraint}" for constraint in _CONSTRAINTS),
-)
+#: Retired by #218, and never a module attribute — these are *members*, so
+#: they are checked on the classes that carry them, not on module namespaces.
+_RETIRED_PORT_METHODS = tuple(f"enforce_{constraint}" for constraint in _CONSTRAINTS)
+
+#: Retired by #218, and module-level names. ``UnenforcedConstraintPorts``
+#: lived in ``termverify.conpty``, never on ``termverify``, so a check
+#: confined to the top level passes vacuously for it — both modules are
+#: inspected below.
+_RETIRED_TYPE_NAMES = ("EnforcedConstraints", "UnenforcedConstraintPorts")
 
 #: The vocabulary that deliberately keeps saying "enforcement": it names the
 #: *axis* of claim strength, on which ``delivered`` honestly means nothing is
@@ -185,22 +180,36 @@ _RETAINED_ENFORCEMENT_NAMES = (
 )
 
 
+#: The protocol plus both shipped implementations. Checking the protocol
+#: alone proves nothing about implementations — it is a ``Protocol``, so a
+#: half-renamed class still satisfies ``hasattr`` on the protocol itself.
+_PORT_CARRIERS = (
+    termverify.ConstraintPorts,
+    termverify.conpty.ApplyNothingConstraintPorts,
+    termverify.cooperation.CooperationConstraintPorts,
+)
+
+
 def test_the_applied_vocabulary_replaced_the_enforced_one() -> None:
     assert "AppliedConstraints" in termverify.__all__
     assert termverify.AppliedConstraints is termverify.adapter.AppliedConstraints
+    assert "ApplyNothingConstraintPorts" in termverify.conpty.__all__
     for constraint in _CONSTRAINTS:
         method = f"apply_{constraint}"
-        assert hasattr(termverify.ConstraintPorts, method), method
-    assert "ApplyNothingConstraintPorts" in termverify.conpty.__all__
+        for ports in _PORT_CARRIERS:
+            assert hasattr(ports, method), f"{ports.__name__}.{method}"
 
 
 def test_no_retired_enforced_name_survives_on_the_surface() -> None:
-    for name in _RETIRED_ENFORCED_NAMES:
-        assert name not in termverify.__all__, name
-        assert not hasattr(termverify, name), name
-        assert not hasattr(termverify.ConstraintPorts, name), name
-        assert name not in termverify.conpty.__all__, name
-        assert not hasattr(termverify.conpty, name), name
+    """Both retired kinds, each checked where it could actually survive."""
+    for name in _RETIRED_TYPE_NAMES:
+        for module in (termverify, termverify.conpty):
+            assert name not in module.__all__, f"{module.__name__}.{name}"
+            assert not hasattr(module, name), f"{module.__name__}.{name}"
+
+    for method in _RETIRED_PORT_METHODS:
+        for ports in _PORT_CARRIERS:
+            assert not hasattr(ports, method), f"{ports.__name__}.{method}"
 
 
 def test_the_enforcement_tier_axis_keeps_its_name() -> None:
@@ -210,21 +219,29 @@ def test_the_enforcement_tier_axis_keeps_its_name() -> None:
     assert "delivered" in termverify.ENFORCEMENT_TIERS
 
 
-def test_dunder_all_is_sorted_deduplicated_and_resolvable() -> None:
-    """Every ``__all__`` the surface is assembled from, not just the top one.
+#: The modules this file pins the ordering of: the top-level surface, the two
+#: it is assembled from, and ``conpty`` because #218 renamed a name in its
+#: ``__all__``. Deliberately **not** every module with an ``__all__`` — the
+#: repo has no single convention yet (``termverify.control.__all__`` is in
+#: ``RUF022``'s isort order, not this plain one), and settling that is a
+#: lint-configuration decision, not this test's job.
+_ORDERED_SURFACE_MODULES = (
+    termverify,
+    termverify.adapter,
+    termverify.conpty,
+    termverify.direct,
+)
 
-    Ruff re-sorts imports but not ``__all__`` literals (``RUF022`` is not
-    enabled, and its isort-style order differs from this plain one), so this
-    is the only thing standing between a scripted rename and a list that
-    silently stops being sorted or grows a duplicate.
+
+def test_dunder_all_is_sorted_deduplicated_and_resolvable() -> None:
+    """Ordering and resolvability for the modules named above.
+
+    ``ruff --fix`` re-sorts imports but not ``__all__`` literals, and
+    ``RUF022`` — which would — is not enabled, so for these four modules this
+    test is what catches a scripted edit that leaves a list unsorted,
+    duplicated, or naming something that no longer exists.
     """
-    modules = (
-        termverify,
-        termverify.adapter,
-        termverify.conpty,
-        termverify.direct,
-    )
-    for module in modules:
+    for module in _ORDERED_SURFACE_MODULES:
         names = list(module.__all__)
         assert names == sorted(set(names)), module.__name__
         for name in names:

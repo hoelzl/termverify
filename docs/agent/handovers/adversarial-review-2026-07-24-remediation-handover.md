@@ -339,18 +339,20 @@ review follow-up #214).
 **Acceptance:** each slice merged with red→green TDD evidence and full gate;
 review sign-off that failure classification matches the taxonomy.
 
-### Phase 3 — Protocol-truthfulness reconciliation (review rec 7, partial) [DONE 2026-07-29]
+### Phase 3 — Protocol-truthfulness reconciliation (review rec 7, partial) [DONE 2026-07-25]
 
 Prose with normative force; needs owner decisions on wording. Findings:
 **P2**, **P9**.
 
 Status 2026-07-25: **both slices are merged.** Slice 3.2 (#191) as PR #212
 plus its review follow-up PR #215; Slice 3.1 (#190) as PR #216. The
-Phase 3-adjacent items were the timezone-registry removal (#192, decision
-9.4), merged 2026-07-25 as PR #220, and the in-process vocabulary deferral
-recorded below as #218, merged 2026-07-29 as PR #255 under Phase 6. With
-that, **Phase 3 is complete**; the heading said `[IN PROGRESS]` until then
-because the deferral had no closing marker.
+Phase 3-adjacent timezone-registry removal (#192, decision 9.4) merged the
+same day as PR #220. Slice 3.1 also *transferred* one item rather than
+completing it — the in-process vocabulary deferral recorded below — which
+became #218 and was executed under Phase 6 (PR #255, 2026-07-29). The
+transfer is why this heading read `[IN PROGRESS]` until 2026-07-29 even
+though nothing Phase 3 owned was outstanding after 2026-07-25; it is dated
+here by its own completion, and #218 is counted under Phase 6, not twice.
 
 **Slice 3.1 outcome (PR #216).** The chosen vocabulary is `enforced` →
 **`applied`**: the status word states only that the adapter carried out the
@@ -746,9 +748,11 @@ mentions), and a changelog fragment. Do it pre-0.2.0 while cheap.
 **Also in this phase's scope: #218** — the in-process API still calls its
 receipts `enforced` after the wire became `applied`. Renaming existing public
 names is not something this phase's original text covered, hence the issue.
-**The symbol list #218 inherited from the review is stale** — `AdapterResult`
-and `StartOk` do not exist in the codebase; §5 carries the list verified
-against `src/` on 2026-07-29.
+**The symbol list #218 inherited from the review was stale**: `AdapterResult`
+and `StartOk` never existed in the codebase, and what the issue called
+`Started.enforced` is `Started.constraints`. Resolved by PR #255; the
+authoritative record of what was renamed is now the migration table in
+`CHANGELOG.md`, not prose here.
 
 **Acceptance:** documented names importable from `termverify`; no doc tells
 users to import private paths.
@@ -937,18 +941,27 @@ implementation gets its own future handover/boundary, not this one.
     re-sorts imports but not `__all__` literals (`RUF022` is not enabled and
     its order would fight the surface test's plain `sorted()`), so three
     `__all__` lists needed hand-sorting. Both were caught before any green
-    run, but only because the surface tests exist — and #255's own review
-    then found that those tests covered `termverify.__all__` alone, leaving
-    `adapter`, `conpty`, and `direct` unpinned, and that the retired-name
-    check never looked at `termverify.conpty` at all, so its
-    `UnenforcedConstraintPorts` entry was dead. Both widened before merge.
+    run, but only because the surface tests exist — **and two review rounds
+    on #255 then found those tests were themselves weaker than they read.**
+    Round 1: the sortedness pin covered `termverify.__all__` alone, and the
+    retired-name check never looked at `termverify.conpty`, so its
+    `UnenforcedConstraintPorts` entry was a dead assertion. Round 2: the
+    widened version still asserted `ApplyNothingConstraintPorts` only by name
+    in `__all__`, so renaming a method back on the shipped class left all 14
+    tests green, and most of the cross-product it generated could never fail.
+    The final version splits retired *members* from retired *module names*,
+    checks each where it could actually survive, and derives the port list
+    from `CONSTRAINT_NAMES` instead of hand-copying it. Every assertion was
+    then mutation-tested — five deliberate half-renames, all caught.
+    A test that pins a rename deserves the same suspicion as the rename.
   - **The standing lesson held again, this time against this handover
     itself.** Two review rounds on PR #254 returned no Critical finding and
     nothing wrong with *which* names were exported, their identity, or the
     `__all__` curation. What they returned — 9 Important and 17 Minor across
     the two rounds — was dominated by untrue or unrepaired **statements**:
-    the stale #218 symbol list quoted above (`AdapterResult` and `StartOk`
-    do not exist); a compatibility promise still extending to module paths
+    the stale #218 symbol list #216 left behind (`AdapterResult` and
+    `StartOk` never existed; corrected in place in the Phase 3 deferral
+    bullet); a compatibility promise still extending to module paths
     the same page had just declared private; a docstring calling every
     `KEY_MODIFIED_BASES` entry an "ordinary printable character" when
     `Space` is in that tuple; a test named `..._round_trips` that never
