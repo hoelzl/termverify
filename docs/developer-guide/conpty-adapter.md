@@ -9,7 +9,7 @@ tier under the `termverify.enforcement-tier/v1` authorization matrix.
 
 ## Wiring
 
-The shipped default, `UnenforcedConstraintPorts`, truthfully reports every
+The shipped default, `ApplyNothingConstraintPorts`, truthfully reports every
 non-terminal constraint as not enforced, so `start()` with defaults ends
 fail-closed as `StartUnsupported(seed)` before any child exists. Verified
 runs require an explicit host decision to inject

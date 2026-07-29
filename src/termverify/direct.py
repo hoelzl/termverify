@@ -9,11 +9,11 @@ from typing import Literal, NamedTuple, Protocol, cast
 from termverify._negotiation import AuthorizedTiers, negotiate
 from termverify.adapter import (
     AdapterFailure,
+    AppliedConstraints,
     ClockAdvance,
     ClockReceipt,
     ConstraintPorts,
     DispatchInput,
-    EnforcedConstraints,
     EpochCompleted,
     EpochResult,
     FilesystemReceipt,
@@ -219,21 +219,19 @@ class DirectAdapter:
             run_id,
             configuration,
             (
-                lambda: self._constraints.enforce_seed(run_id, configuration.seed),
-                lambda: self._constraints.enforce_clock(run_id, configuration.clock),
-                lambda: self._constraints.enforce_locale(run_id, configuration.locale),
-                lambda: self._constraints.enforce_timezone(
+                lambda: self._constraints.apply_seed(run_id, configuration.seed),
+                lambda: self._constraints.apply_clock(run_id, configuration.clock),
+                lambda: self._constraints.apply_locale(run_id, configuration.locale),
+                lambda: self._constraints.apply_timezone(
                     run_id, configuration.timezone
                 ),
-                lambda: self._constraints.enforce_terminal(
+                lambda: self._constraints.apply_terminal(
                     run_id, configuration.terminal
                 ),
-                lambda: self._constraints.enforce_filesystem(
+                lambda: self._constraints.apply_filesystem(
                     run_id, configuration.filesystem
                 ),
-                lambda: self._constraints.enforce_network(
-                    run_id, configuration.network
-                ),
+                lambda: self._constraints.apply_network(run_id, configuration.network),
             ),
             _AUTHORIZED_TIERS,
         )
@@ -243,7 +241,7 @@ class DirectAdapter:
         receipts = list(negotiated)
 
         self._set_state("initializing")
-        constraints = EnforcedConstraints(
+        constraints = AppliedConstraints(
             run_id=run_id,
             requested=configuration,
             seed=cast(SeedReceipt, receipts[0]),
@@ -268,7 +266,7 @@ class DirectAdapter:
             return StartFailed(
                 run_id=run_id,
                 requested=configuration,
-                enforced=tuple(receipts),
+                applied=tuple(receipts),
                 failure=failure,
             )
         if type(initialized) is TerminalResult:

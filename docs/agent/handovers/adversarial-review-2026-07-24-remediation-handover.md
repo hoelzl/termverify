@@ -8,8 +8,8 @@
   (reviewed revision: `main` @ `8f33e6c`).
 - **Owner:** project maintainer
 - **Created:** 2026-07-24
-- **Updated:** 2026-07-29 (checkpoint f: **Phases 1–5 complete**, 0.1.1
-  released, Phase 6 half done — #198 merged as PR #254; next item is #218)
+- **Updated:** 2026-07-29 (checkpoint f: **Phases 1–6 complete**, 0.1.1
+  released; next item is Phase 7 / #199)
 - **Review required:** yes — every slice that changes runtime behavior, the
   public API, protocol prose with normative force, or release/security claims
   requires TDD evidence, full validation, and an independent adversarial
@@ -339,15 +339,20 @@ review follow-up #214).
 **Acceptance:** each slice merged with red→green TDD evidence and full gate;
 review sign-off that failure classification matches the taxonomy.
 
-### Phase 3 — Protocol-truthfulness reconciliation (review rec 7, partial) [IN PROGRESS]
+### Phase 3 — Protocol-truthfulness reconciliation (review rec 7, partial) [DONE 2026-07-25]
 
 Prose with normative force; needs owner decisions on wording. Findings:
 **P2**, **P9**.
 
 Status 2026-07-25: **both slices are merged.** Slice 3.2 (#191) as PR #212
-plus its review follow-up PR #215; Slice 3.1 (#190) as PR #216. The only
-Phase 3-adjacent item left is the timezone-registry removal (#192, decision
-9.4).
+plus its review follow-up PR #215; Slice 3.1 (#190) as PR #216. The
+Phase 3-adjacent timezone-registry removal (#192, decision 9.4) merged the
+same day as PR #220. Slice 3.1 also *transferred* one item rather than
+completing it — the in-process vocabulary deferral recorded below — which
+became #218 and was executed under Phase 6 (PR #255, 2026-07-29). The
+transfer is why this heading read `[IN PROGRESS]` until 2026-07-29 even
+though nothing Phase 3 owned was outstanding after 2026-07-25; it is dated
+here by its own completion, and #218 is counted under Phase 6, not twice.
 
 **Slice 3.1 outcome (PR #216).** The chosen vocabulary is `enforced` →
 **`applied`**: the status word states only that the adapter carried out the
@@ -409,15 +414,20 @@ Scope facts established by that slice, worth not rediscovering:
 - The external GlyphWright spike fixture stays byte-for-byte as retrieved
   (its recorded SHA-256 still verifies); its disclosed conformance delta
   widened from one member to two, recorded in `PROVENANCE.md` and the test.
-- Deliberately deferred and now **tracked as #218**: the in-process API keeps
-  the older vocabulary — `EnforcedConstraints` (public, exported),
-  `AdapterResult.enforced`, `StartOk`/`StartUnsupported`/`StartFailed`
-  `.enforced`, `UnenforcedConstraintPorts`. Nothing there is false (claim
-  strength is carried by `EnforcementReceipt.tier`), but an adapter author now
-  populates `EnforcedConstraints` and watches it emit `applied`. Phase 6 as
-  written adds exports and does not cover renaming existing public names, so
-  **fold #218 into Phase 6's scope explicitly**. The `constraint-not-enforced`
-  wire code stays: renaming it has no truthfulness payoff.
+- ~~Deliberately deferred and tracked as #218~~ **done 2026-07-29 — PR
+  #255**, folded into Phase 6 as this bullet asked. The in-process API kept
+  the older vocabulary at the time: `EnforcedConstraints` (public, exported),
+  `StartUnsupported`/`StartFailed` `.enforced`, `UnenforcedConstraintPorts`,
+  and — not noticed here — the seven `ConstraintPorts.enforce_*` ports, which
+  the owner added to #218's scope so the rename closed the seam rather than
+  moving it. **This bullet's original list also named `AdapterResult.enforced`
+  and `StartOk`, neither of which ever existed**, and implied a
+  `Started.enforced` that is really `Started.constraints`; the phantoms cost a
+  later session real time, so they are corrected rather than struck. Nothing
+  there was false (claim strength is carried by `EnforcementReceipt.tier`),
+  but an adapter author populated `EnforcedConstraints` and watched it emit
+  `applied`. The `constraint-not-enforced` wire code stays: renaming it has no
+  truthfulness payoff.
 
 - **Slice 3.1 — `status: "enforced"` vs. "Nothing is enforced" (P2).**
   **Owner decision 2026-07-24: fix the wire vocabulary properly (Option B),
@@ -701,16 +711,29 @@ re-deriving them.
 **Acceptance:** each finding has a recorded decision and its chosen
 disposition implemented; no undisclosed fidelity gap remains.
 
-### Phase 6 — Public API exports (review rec 8) [IN PROGRESS]
+### Phase 6 — Public API exports (review rec 8) [DONE 2026-07-29]
 
-**#198 merged as PR #254 (2026-07-29).** The codec (`parse_transcript`,
+**#198 merged as PR #254.** The codec (`parse_transcript`,
 `serialize_transcript`, `TranscriptValidationError`) and the registry entry
 points (`KEY_NAMES`, `is_key_chord`, `encode_key_chord`) are exported; the
 registry names are public while their defining modules stay private, which is
 the one deliberate exception to the guide's interchangeable-import rule.
-**#218 (the `enforced` → `applied` in-process rename) remains open** and is
-what completes this phase; read the corrected symbol list in §5, not the
-prose below. Original slice text follows for the record.
+
+**#218 merged as PR #255**, completing the phase. The in-process vocabulary
+now matches the wire: `ConstraintPorts.enforce_*` → `apply_*`,
+`EnforcedConstraints` → `AppliedConstraints`, `.enforced` → `.applied`,
+`UnenforcedConstraintPorts` → `ApplyNothingConstraintPorts`. The owner
+decided to include the `enforce_*` ports — #218's own list stopped at the
+data types, which would have moved the seam rather than closed it — and chose
+`ApplyNothingConstraintPorts` over the mechanical `Unapplied…`. The
+enforcement-**tier** vocabulary (`EnforcementReceipt`, `EnforcementTier`,
+`ENFORCEMENT_TIERS`, `termverify.enforcement-tier/v1`) and the
+`constraint-not-enforced` wire code deliberately keep their names: they name
+the axis of claim strength, on which `delivered` honestly means nothing is
+enforced. A test pins that so the exception cannot decay into a
+search-and-replace.
+
+Original slice text follows for the record.
 
 Finding: minor `__init__.py` bullet. Export the authoritative codec
 (`parse_transcript`, `serialize_transcript`, `TranscriptValidationError`) and
@@ -725,9 +748,11 @@ mentions), and a changelog fragment. Do it pre-0.2.0 while cheap.
 **Also in this phase's scope: #218** — the in-process API still calls its
 receipts `enforced` after the wire became `applied`. Renaming existing public
 names is not something this phase's original text covered, hence the issue.
-**The symbol list #218 inherited from the review is stale** — `AdapterResult`
-and `StartOk` do not exist in the codebase; §5 carries the list verified
-against `src/` on 2026-07-29.
+**The symbol list #218 inherited from the review was stale**: `AdapterResult`
+and `StartOk` never existed in the codebase, and what the issue called
+`Started.enforced` is `Started.constraints`. Resolved by PR #255; the
+authoritative record of what was renamed is now the migration table in
+`CHANGELOG.md`, not prose here.
 
 **Acceptance:** documented names importable from `termverify`; no doc tells
 users to import private paths.
@@ -894,17 +919,49 @@ implementation gets its own future handover/boundary, not this one.
   - **Merged:** #198 (PR #254) — the authoritative codec and the key
     registries' entry points are now exported from `termverify`, so the
     non-authoritative schema aid is no longer the easier import and adapter
-    authors need no underscore path. **Phase 6 is half done; #218 completes
-    it**, and §5 carries a symbol list for it verified against `src/`
-    because the one #218 inherited from the review names two symbols
-    (`AdapterResult`, `StartOk`) that do not exist.
+    authors need no underscore path. Then #218 (PR #255) — the in-process
+    `enforced` vocabulary became `applied`, matching the wire. **Phase 6 is
+    complete; Phases 1–6 are done.**
+  - **Two owner decisions on #218, taken before implementing.** The issue's
+    scope stopped at the data types (`EnforcedConstraints`, the `.enforced`
+    fields), which would have left `ports.enforce_seed()` returning something
+    stored in `AppliedConstraints` — moving the seam, not closing it. Owner
+    chose to rename the seven `ConstraintPorts.enforce_*` ports too, breaking
+    every external implementation including GlyphWright's, on the grounds
+    that prototyping stage owes no shim and deferring costs the same break
+    plus a second migration note. Owner also chose
+    `ApplyNothingConstraintPorts` over the mechanical `Unapplied…`. The
+    enforcement-*tier* names and `constraint-not-enforced` stay, pinned by a
+    test: they name the axis of claim strength, on which `delivered` honestly
+    means nothing is enforced.
+  - **Two scripted-rename hazards worth carrying.** A blanket `sed` rewrote
+    the string literals in `tests/test_public_surface.py` that assert the
+    *old* names are gone, turning the guard into a tautology — the one place
+    in the repo where a correct global rename is wrong. And `ruff --fix`
+    re-sorts imports but not `__all__` literals (`RUF022` is not enabled and
+    its order would fight the surface test's plain `sorted()`), so three
+    `__all__` lists needed hand-sorting. Both were caught before any green
+    run, but only because the surface tests exist — **and two review rounds
+    on #255 then found those tests were themselves weaker than they read.**
+    Round 1: the sortedness pin covered `termverify.__all__` alone, and the
+    retired-name check never looked at `termverify.conpty`, so its
+    `UnenforcedConstraintPorts` entry was a dead assertion. Round 2: the
+    widened version still asserted `ApplyNothingConstraintPorts` only by name
+    in `__all__`, so renaming a method back on the shipped class left all 14
+    tests green, and most of the cross-product it generated could never fail.
+    The final version splits retired *members* from retired *module names*,
+    checks each where it could actually survive, and derives the port list
+    from `CONSTRAINT_NAMES` instead of hand-copying it. Every assertion was
+    then mutation-tested — five deliberate half-renames, all caught.
+    A test that pins a rename deserves the same suspicion as the rename.
   - **The standing lesson held again, this time against this handover
     itself.** Two review rounds on PR #254 returned no Critical finding and
     nothing wrong with *which* names were exported, their identity, or the
     `__all__` curation. What they returned — 9 Important and 17 Minor across
     the two rounds — was dominated by untrue or unrepaired **statements**:
-    the stale #218 symbol list quoted above (`AdapterResult` and `StartOk`
-    do not exist); a compatibility promise still extending to module paths
+    the stale #218 symbol list #216 left behind (`AdapterResult` and
+    `StartOk` never existed; corrected in place in the Phase 3 deferral
+    bullet); a compatibility promise still extending to module paths
     the same page had just declared private; a docstring calling every
     `KEY_MODIFIED_BASES` entry an "ordinary printable character" when
     `Space` is in that tuple; a test named `..._round_trips` that never
@@ -1107,55 +1164,40 @@ implementation gets its own future handover/boundary, not this one.
 8. ~~Slice 5.3 (#197)~~ **done 2026-07-26** — PR #234, together with #232 and
    #233; then #235 (PR #239), #236 (PR #240), #230 (PR #241) and #228
    (PR #243). **Phase 5 is complete**, and 0.1.1 shipped (PR #242).
-9. ~~Phase 6, #198~~ **done 2026-07-29** — PR #254 exported the
-   authoritative codec and the key registries' entry points. **Resume with
-   #218**, the other half of Phase 6: rename the in-process receipts that
-   still say `enforced` after the wire became `applied`.
+9. ~~Phase 6 (#198 and #218)~~ **done 2026-07-29** — PRs #254 and #255.
+   #254 exported the authoritative codec and the key registries' entry
+   points; #255 renamed the in-process `enforced` vocabulary to `applied`,
+   including the `ConstraintPorts.enforce_*` ports by owner decision, and
+   kept the enforcement-*tier* names and the `constraint-not-enforced` wire
+   code by the same decision. **Phase 6 is complete.**
 
-   **#218's inherited symbol list is wrong; use this one instead**, verified
-   against `src/` on 2026-07-29. `AdapterResult` and `StartOk` do not exist
-   in the codebase, and `Started` carries no `.enforced` field:
+   Two method notes worth carrying, both from #255's sweep. A blanket `sed`
+   silently rewrote the string literals in `tests/test_public_surface.py`
+   that assert the *old* names are gone, turning the guard into a tautology —
+   the one place in the repo where a correct global rename is wrong. And
+   `ruff --fix` re-sorts imports but **not** `__all__` literals: `RUF022` is
+   not enabled, and its isort-style order differs from the plain `sorted()`
+   the surface test asserts, so enabling it would fight that test. Only
+   `termverify.__all__` was covered when the sweep ran; the review of #255
+   pointed out that `adapter`/`conpty`/`direct` had no net at all, and the
+   test now covers all four. A scripted rename needs both checks.
 
-   | Symbol | Location | Note |
-   | --- | --- | --- |
-   | `EnforcedConstraints` | `adapter.py` | exported from `termverify` |
-   | `Started.constraints: EnforcedConstraints` | `adapter.py:954` | the field is already named `constraints`; only its *type* carries the vocabulary |
-   | `StartTerminated.constraints: EnforcedConstraints` | `adapter.py:1127` | same shape as `Started`; easy to miss |
-   | `StartUnsupported.enforced` | `adapter.py:995` | exported |
-   | `StartFailed.enforced` | `adapter.py:1035` | exported |
-   | `_validate_receipt_prefix` messages | `adapter.py:982-987` | two strings say "enforced receipts", one says "enforced receipt prefix" |
-   | `UnenforcedConstraintPorts` | `conpty.py:368` | **not** on the top-level surface — `termverify.conpty` is deliberately excluded, so this one needs no README or surface-test change, only the ConPTY guide |
+10. **Resume with Phase 7 (#199)** — README lists current capabilities only,
+    plus a single-sourced vision doc. Note `docs/knowledge/product-vision.md`
+    already exists; check whether it is the doc Phase 7 asks for before
+    creating another. Then Phase 8 (#200–#203, minus the two 8.3 items
+    #240/#241 already executed — see checkpoint e).
 
-   Those are the *declarations*. The `enforced=` keyword construction sites
-   are in `_negotiation.py`, `direct.py`, `conpty.py`, and `jsonl.py`;
-   regenerate the current list rather than trusting a copy here —
-   `rg -n 'enforced=|\.enforced\b|EnforcedConstraints|Unenforced' src tests`.
-   Line numbers above were correct on 2026-07-29 and are the least durable
-   part of this table: re-confirm before relying on them, because the code is
-   authoritative and this is prose. (Round 2 of the PR #254 review caught one
-   of them already off by three, in the table written to replace an untrusted
-   list — the hazard is not hypothetical.)
+    **Give the Windows containment findings one home.** #238 (JSONL spawn
+    keeps the job-assignment window) and the reopened Windows halves of
+    #213/#217 are the same question asked three times: whether the JSONL
+    transport owns its Windows spawn and pipe handles the way `_conpty.py`
+    now does. Size them as one slice with a recorded owner decision on
+    own-the-spawn versus disclose, not as three minors. They are no longer
+    Phase 5 work.
 
-   The rename is a public-API change, so it needs name assertions in
-   `tests/test_public_surface.py`, the adapter-author guide and README
-   mentions updated in the same change, and a changelog fragment under
-   `changed` carrying the migration note. Cheap now, expensive after 0.2.0.
-   The `constraint-not-enforced` wire code deliberately stays (#218 records
-   why).
-
-   Then Phase 7 (#199) and Phase 8 (#200–#203, minus the two 8.3 items
-   #240/#241 already executed — see checkpoint e).
-
-   **Give the Windows containment findings one home.** #238 (JSONL spawn
-   keeps the job-assignment window) and the reopened Windows halves of
-   #213/#217 are the same question asked three times: whether the JSONL
-   transport owns its Windows spawn and pipe handles the way `_conpty.py`
-   now does. Size them as one slice with a recorded owner decision on
-   own-the-spawn versus disclose, not as three minors. They are no longer
-   Phase 5 work.
-
-   Housekeeping when convenient: five dependabot PRs are open (#248–#252);
-   only the `astral-sh/setup-uv` 8→9 major bump needs reading before merge.
+    Housekeeping when convenient: five dependabot PRs are open (#248–#252);
+    only the `astral-sh/setup-uv` 8→9 major bump needs reading before merge.
 
 Superseded next-step detail from the previous checkpoint, kept because the
 file survey is still accurate:

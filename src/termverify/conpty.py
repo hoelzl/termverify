@@ -20,7 +20,7 @@ Negotiation is truthful by construction:
   and requested terminal capabilities are rejected fail-closed because the
   capability registry is not activated.
 - The six non-terminal constraints belong to injected ``ConstraintPorts``.
-  The shipped default, :class:`UnenforcedConstraintPorts`, reports every one
+  The shipped default, :class:`ApplyNothingConstraintPorts`, reports every one
   of them ``constraint-not-enforced`` — no OS mechanism at this boundary
   enforces them — so ``start()`` with defaults ends as
   ``StartUnsupported(constraint="seed")`` before any child exists.
@@ -124,6 +124,7 @@ from termverify._key_encoding_v1 import encode_key_chord
 from termverify._negotiation import AuthorizedTiers, negotiate
 from termverify.adapter import (
     AdapterFailure,
+    AppliedConstraints,
     ClockAdvance,
     ClockConfiguration,
     ClockReceipt,
@@ -132,7 +133,6 @@ from termverify.adapter import (
     DeliveryRecord,
     Diagnostic,
     DispatchInput,
-    EnforcedConstraints,
     EpochCompleted,
     EpochResult,
     Event,
@@ -173,16 +173,16 @@ from termverify.transcript import (
 from termverify.vt import ScreenSnapshot, TerminalOutputNormalizer, VtScreenNormalizer
 
 __all__ = [
-    "READINESS_MARKER_PREFIX_DEFAULT",
-    "READINESS_MARKER_TERMINATOR",
+    "ApplyNothingConstraintPorts",
     "ConptyAdapter",
     "ConptyBinding",
     "ConptyBindingPort",
     "ConptyChildPort",
     "ConptyWatchdogPort",
     "NormalizerFactory",
+    "READINESS_MARKER_PREFIX_DEFAULT",
+    "READINESS_MARKER_TERMINATOR",
     "TimerWatchdog",
-    "UnenforcedConstraintPorts",
 ]
 
 #: Default readiness-marker prefix. A marker is this prefix, a token, and
@@ -365,10 +365,10 @@ class ConptyBinding:
         )
 
 
-class UnenforcedConstraintPorts:
+class ApplyNothingConstraintPorts:
     """Truthful default ports: nothing is enforced at the ConPTY boundary."""
 
-    def enforce_seed(
+    def apply_seed(
         self, run_id: str, requested: int
     ) -> SeedReceipt | ConstraintUnsupported | AdapterFailure:
         del run_id, requested
@@ -379,7 +379,7 @@ class UnenforcedConstraintPorts:
             " environment injection is subject cooperation, not enforcement",
         )
 
-    def enforce_clock(
+    def apply_clock(
         self, run_id: str, requested: ClockConfiguration
     ) -> ClockReceipt | ConstraintUnsupported | AdapterFailure:
         del run_id, requested
@@ -390,7 +390,7 @@ class UnenforcedConstraintPorts:
             " is subject cooperation, not enforcement",
         )
 
-    def enforce_locale(
+    def apply_locale(
         self, run_id: str, requested: str
     ) -> LocaleReceipt | ConstraintUnsupported | AdapterFailure:
         del run_id, requested
@@ -401,7 +401,7 @@ class UnenforcedConstraintPorts:
             " boundary enforcement",
         )
 
-    def enforce_timezone(
+    def apply_timezone(
         self, run_id: str, requested: str
     ) -> TimezoneReceipt | ConstraintUnsupported | AdapterFailure:
         del run_id, requested
@@ -412,7 +412,7 @@ class UnenforcedConstraintPorts:
             " named-timezone enforcement remains blocked on the owner",
         )
 
-    def enforce_terminal(
+    def apply_terminal(
         self, run_id: str, requested: TerminalConfiguration
     ) -> TerminalReceipt | ConstraintUnsupported | AdapterFailure:
         del run_id, requested
@@ -423,7 +423,7 @@ class UnenforcedConstraintPorts:
             " be delegated to injected ports",
         )
 
-    def enforce_filesystem(
+    def apply_filesystem(
         self, run_id: str, requested: FilesystemConfiguration
     ) -> FilesystemReceipt | ConstraintUnsupported | AdapterFailure:
         del run_id, requested
@@ -435,7 +435,7 @@ class UnenforcedConstraintPorts:
             " default ports deliver nothing",
         )
 
-    def enforce_network(
+    def apply_network(
         self, run_id: str, requested: NetworkConfiguration
     ) -> NetworkReceipt | ConstraintUnsupported | AdapterFailure:
         del run_id, requested
@@ -586,7 +586,7 @@ class ConptyAdapter:
         self._binding = binding
         self._abort_deadline_ms = _validate_deadline(abort_deadline_ms)
         if constraint_ports is None:
-            constraint_ports = UnenforcedConstraintPorts()
+            constraint_ports = ApplyNothingConstraintPorts()
         self._constraints: ConstraintPorts = constraint_ports
         if normalizer_factory is None:
             normalizer_factory = VtScreenNormalizer
@@ -629,7 +629,7 @@ class ConptyAdapter:
 
     # --- negotiation -------------------------------------------------------
 
-    def _enforce_terminal(
+    def _apply_terminal(
         self, run_id: str, requested: TerminalConfiguration
     ) -> TerminalReceipt | ConstraintUnsupported:
         if requested.capabilities:
@@ -1136,19 +1136,17 @@ class ConptyAdapter:
             run_id,
             configuration,
             (
-                lambda: self._constraints.enforce_seed(run_id, configuration.seed),
-                lambda: self._constraints.enforce_clock(run_id, configuration.clock),
-                lambda: self._constraints.enforce_locale(run_id, configuration.locale),
-                lambda: self._constraints.enforce_timezone(
+                lambda: self._constraints.apply_seed(run_id, configuration.seed),
+                lambda: self._constraints.apply_clock(run_id, configuration.clock),
+                lambda: self._constraints.apply_locale(run_id, configuration.locale),
+                lambda: self._constraints.apply_timezone(
                     run_id, configuration.timezone
                 ),
-                lambda: self._enforce_terminal(run_id, configuration.terminal),
-                lambda: self._constraints.enforce_filesystem(
+                lambda: self._apply_terminal(run_id, configuration.terminal),
+                lambda: self._constraints.apply_filesystem(
                     run_id, configuration.filesystem
                 ),
-                lambda: self._constraints.enforce_network(
-                    run_id, configuration.network
-                ),
+                lambda: self._constraints.apply_network(run_id, configuration.network),
             ),
             _AUTHORIZED_TIERS,
         )
@@ -1162,12 +1160,12 @@ class ConptyAdapter:
             return StartFailed(
                 run_id=run_id,
                 requested=configuration,
-                enforced=receipts,
+                applied=receipts,
                 failure=AdapterFailure("adapter-start-failed", message, details),
             )
 
         self._set_state("initializing")
-        constraints = EnforcedConstraints(
+        constraints = AppliedConstraints(
             run_id=run_id,
             requested=configuration,
             seed=cast(SeedReceipt, receipts[0]),
@@ -1253,7 +1251,7 @@ class ConptyAdapter:
         return StartFailed(
             run_id=run_id,
             requested=configuration,
-            enforced=receipts,
+            applied=receipts,
             failure=AdapterFailure(
                 "adapter-start-failed", failure.message, failure.details
             ),

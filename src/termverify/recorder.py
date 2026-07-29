@@ -377,7 +377,7 @@ class TranscriptRecorder:
             return
         if type(result) is StartUnsupported:
             self._require_run_binding(result.run_id, result.requested)
-            self._append_capability_results(result.enforced)
+            self._append_capability_results(result.applied)
             self._append(
                 "capability.result",
                 {
@@ -398,7 +398,7 @@ class TranscriptRecorder:
             return
         if type(result) is StartFailed:
             self._require_run_binding(result.run_id, result.requested)
-            self._append_capability_results(result.enforced)
+            self._append_capability_results(result.applied)
             self._append_diagnostics(result.diagnostics)
             error: dict[str, JsonValue] = {
                 "code": result.failure.code,

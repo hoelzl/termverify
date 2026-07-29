@@ -44,11 +44,11 @@ from termverify.adapter import (
     TimezoneReceipt,
 )
 from termverify.conpty import (
+    ApplyNothingConstraintPorts,
     ConptyAdapter,
     ConptyBinding,
     ConptyBindingPort,
     ConptyChildPort,
-    UnenforcedConstraintPorts,
 )
 
 _NON_TERMINAL_CONSTRAINTS = (
@@ -114,36 +114,36 @@ class _EnforcingPorts:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
-    def enforce_seed(
+    def apply_seed(
         self, run_id: str, requested: int
     ) -> SeedReceipt | ConstraintUnsupported | AdapterFailure:
         self.calls.append("seed")
         return SeedReceipt(run_id, requested, "delivered", _delivery("seed"))
 
-    def enforce_clock(
+    def apply_clock(
         self, run_id: str, requested: ClockConfiguration
     ) -> ClockReceipt | ConstraintUnsupported | AdapterFailure:
         self.calls.append("clock")
         return ClockReceipt(run_id, requested, "delivered", _delivery("clock"))
 
-    def enforce_locale(
+    def apply_locale(
         self, run_id: str, requested: str
     ) -> LocaleReceipt | ConstraintUnsupported | AdapterFailure:
         self.calls.append("locale")
         return LocaleReceipt(run_id, requested, "delivered", _delivery("locale"))
 
-    def enforce_timezone(
+    def apply_timezone(
         self, run_id: str, requested: str
     ) -> TimezoneReceipt | ConstraintUnsupported | AdapterFailure:
         self.calls.append("timezone")
         return TimezoneReceipt(run_id, requested, "delivered", _delivery("timezone"))
 
-    def enforce_terminal(
+    def apply_terminal(
         self, run_id: str, requested: TerminalConfiguration
     ) -> TerminalReceipt | ConstraintUnsupported | AdapterFailure:
         raise AssertionError("terminal enforcement must never be delegated")
 
-    def enforce_filesystem(
+    def apply_filesystem(
         self, run_id: str, requested: FilesystemConfiguration
     ) -> FilesystemReceipt | ConstraintUnsupported | AdapterFailure:
         self.calls.append("filesystem")
@@ -151,7 +151,7 @@ class _EnforcingPorts:
             run_id, requested, "delivered", _delivery("filesystem")
         )
 
-    def enforce_network(
+    def apply_network(
         self, run_id: str, requested: NetworkConfiguration
     ) -> NetworkReceipt | ConstraintUnsupported | AdapterFailure:
         self.calls.append("network")
@@ -258,7 +258,7 @@ def test_native_binding_delegates_spawn(monkeypatch: pytest.MonkeyPatch) -> None
 
 @pytest.mark.parametrize("constraint", _NON_TERMINAL_CONSTRAINTS)
 def test_default_ports_report_not_enforced(constraint: str) -> None:
-    ports = UnenforcedConstraintPorts()
+    ports = ApplyNothingConstraintPorts()
     configuration = _configuration()
     requested = {
         "seed": configuration.seed,
@@ -268,9 +268,9 @@ def test_default_ports_report_not_enforced(constraint: str) -> None:
         "filesystem": configuration.filesystem,
         "network": configuration.network,
     }[constraint]
-    enforce = getattr(ports, f"enforce_{constraint}")
+    port = getattr(ports, f"apply_{constraint}")
 
-    result = enforce("run-conpty", requested)
+    result = port("run-conpty", requested)
 
     assert type(result) is ConstraintUnsupported
     assert result.constraint == constraint
@@ -279,7 +279,7 @@ def test_default_ports_report_not_enforced(constraint: str) -> None:
 
 
 def test_default_ports_refuse_delegated_terminal_enforcement() -> None:
-    result = UnenforcedConstraintPorts().enforce_terminal(
+    result = ApplyNothingConstraintPorts().apply_terminal(
         "run-conpty", _configuration().terminal
     )
 
@@ -298,7 +298,7 @@ def test_default_start_fails_closed_at_seed_without_spawning() -> None:
     assert result.requested == _configuration()
     assert result.constraint == "seed"
     assert result.code == "constraint-not-enforced"
-    assert result.enforced == ()
+    assert result.applied == ()
     assert binding.spawn_calls == 0
 
 
@@ -327,7 +327,7 @@ def test_negotiation_stops_at_first_unsupported_port_constraint(
             "not enforced by this fixture",
         )
 
-    setattr(ports, f"enforce_{constraint}", unsupported)
+    setattr(ports, f"apply_{constraint}", unsupported)
     adapter, binding = _adapter(ports=ports)
 
     result = adapter.start("run-conpty", _configuration())
@@ -335,7 +335,7 @@ def test_negotiation_stops_at_first_unsupported_port_constraint(
     assert type(result) is StartUnsupported
     assert result.constraint == constraint
     assert result.code == "constraint-not-enforced"
-    assert len(result.enforced) == prefix_length
+    assert len(result.applied) == prefix_length
     assert ports.calls[-1] == constraint
     assert binding.spawn_calls == 0
 
@@ -349,7 +349,7 @@ def test_unsupported_probe_fails_terminal_negotiation() -> None:
     assert type(result) is StartUnsupported
     assert result.constraint == "terminal"
     assert result.code == "constraint-unsupported"
-    assert len(result.enforced) == 4
+    assert len(result.applied) == 4
     assert "ConPTY" in result.message
     assert ports.calls == ["seed", "clock", "locale", "timezone"]
     assert binding.probe_calls == 1
@@ -364,7 +364,7 @@ def test_requested_terminal_capabilities_fail_closed() -> None:
     assert type(result) is StartUnsupported
     assert result.constraint == "terminal"
     assert result.code == "constraint-unsupported"
-    assert len(result.enforced) == 4
+    assert len(result.applied) == 4
     assert binding.spawn_calls == 0
 
 
@@ -376,14 +376,14 @@ def test_raising_port_yields_start_failed() -> None:
     ) -> ClockReceipt | ConstraintUnsupported | AdapterFailure:
         raise RuntimeError("port exploded")
 
-    ports.enforce_clock = broken  # type: ignore[method-assign]
+    ports.apply_clock = broken  # type: ignore[method-assign]
     adapter, _ = _adapter(ports=ports)
 
     result = adapter.start("run-conpty", _configuration())
 
     assert type(result) is StartFailed
     assert result.failure.code == "adapter-start-failed"
-    assert len(result.enforced) == 1
+    assert len(result.applied) == 1
     assert result.failure.details == {"constraint": "clock"}
 
 
@@ -398,7 +398,7 @@ def test_raising_probe_yields_start_failed_at_terminal() -> None:
 
     assert type(result) is StartFailed
     assert result.failure.code == "adapter-start-failed"
-    assert len(result.enforced) == 4
+    assert len(result.applied) == 4
     assert result.failure.details == {"constraint": "terminal"}
 
 
@@ -411,13 +411,13 @@ def test_mismatched_receipt_yields_start_failed() -> None:
         del run_id
         return SeedReceipt("other-run", requested, "delivered", _delivery("seed"))
 
-    ports.enforce_seed = wrong_run  # type: ignore[method-assign]
+    ports.apply_seed = wrong_run  # type: ignore[method-assign]
     adapter, _ = _adapter(ports=ports)
 
     result = adapter.start("run-conpty", _configuration())
 
     assert type(result) is StartFailed
-    assert result.enforced == ()
+    assert result.applied == ()
     assert result.failure.details == {"constraint": "seed"}
 
 
@@ -428,8 +428,8 @@ def test_complete_negotiation_proceeds_to_exactly_one_spawn() -> None:
     result = adapter.start("run-conpty", _configuration())
 
     assert type(result) is StartFailed
-    assert len(result.enforced) == 7
-    terminal = result.enforced[4]
+    assert len(result.applied) == 7
+    terminal = result.applied[4]
     assert type(terminal) is TerminalReceipt
     assert terminal.run_id == "run-conpty"
     assert terminal.effective == _configuration().terminal

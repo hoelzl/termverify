@@ -51,7 +51,7 @@ underscore path.
   run outcomes (`RunFinished`, `RunFailed`, `ExitStatus`), the enforcement
   receipts (`SeedReceipt`, `ClockReceipt`, `LocaleReceipt`,
   `TimezoneReceipt`, `TerminalReceipt`, `FilesystemReceipt`,
-  `NetworkReceipt`, `EnforcementReceipt`, `EnforcedConstraints`,
+  `NetworkReceipt`, `EnforcementReceipt`, `AppliedConstraints`,
   `ConstraintUnsupported`), and the enforcement-tier vocabulary
   (`EnforcementTier`, `ENFORCEMENT_TIERS`, `DeliveryRecord`).
 - **Observations and evidence values**: `Observation`, `UiObservation`,

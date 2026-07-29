@@ -8,12 +8,12 @@ from hypothesis import strategies as st
 
 from termverify.adapter import (
     AdapterFailure,
+    AppliedConstraints,
     ClockAdvance,
     ClockConfiguration,
     ClockReceipt,
     Cursor,
     Diagnostic,
-    EnforcedConstraints,
     EpochCompleted,
     ExitStatus,
     FilesystemConfiguration,
@@ -79,9 +79,9 @@ def _configuration() -> RunConfiguration:
     )
 
 
-def _constraints(run_id: str = RUN_ID) -> EnforcedConstraints:
+def _constraints(run_id: str = RUN_ID) -> AppliedConstraints:
     configuration = _configuration()
-    return EnforcedConstraints(
+    return AppliedConstraints(
         run_id=run_id,
         requested=configuration,
         seed=SeedReceipt(run_id, configuration.seed, "constructive"),

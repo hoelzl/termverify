@@ -348,7 +348,7 @@ def test_start_rejects_terminal_capabilities() -> None:
 
 def test_start_rejects_spawn_overlay_invariant_breach() -> None:
     class OverlayBreachPorts(CooperationConstraintPorts):
-        def enforce_seed(self, run_id: str, seed: int) -> SeedReceipt:
+        def apply_seed(self, run_id: str, seed: int) -> SeedReceipt:
             return SeedReceipt(
                 run_id,
                 seed,
@@ -356,7 +356,7 @@ def test_start_rejects_spawn_overlay_invariant_breach() -> None:
                 DeliveryRecord(env={"Path": "a"}),
             )
 
-        def enforce_clock(self, run_id: str, clock: ClockConfiguration) -> ClockReceipt:
+        def apply_clock(self, run_id: str, clock: ClockConfiguration) -> ClockReceipt:
             return ClockReceipt(
                 run_id,
                 clock,
