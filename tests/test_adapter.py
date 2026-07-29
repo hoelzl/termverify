@@ -673,7 +673,7 @@ def test_start_failed_rejects_mismatched_diagnostic_after_negotiation() -> None:
         clock=ClockConfiguration(initial_ms=7),
     )
     constraints = _constraints(configuration=configuration)
-    enforced = (
+    applied = (
         constraints.seed,
         constraints.clock,
         constraints.locale,
@@ -687,7 +687,7 @@ def test_start_failed_rejects_mismatched_diagnostic_after_negotiation() -> None:
         StartFailed(
             run_id=constraints.run_id,
             requested=constraints.requested,
-            applied=enforced,
+            applied=applied,
             failure=AdapterFailure("adapter-start-failed", "failed"),
             diagnostics=(Diagnostic(ManualTime(8), "startup", "late"),),
         )
@@ -708,7 +708,7 @@ def test_start_failed_still_forbids_diagnostics_before_complete_negotiation() ->
 
 def test_result_aggregates_accept_matching_diagnostic_times() -> None:
     constraints = _constraints()
-    enforced = (
+    applied = (
         constraints.seed,
         constraints.clock,
         constraints.locale,
@@ -745,7 +745,7 @@ def test_result_aggregates_accept_matching_diagnostic_times() -> None:
     assert StartFailed(
         run_id=constraints.run_id,
         requested=constraints.requested,
-        applied=enforced,
+        applied=applied,
         failure=AdapterFailure("adapter-start-failed", "failed"),
         diagnostics=(initial_diagnostic,),
     ).diagnostics == (initial_diagnostic,)

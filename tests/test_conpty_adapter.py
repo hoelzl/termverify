@@ -268,9 +268,9 @@ def test_default_ports_report_not_enforced(constraint: str) -> None:
         "filesystem": configuration.filesystem,
         "network": configuration.network,
     }[constraint]
-    apply = getattr(ports, f"apply_{constraint}")
+    port = getattr(ports, f"apply_{constraint}")
 
-    result = apply("run-conpty", requested)
+    result = port("run-conpty", requested)
 
     assert type(result) is ConstraintUnsupported
     assert result.constraint == constraint

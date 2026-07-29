@@ -339,15 +339,18 @@ review follow-up #214).
 **Acceptance:** each slice merged with red→green TDD evidence and full gate;
 review sign-off that failure classification matches the taxonomy.
 
-### Phase 3 — Protocol-truthfulness reconciliation (review rec 7, partial) [IN PROGRESS]
+### Phase 3 — Protocol-truthfulness reconciliation (review rec 7, partial) [DONE 2026-07-29]
 
 Prose with normative force; needs owner decisions on wording. Findings:
 **P2**, **P9**.
 
 Status 2026-07-25: **both slices are merged.** Slice 3.2 (#191) as PR #212
-plus its review follow-up PR #215; Slice 3.1 (#190) as PR #216. The only
-Phase 3-adjacent item left is the timezone-registry removal (#192, decision
-9.4).
+plus its review follow-up PR #215; Slice 3.1 (#190) as PR #216. The
+Phase 3-adjacent items were the timezone-registry removal (#192, decision
+9.4), merged 2026-07-25 as PR #220, and the in-process vocabulary deferral
+recorded below as #218, merged 2026-07-29 as PR #255 under Phase 6. With
+that, **Phase 3 is complete**; the heading said `[IN PROGRESS]` until then
+because the deferral had no closing marker.
 
 **Slice 3.1 outcome (PR #216).** The chosen vocabulary is `enforced` →
 **`applied`**: the status word states only that the adapter carried out the
@@ -409,15 +412,20 @@ Scope facts established by that slice, worth not rediscovering:
 - The external GlyphWright spike fixture stays byte-for-byte as retrieved
   (its recorded SHA-256 still verifies); its disclosed conformance delta
   widened from one member to two, recorded in `PROVENANCE.md` and the test.
-- Deliberately deferred and now **tracked as #218**: the in-process API keeps
-  the older vocabulary — `EnforcedConstraints` (public, exported),
-  `AdapterResult.enforced`, `StartOk`/`StartUnsupported`/`StartFailed`
-  `.enforced`, `UnenforcedConstraintPorts`. Nothing there is false (claim
-  strength is carried by `EnforcementReceipt.tier`), but an adapter author now
-  populates `EnforcedConstraints` and watches it emit `applied`. Phase 6 as
-  written adds exports and does not cover renaming existing public names, so
-  **fold #218 into Phase 6's scope explicitly**. The `constraint-not-enforced`
-  wire code stays: renaming it has no truthfulness payoff.
+- ~~Deliberately deferred and tracked as #218~~ **done 2026-07-29 — PR
+  #255**, folded into Phase 6 as this bullet asked. The in-process API kept
+  the older vocabulary at the time: `EnforcedConstraints` (public, exported),
+  `StartUnsupported`/`StartFailed` `.enforced`, `UnenforcedConstraintPorts`,
+  and — not noticed here — the seven `ConstraintPorts.enforce_*` ports, which
+  the owner added to #218's scope so the rename closed the seam rather than
+  moving it. **This bullet's original list also named `AdapterResult.enforced`
+  and `StartOk`, neither of which ever existed**, and implied a
+  `Started.enforced` that is really `Started.constraints`; the phantoms cost a
+  later session real time, so they are corrected rather than struck. Nothing
+  there was false (claim strength is carried by `EnforcementReceipt.tier`),
+  but an adapter author populated `EnforcedConstraints` and watched it emit
+  `applied`. The `constraint-not-enforced` wire code stays: renaming it has no
+  truthfulness payoff.
 
 - **Slice 3.1 — `status: "enforced"` vs. "Nothing is enforced" (P2).**
   **Owner decision 2026-07-24: fix the wire vocabulary properly (Option B),
@@ -926,9 +934,14 @@ implementation gets its own future handover/boundary, not this one.
     the string literals in `tests/test_public_surface.py` that assert the
     *old* names are gone, turning the guard into a tautology — the one place
     in the repo where a correct global rename is wrong. And `ruff --fix`
-    re-sorts imports but not `__all__` literals; the existing sorted-surface
-    test caught that. Both were caught before any green run, but only because
-    the surface tests exist.
+    re-sorts imports but not `__all__` literals (`RUF022` is not enabled and
+    its order would fight the surface test's plain `sorted()`), so three
+    `__all__` lists needed hand-sorting. Both were caught before any green
+    run, but only because the surface tests exist — and #255's own review
+    then found that those tests covered `termverify.__all__` alone, leaving
+    `adapter`, `conpty`, and `direct` unpinned, and that the retired-name
+    check never looked at `termverify.conpty` at all, so its
+    `UnenforcedConstraintPorts` entry was dead. Both widened before merge.
   - **The standing lesson held again, this time against this handover
     itself.** Two review rounds on PR #254 returned no Critical finding and
     nothing wrong with *which* names were exported, their identity, or the
@@ -1145,12 +1158,16 @@ implementation gets its own future handover/boundary, not this one.
    kept the enforcement-*tier* names and the `constraint-not-enforced` wire
    code by the same decision. **Phase 6 is complete.**
 
-   Two method notes worth carrying, both from #255's sweep: a blanket `sed`
+   Two method notes worth carrying, both from #255's sweep. A blanket `sed`
    silently rewrote the string literals in `tests/test_public_surface.py`
-   that assert the *old* names are gone, turning the guard into a tautology
-   (caught before the first test run); and `ruff --fix` re-sorts imports but
-   not `__all__` literals, which the existing sorted-surface test caught.
-   A scripted rename needs both checks.
+   that assert the *old* names are gone, turning the guard into a tautology —
+   the one place in the repo where a correct global rename is wrong. And
+   `ruff --fix` re-sorts imports but **not** `__all__` literals: `RUF022` is
+   not enabled, and its isort-style order differs from the plain `sorted()`
+   the surface test asserts, so enabling it would fight that test. Only
+   `termverify.__all__` was covered when the sweep ran; the review of #255
+   pointed out that `adapter`/`conpty`/`direct` had no net at all, and the
+   test now covers all four. A scripted rename needs both checks.
 
 10. **Resume with Phase 7 (#199)** — README lists current capabilities only,
     plus a single-sourced vision doc. Note `docs/knowledge/product-vision.md`

@@ -22,6 +22,7 @@ import termverify
 import termverify._key_encoding_v1
 import termverify._key_v1
 import termverify.adapter
+import termverify.conpty
 import termverify.direct
 import termverify.transcript
 
@@ -151,18 +152,26 @@ def test_dunder_all_is_exactly_the_curated_surface() -> None:
     assert set(termverify.__all__) == curated
 
 
+#: The seven constraint ports, by the suffix they share.
+_CONSTRAINTS = (
+    "seed",
+    "clock",
+    "locale",
+    "timezone",
+    "terminal",
+    "filesystem",
+    "network",
+)
+
 #: Issue #218: the in-process API said ``enforced`` after the wire became
-#: ``applied``. These names must be gone from the whole public surface.
+#: ``applied``. These names must be gone from the whole public surface —
+#: which includes ``termverify.conpty``, where the ports default lives. It is
+#: excluded from the *top-level* surface but is a public module path, so a
+#: check confined to ``termverify`` would pass vacuously for it.
 _RETIRED_ENFORCED_NAMES = (
     "EnforcedConstraints",
     "UnenforcedConstraintPorts",
-    "enforce_seed",
-    "enforce_clock",
-    "enforce_locale",
-    "enforce_timezone",
-    "enforce_terminal",
-    "enforce_filesystem",
-    "enforce_network",
+    *(f"enforce_{constraint}" for constraint in _CONSTRAINTS),
 )
 
 #: The vocabulary that deliberately keeps saying "enforcement": it names the
@@ -179,8 +188,10 @@ _RETAINED_ENFORCEMENT_NAMES = (
 def test_the_applied_vocabulary_replaced_the_enforced_one() -> None:
     assert "AppliedConstraints" in termverify.__all__
     assert termverify.AppliedConstraints is termverify.adapter.AppliedConstraints
-    for method in ("apply_seed", "apply_clock", "apply_network"):
+    for constraint in _CONSTRAINTS:
+        method = f"apply_{constraint}"
         assert hasattr(termverify.ConstraintPorts, method), method
+    assert "ApplyNothingConstraintPorts" in termverify.conpty.__all__
 
 
 def test_no_retired_enforced_name_survives_on_the_surface() -> None:
@@ -188,6 +199,8 @@ def test_no_retired_enforced_name_survives_on_the_surface() -> None:
         assert name not in termverify.__all__, name
         assert not hasattr(termverify, name), name
         assert not hasattr(termverify.ConstraintPorts, name), name
+        assert name not in termverify.conpty.__all__, name
+        assert not hasattr(termverify.conpty, name), name
 
 
 def test_the_enforcement_tier_axis_keeps_its_name() -> None:
@@ -198,6 +211,21 @@ def test_the_enforcement_tier_axis_keeps_its_name() -> None:
 
 
 def test_dunder_all_is_sorted_deduplicated_and_resolvable() -> None:
-    assert list(termverify.__all__) == sorted(set(termverify.__all__))
-    for name in termverify.__all__:
-        getattr(termverify, name)
+    """Every ``__all__`` the surface is assembled from, not just the top one.
+
+    Ruff re-sorts imports but not ``__all__`` literals (``RUF022`` is not
+    enabled, and its isort-style order differs from this plain one), so this
+    is the only thing standing between a scripted rename and a list that
+    silently stops being sorted or grows a duplicate.
+    """
+    modules = (
+        termverify,
+        termverify.adapter,
+        termverify.conpty,
+        termverify.direct,
+    )
+    for module in modules:
+        names = list(module.__all__)
+        assert names == sorted(set(names)), module.__name__
+        for name in names:
+            getattr(module, name)
