@@ -121,10 +121,15 @@ Prefer, in order:
 
 1. direct semantic assertions over internal state/events;
 2. deterministic transcript replay;
-3. property/state-machine checks;
-4. differential comparisons where a genuine reference exists;
-5. reviewed UI semantic snapshots;
+3. property/state-machine checks; `[planned]`
+4. differential comparisons where a genuine reference exists; `[planned]`
+5. reviewed UI semantic snapshots; `[planned]`
 6. raw ANSI text only as diagnostic evidence.
+
+`[planned]` marks a layer TermVerify supplies no machinery for yet — prefer
+the layers above it, and see [the product vision](../knowledge/product-vision.md)
+for when the rest is expected. The full model is in
+[the verification model](../knowledge/verification-model.md).
 
 ## Review boundaries
 

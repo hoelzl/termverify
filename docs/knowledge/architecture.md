@@ -18,7 +18,7 @@ Application under test
   ├── deterministic run configuration                            [built]
   ├── transcript dispatch and replay                             [built]
   ├── observation normalization                                  [built]
-  ├── comparator/oracle policies                                 [built: exact comparator]
+  ├── comparator/oracle policies                                 [partial: exact comparator only]
   ├── property and state-machine integration                     [planned]
   └── reports and failure artifacts                              [planned]
 ```
@@ -57,7 +57,8 @@ lifecycle semantics. `termverify.direct.DirectAdapter` composes explicit
 constraint and application ports without consulting ambient time, terminal, or
 process state.
 
-The direct adapter is the default for fast unit and property tests. The Windows
+The direct adapter is the default for fast unit tests, and is the path
+property testing will use when it exists (`[planned]` above). The Windows
 production path is `termverify.conpty.ConptyAdapter`, layered over the reviewed
 ConPTY binding and fail-closed `termverify.vt.VtScreenNormalizer`. It verifies
 real terminal input, rendering, resize, EOF/exit evidence, forced teardown, and

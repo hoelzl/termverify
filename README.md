@@ -29,9 +29,11 @@ module is where it lives.
   teardown, cancellation) and `termverify.vt` turns its byte stream into
   comparable screen state.
 - **Opt-in cooperation-tier constraint ports** — `termverify.cooperation`
-  delivers the six non-terminal constraints to the subject's environment and
-  reports them at the truthful `delivered` tier, never claiming enforcement
-  it does not perform.
+  delivers the six non-terminal constraints to the subject's environment,
+  within documented per-constraint limits (only `UTC` for timezone, only
+  `deny` for network, mapped roots for filesystem — anything else is
+  refused), and reports them at the truthful `delivered` tier, never
+  claiming enforcement it does not perform.
 - **A JSONL subprocess transport** — `termverify.jsonl` and
   `termverify.control` run an out-of-process subject over the
   `termverify.control/v1` wire protocol.
@@ -39,7 +41,9 @@ module is where it lives.
   into a transcript, `termverify.comparator` compares two transcripts by
   exact closed equivalence with a deterministic report, and
   `termverify.replay` re-drives a recorded run against a caller-supplied
-  subject. `termverify.evidence` is the mandatory safe-persistence boundary.
+  adapter — the recorded subject selector is disclosed, never resolved or
+  launched. `termverify.evidence` is the safe-persistence boundary every
+  verified run is expected to write through.
 
 ## Where TermVerify is going
 
@@ -56,7 +60,9 @@ The repository is in its foundation phase; the capabilities above are what
 that phase has produced. This section covers release and support status only.
 
 **termverify 0.1.0 was published to PyPI on 2026-07-19**, and 0.1.1 followed,
-both through a CI-gated, tag-triggered attested release workflow. Those
+both through a CI-gated, merge-driven attested release workflow — landing a
+version-bump commit on `main` is what publishes; the workflow creates the tag
+after the gate passes, and an explicit tag is the fallback path. Those
 publications were a distribution-pipeline exercise, not a stability promise:
 TermVerify is in its **prototyping stage**, no backward compatibility is
 guaranteed for any published artifact, and protocols and APIs may change
@@ -66,12 +72,20 @@ clients (recorded governance decision:
 
 Release governance is defined — changelog policy, private security
 disclosure, reviewed release checklist — and a strict no-regression coverage
-floor gates the full suite. The canonical transcript schema ships inside the
-package and isolated installation checks verify the wheel and sdist resource
-contract; the schema's `$id` resolves at
+floor gates the full suite in CI. The canonical transcript schema ships inside
+the package with a public access API, and isolated installation checks verify
+the wheel and sdist resource contract. The schema's `$id` is an **identifier,
+not a resolvable publication contract**: it happens to resolve at
 [termverify.dev](https://termverify.dev/schemas/termverify.transcript/v1.schema.json)
-as a byte-identical mirror of the committed resource, and runtime validation
-remains authoritative over it.
+as a byte-identical mirror, verified after every deployment, but consumers
+must not fetch it at validation time, no gate depends on the site being
+reachable, and runtime validation stays authoritative regardless.
+
+The curated public surface is the top-level `termverify` package: the adapter
+contract, the direct runtime, the authoritative codec, the schema accessors,
+and the key registries' entry points are all importable from it directly. The
+module paths named above remain public and equivalent — see the
+[adapter-author surface](docs/developer-guide/adapter-authors.md).
 
 Two boundaries are worth stating before you rely on a run. The ConPTY adapter
 is **Windows-only**; there is no POSIX pseudoterminal adapter yet. And
@@ -86,10 +100,14 @@ enforcement.
 
 ## Design principles
 
+These are commitments that govern what gets built, not a description of what
+is built. Where a principle names a mechanism that does not exist yet, it is
+binding on that mechanism when it arrives.
+
 1. **Semantic evidence first.** Verify state, events, and explicit UI semantics before comparing raw ANSI output.
 2. **Production interaction still matters.** PTY/terminal tests validate the application a person or agent actually drives.
 3. **Determinism is a contract.** Seeds, clock, locale, terminal size, filesystem sandbox, and network policy are explicit.
-4. **Human review owns baselines.** Agents may propose snapshot updates; they never silently bless them.
+4. **Human review will own baselines.** The accepted rule for the baseline mechanism is that a human approves every change against a human-readable diff, and agents never silently bless one. No baseline store exists yet; the rule is recorded in [evidence governance](docs/knowledge/evidence-governance.md) so it cannot be quietly relaxed when one is built.
 5. **Harness-neutral by default.** The project works with Hermes, Claude Code, Codex, OpenCode, and ordinary CI without a required proprietary integration.
 
 ## Architecture

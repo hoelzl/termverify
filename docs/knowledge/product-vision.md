@@ -13,7 +13,9 @@ Terminal applications are often tested only through internal unit tests or fragi
 
 TermVerify is a reusable toolkit of contracts and runners for deterministic terminal interaction, structured observation, replay, and comparison. It is intended for games, editors, shells, dashboards, and other TUIs.
 
-This document is the **single source** for scope that does not exist yet. `README.md` lists only what is implemented today and links here for the rest; nothing below should be restated there, and nothing below should be read as a current capability. That split exists because it failed once: the 2026-07-24 adversarial review found four of six README capabilities promised in the present tense with nothing in `src/` behind them (finding P5).
+This document is the **single source** for scope that does not exist yet. Nothing below is a current capability; `README.md` lists those, and links here for the rest.
+
+Other documents may *name* a planned item and link here — the README does, and [the verification model](verification-model.md) marks the layers and oracle types it describes `[planned]` — but the description, the rationale, and the sequencing live here and are not restated. That split exists because it failed once: the 2026-07-24 adversarial review found four of six README capabilities promised in the present tense with nothing in `src/` behind them (finding P5).
 
 # Primary users
 
@@ -60,6 +62,10 @@ The `termverify.baseline-approval/v1` sidecar format is specified and validator-
 ## Differential testing
 
 Running the same script against two adapters — direct versus terminal, or a subject against a reference implementation — and diffing the transcripts is the intended payoff of the transcript being one closed, comparable artifact. `termverify.comparator` supplies the comparison half; nothing orchestrates the two runs. This was explicitly out of scope for the verification-core phase that built the comparator.
+
+## Metamorphic oracles
+
+Checking that an equivalent transformation of a run preserves a specified outcome — the same script at a different terminal size, or with equivalent input encodings. [The verification model](verification-model.md) lists this as an oracle type; nothing in `src/` supplies the transformation or the equivalence machinery. Shares the generator infrastructure with property testing above.
 
 ## Failure minimization
 
