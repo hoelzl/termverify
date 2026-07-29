@@ -771,10 +771,10 @@ aspirational scope a second time in the same file.
 `tests/test_readme_capability_truth.py` gives the split a ratchet — the
 capability section must parse as a pinned intro plus top-level `- ` bullets
 and nothing else, every module the README names must import, the vision doc
-must be linked exactly once, and the five deferred capabilities may not
-reappear in the current-capability section. That is a narrow, README-specific
-check on purpose; the general prose-status validator stays with Slice 8.4
-(#203).
+must be linked exactly once, and no planned capability from the vision
+document's headings may reappear in the current-capability section. That is a
+narrow, README-specific check on purpose; the general prose-status validator
+stays with Slice 8.4 (#203).
 
 Two adversarial review rounds ran on the PR. Round 1's findings were fixed
 in-branch. Round 2's surviving Critical/Important findings were, with two
@@ -790,6 +790,16 @@ why they belong to #203 and review), and the `[planned]` marker this PR
 added to the agent-workflow evidence hierarchy read as "avoid property
 checks", contradicting `AGENTS.md` and the suite's own nine `@given` sites —
 it now marks missing TermVerify machinery without demoting the layer.
+
+A focused round 3 on that fix then broke the strengthened parser twice more:
+a single leading space (or a no-break space) let prose between bullets be
+absorbed as bullet continuation, and substring heading-anchoring let a `###`
+lookalike heading re-point every check — deferred-term guards included — at
+a decoy body. Both closed in-branch with the shapes pinned as tests:
+continuation lines now require the markdown content column, exotic
+whitespace counts as content, and the section heading must match a whole
+line exactly once. The standing lesson: a ratchet's parser is itself an
+attack surface, and each fix earns its own focused review round.
 
 Original slice text follows for the record.
 

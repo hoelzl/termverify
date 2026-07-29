@@ -20,11 +20,12 @@ drift happened, so this module gives the split one. What it enforces, exactly:
   rather than drifting independently.
 
 Equally load-bearing is what it **cannot** catch — each shape demonstrated by
-adversarial review round 2 of PR #256:
+adversarial review of PR #256:
 
 * a bullet naming a real module while claiming something that module does not
-  do, or a false sentence placed on a bullet's own lines — everything inside
-  a bullet is semantic and belongs to human review;
+  do, or a false sentence indented to the bullet's content column so it
+  renders inside the bullet — everything inside a bullet is semantic and
+  belongs to human review;
 * false claims in *other* README sections;
 * planned capabilities described with synonyms the guard list lacks.
 
@@ -52,8 +53,14 @@ _CAPABILITY_HEADING = "## What TermVerify does today"
 _MODULE_REFERENCE = re.compile(r"`termverify\.([a-z_]+)`")
 
 #: A list marker at the start of a stripped line: ``-``, ``*``, ``+``, or a
-#: numbered ``1.``/``1)`` item.
-_LIST_MARKER = re.compile(r"([-*+]|\d+[.)])\s")
+#: numbered ``1.``/``1)`` item, followed by a literal space.
+_LIST_MARKER = re.compile(r"([-*+]|\d+[.)]) ")
+
+#: Markdown attaches a continuation line to a ``- `` item only from the
+#: item's content column onward. A line indented less than this renders as
+#: a standalone paragraph *between* the lists — which is how review round 3
+#: slipped prose past the round-2 fix with a single leading space.
+_CONTINUATION_INDENT = 2
 
 #: The section's only permitted non-bullet prose, whitespace-normalized. Any
 #: other prose — before, between, or after bullets — is a structural
@@ -87,20 +94,25 @@ _DEFERRED_GUARDS: dict[str, tuple[str, ...]] = {
 def _section(text: str, heading: str) -> str:
     """Return *heading*'s body.
 
-    Stops at the next heading of the same or higher level — so a ``#``
-    section keeps its ``##`` subsections — and ignores headings inside fenced
-    code blocks, since the architecture diagrams contain ``#`` characters.
+    The heading must occupy a whole line, exactly once — substring matching
+    let review round 3 plant a ``###`` lookalike that re-pointed every
+    check, guards included, at a decoy body. The body stops at the next
+    heading of the same or higher level — so a ``#`` section keeps its
+    ``##`` subsections — and ignores headings inside fenced code blocks,
+    since the architecture diagrams contain ``#`` characters.
     """
-    assert heading in text, (
-        f"{heading!r} is missing; if the section was renamed, update this "
-        "test so the contract keeps applying instead of silently lapsing."
+    anchors = list(re.finditer(rf"^{re.escape(heading)}[ \t]*$", text, re.MULTILINE))
+    assert len(anchors) == 1, (
+        f"expected exactly one {heading!r} line, found {len(anchors)}; if "
+        "the section was renamed, update this test so the contract keeps "
+        "applying instead of silently lapsing."
     )
     level = _level(heading)
-    body = text[text.index(heading) + len(heading) :]
+    body = text[anchors[0].end() :]
     fenced = False
     kept: list[str] = []
     for line in body.splitlines():
-        if line.startswith("```"):
+        if line.startswith(("```", "~~~")):
             fenced = not fenced
         elif not fenced and line.startswith("#") and _level(line) <= level:
             break
@@ -120,20 +132,25 @@ def _parse_structure(section: str) -> tuple[str, list[str], list[str]]:
     """Split *section* into ``(prose, bullets, violations)``.
 
     The structural contract: the pinned intro, then top-level ``- `` bullets
-    whose continuation lines are indented — nothing else. Alternate or
-    numbered top-level markers, nested list markers, and prose after the
-    first bullet are reported as violations instead of being silently
-    absorbed into a neighboring bullet, which is how review round 2 slipped
-    unchecked claims past the first version of this parser.
+    whose continuation lines are indented to the item's content column —
+    nothing else. Alternate or numbered top-level markers, nested list
+    markers, under-indented lines (which markdown renders as standalone
+    paragraphs, not continuations), and prose after the first bullet are
+    reported as violations instead of being silently absorbed into a
+    neighboring bullet, which is how review rounds 2 and 3 slipped unchecked
+    claims past earlier versions of this parser.
     """
     prose: list[str] = []
     bullets: list[str] = []
     violations: list[str] = []
-    for line in section.splitlines():
+    for raw in section.splitlines():
+        line = raw.expandtabs(4)
         stripped = line.strip()
         if not stripped:
             continue
-        indent = len(line) - len(line.lstrip())
+        # Count only true spaces: exotic whitespace such as NBSP is content
+        # to markdown, so it must land in the indent-0 prose branch below.
+        indent = len(line) - len(line.lstrip(" "))
         marker = _LIST_MARKER.match(stripped)
         if marker and indent == 0:
             bullets.append(stripped)
@@ -141,8 +158,12 @@ def _parse_structure(section: str) -> tuple[str, list[str], list[str]]:
                 violations.append(f"non-`- ` top-level marker: {stripped!r}")
         elif marker and indent > 0:
             violations.append(f"nested list item: {stripped!r}")
-        elif indent > 0 and bullets:
+        elif indent >= _CONTINUATION_INDENT and bullets:
             bullets[-1] += "\n" + stripped
+        elif indent > 0 and bullets:
+            violations.append(
+                f"under-indented, renders outside any bullet: {stripped!r}"
+            )
         else:
             prose.append(stripped)
             if bullets:
@@ -188,26 +209,47 @@ def test_the_capability_section_is_intro_plus_bullets_only() -> None:
     assert re.sub(r"\s+", " ", prose) == _PINNED_INTRO
 
 
-#: The structural bypasses adversarial review round 2 ran against the first
-#: version of this module's parser; each was absorbed silently then. The
-#: doctored sections must now be rejected.
-_ROUND_2_EXPLOITS = {
+#: The structural bypasses adversarial review rounds 2 and 3 ran against
+#: earlier versions of this module's parser; each was absorbed silently
+#: then. The doctored sections must now be rejected.
+_REVIEW_EXPLOITS = {
     "an alternate-marker bullet": "* **Golden snapshots** — reviewed baselines.",
     "a numbered bullet": "1. Full differential coverage across adapters.",
     "a nested bullet inside a real one": "  - and proves the subject always halts.",
     "prose between bullets": "TermVerify also verifies overall correctness.",
+    "prose indented one space": " TermVerify also verifies overall correctness.",
+    "prose behind a no-break space": "\xa0TermVerify verifies whole programs.",
 }
 
 
 @pytest.mark.parametrize(
-    "injection", _ROUND_2_EXPLOITS.values(), ids=list(_ROUND_2_EXPLOITS)
+    "injection", _REVIEW_EXPLOITS.values(), ids=list(_REVIEW_EXPLOITS)
 )
-def test_the_parser_rejects_round_2_structural_exploits(injection: str) -> None:
+def test_the_parser_rejects_review_structural_exploits(injection: str) -> None:
     section = _capability_section()
     anchor = section.rindex("\n- ")
     doctored = section[:anchor] + "\n" + injection + section[anchor:]
     _, _, violations = _parse_structure(doctored)
     assert violations, f"the ratchet absorbed {injection!r} without failing"
+
+
+def test_the_section_anchor_ignores_lookalike_headings() -> None:
+    """A ``###`` decoy containing the heading must not re-point the checks.
+
+    Round 3 planted a lookalike deeper heading whose line contains the
+    real heading as a substring; substring anchoring then ran every check
+    — including the deferred-term guards — against the decoy's compliant
+    body while the real section lied freely.
+    """
+    decoy = f"#{_CAPABILITY_HEADING}\n\ndecoy\n\n{_CAPABILITY_HEADING}\n\nreal\n"
+    assert _section(decoy, _CAPABILITY_HEADING).strip() == "real"
+
+
+def test_a_duplicated_section_heading_fails_loudly() -> None:
+    """Two literal headings would make 'which section is checked' ambiguous."""
+    twice = f"{_CAPABILITY_HEADING}\n\na\n\n# unrelated\n\n{_CAPABILITY_HEADING}\n\nb\n"
+    with pytest.raises(AssertionError):
+        _section(twice, _CAPABILITY_HEADING)
 
 
 @pytest.mark.parametrize("module", _CLAIMED_MODULES)
