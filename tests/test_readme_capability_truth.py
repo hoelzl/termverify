@@ -7,20 +7,30 @@ were all stated in the present tense with nothing in ``src/`` behind them.
 
 The owner's remedy (issue #199) was to list only what exists and move the rest
 to a single vision document. Prose has no ratchet, which is precisely how that
-drift happened, so this module gives the split one:
+drift happened, so this module gives the split one. What it enforces, exactly:
 
-* every bullet in the README's current-capability section must name at least
-  one ``termverify`` module, and every named module must import;
-* no term belonging to a *planned* capability may appear in that section;
-* the guard terms are checked for coverage against the vision document's own
-  planned-scope headings, so adding a planned capability there without
-  guarding it here fails — the two files ratchet each other rather than
-  drifting independently.
+* the current-capability section is a pinned intro sentence plus top-level
+  ``- `` bullets and nothing else — inserted prose, alternate or numbered
+  markers, and nested lists all fail structurally;
+* every bullet must name at least one ``termverify.<module>``, and every
+  named module must import;
+* no term belonging to a *planned* capability may appear anywhere in the
+  section, and the guard terms are checked for coverage against the vision
+  document's own planned-scope headings, so the two files ratchet each other
+  rather than drifting independently.
 
-What this deliberately does **not** do is verify that a named module does what
-the bullet says; no test can. It bounds the failure to "the claim names real
-code", and the module-naming rule is what makes a bare aspirational sentence
-impossible to slip in. The general prose-status validator is Slice 8.4 (#203).
+Equally load-bearing is what it **cannot** catch — each shape demonstrated by
+adversarial review round 2 of PR #256:
+
+* a bullet naming a real module while claiming something that module does not
+  do, or a false sentence placed on a bullet's own lines — everything inside
+  a bullet is semantic and belongs to human review;
+* false claims in *other* README sections;
+* planned capabilities described with synonyms the guard list lacks.
+
+Those bounds belong to review and to the general prose-status validator
+(Slice 8.4, #203); this module is the README-local structural ratchet, not
+that validator.
 """
 
 import importlib
@@ -41,8 +51,18 @@ _CAPABILITY_HEADING = "## What TermVerify does today"
 #: ``termverify.<module>`` inside backticks, e.g. ``` `termverify.recorder` ```.
 _MODULE_REFERENCE = re.compile(r"`termverify\.([a-z_]+)`")
 
-#: A top-level list item: ``- `` at the start of a line.
-_BULLET = re.compile(r"^- ", re.MULTILINE)
+#: A list marker at the start of a stripped line: ``-``, ``*``, ``+``, or a
+#: numbered ``1.``/``1)`` item.
+_LIST_MARKER = re.compile(r"([-*+]|\d+[.)])\s")
+
+#: The section's only permitted non-bullet prose, whitespace-normalized. Any
+#: other prose — before, between, or after bullets — is a structural
+#: violation, so a prose change in the section is always a deliberate act
+#: that updates this pin.
+_PINNED_INTRO = (
+    "Every item below is implemented and covered by the test suite; "
+    "the named module is where it lives."
+)
 
 #: Guard terms per planned-scope heading in the vision document. Phrases and
 #: word boundaries rather than bare substrings, so ordinary prose — "the
@@ -96,11 +116,42 @@ def _capability_section() -> str:
     return _section(_README.read_text(encoding="utf-8"), _CAPABILITY_HEADING)
 
 
+def _parse_structure(section: str) -> tuple[str, list[str], list[str]]:
+    """Split *section* into ``(prose, bullets, violations)``.
+
+    The structural contract: the pinned intro, then top-level ``- `` bullets
+    whose continuation lines are indented — nothing else. Alternate or
+    numbered top-level markers, nested list markers, and prose after the
+    first bullet are reported as violations instead of being silently
+    absorbed into a neighboring bullet, which is how review round 2 slipped
+    unchecked claims past the first version of this parser.
+    """
+    prose: list[str] = []
+    bullets: list[str] = []
+    violations: list[str] = []
+    for line in section.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        indent = len(line) - len(line.lstrip())
+        marker = _LIST_MARKER.match(stripped)
+        if marker and indent == 0:
+            bullets.append(stripped)
+            if marker.group(1) != "-":
+                violations.append(f"non-`- ` top-level marker: {stripped!r}")
+        elif marker and indent > 0:
+            violations.append(f"nested list item: {stripped!r}")
+        elif indent > 0 and bullets:
+            bullets[-1] += "\n" + stripped
+        else:
+            prose.append(stripped)
+            if bullets:
+                violations.append(f"prose after the first bullet: {stripped!r}")
+    return " ".join(prose), bullets, violations
+
+
 def _capability_bullets() -> list[str]:
-    section = _capability_section()
-    starts = [match.start() for match in _BULLET.finditer(section)]
-    bounds = [*starts, len(section)]
-    return [section[bounds[i] : bounds[i + 1]] for i in range(len(starts))]
+    return _parse_structure(_capability_section())[1]
 
 
 def _planned_headings() -> list[str]:
@@ -122,6 +173,41 @@ def test_the_capability_section_has_bullets_that_name_modules() -> None:
     """A section with no bullets would satisfy every per-bullet check."""
     assert len(_capability_bullets()) >= 5
     assert len(_CLAIMED_MODULES) >= 5, _CLAIMED_MODULES
+
+
+def test_the_capability_section_is_intro_plus_bullets_only() -> None:
+    """Nothing in the section escapes the per-bullet contract.
+
+    Prose outside the pinned intro, alternate or numbered top-level
+    markers, and nested lists are how review round 2 smuggled unchecked
+    claims past the first version of this module. Changing the intro is
+    legitimate — it just has to update the pin here, deliberately.
+    """
+    prose, _, violations = _parse_structure(_capability_section())
+    assert not violations, violations
+    assert re.sub(r"\s+", " ", prose) == _PINNED_INTRO
+
+
+#: The structural bypasses adversarial review round 2 ran against the first
+#: version of this module's parser; each was absorbed silently then. The
+#: doctored sections must now be rejected.
+_ROUND_2_EXPLOITS = {
+    "an alternate-marker bullet": "* **Golden snapshots** — reviewed baselines.",
+    "a numbered bullet": "1. Full differential coverage across adapters.",
+    "a nested bullet inside a real one": "  - and proves the subject always halts.",
+    "prose between bullets": "TermVerify also verifies overall correctness.",
+}
+
+
+@pytest.mark.parametrize(
+    "injection", _ROUND_2_EXPLOITS.values(), ids=list(_ROUND_2_EXPLOITS)
+)
+def test_the_parser_rejects_round_2_structural_exploits(injection: str) -> None:
+    section = _capability_section()
+    anchor = section.rindex("\n- ")
+    doctored = section[:anchor] + "\n" + injection + section[anchor:]
+    _, _, violations = _parse_structure(doctored)
+    assert violations, f"the ratchet absorbed {injection!r} without failing"
 
 
 @pytest.mark.parametrize("module", _CLAIMED_MODULES)

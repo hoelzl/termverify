@@ -9,6 +9,8 @@
   not exist and what it waits on. The README's "Planned architecture" diagram
   moved there rather than being duplicated; `docs/knowledge/architecture.md`
   marks its own rows `[built]` / `[planned]`. `tests/test_readme_capability_truth.py`
-  gives the split a ratchet: every module the README names must import, the
-  vision document must be linked exactly once, and no deferred capability may
-  reappear in the current-capability section.
+  gives the split a ratchet: the capability section must parse as a pinned
+  intro plus module-naming bullets and nothing else, every module the README
+  names must import, the vision document must be linked exactly once, and no
+  deferred capability may reappear in the current-capability section. The
+  repo-wide audit of the same defect in other documents is #257.

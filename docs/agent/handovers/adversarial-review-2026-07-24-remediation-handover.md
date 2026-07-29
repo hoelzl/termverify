@@ -768,11 +768,28 @@ and was corrected in the same change. The README's "Planned architecture"
 diagram moved there rather than being deleted, since it restated the
 aspirational scope a second time in the same file.
 
-`tests/test_readme_capability_truth.py` gives the split a ratchet — every
-module the README names must import, the vision doc must be linked exactly
-once, and the five deferred capabilities may not reappear in the
-current-capability section. That is a narrow, README-specific check on
-purpose; the general prose-status validator stays with Slice 8.4 (#203).
+`tests/test_readme_capability_truth.py` gives the split a ratchet — the
+capability section must parse as a pinned intro plus top-level `- ` bullets
+and nothing else, every module the README names must import, the vision doc
+must be linked exactly once, and the five deferred capabilities may not
+reappear in the current-capability section. That is a narrow, README-specific
+check on purpose; the general prose-status validator stays with Slice 8.4
+(#203).
+
+Two adversarial review rounds ran on the PR. Round 1's findings were fixed
+in-branch. Round 2's surviving Critical/Important findings were, with two
+exceptions, **pre-existing P5-type defects in documents #199 never scoped**
+(`architecture.md`, `verification-model.md`, `agent-workflow.md`,
+`development.md`) — each round found more of them, in more files. **Owner
+decision 2026-07-29: #199 stays at its written scope; the repo-wide
+capability-truth audit is #257.** The two in-scope findings were fixed
+in-branch: the ratchet's parser was weaker than its docstring claimed
+(review broke it five of six ways; it now enforces the structural contract
+above and its docstring states exactly which shapes remain uncatchable and
+why they belong to #203 and review), and the `[planned]` marker this PR
+added to the agent-workflow evidence hierarchy read as "avoid property
+checks", contradicting `AGENTS.md` and the suite's own nine `@given` sites —
+it now marks missing TermVerify machinery without demoting the layer.
 
 Original slice text follows for the record.
 
@@ -1215,7 +1232,10 @@ implementation gets its own future handover/boundary, not this one.
 11. **Resume with Phase 8 (#200–#203)**, minus the two 8.3 items #240/#241
     already executed — see checkpoint e, and deduct them when sizing 8.3.
     Note #203 owns the general prose-status validator; #199 deliberately
-    added only a README-specific check, so that scope is untouched.
+    added only a README-specific check, so that scope is untouched. The
+    *manual* repo-wide capability-truth audit that PR #256's review rounds
+    surfaced is #257 (outside this handover); doing it before #203 gives the
+    validator a true baseline to ratchet.
 
     **Give the Windows containment findings one home.** #238 (JSONL spawn
     keeps the job-assignment window) and the reopened Windows halves of
