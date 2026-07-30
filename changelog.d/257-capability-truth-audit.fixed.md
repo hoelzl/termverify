@@ -4,13 +4,13 @@
   `SECURITY.md` against `src/` and the test suite repaired every unbacked
   present-tense capability claim doc-side: the architecture boundary no
   longer offers adapter-level state save/restore; the verification model
-  marks the persistence oracle `[planned]` — with a new planned-scope entry
-  in the product vision and a matching README ratchet guard — scopes
-  baseline governance to
-  the validator that actually runs, and describes replay as reproducing the
-  recorded (not "approved") outcome; the evidence-governance policy states
-  that the baseline root is absent and baselines are disabled pending their
-  enablement boundary rather than "governed" today; the control-protocol
+  marks the persistence oracle `[planned]` (with a new planned-scope entry
+  in the product vision and a matching README ratchet guard), scopes
+  baseline governance to the validator that actually runs, and describes
+  replay as reproducing the recorded (not "approved") outcome; the
+  evidence-governance policy states that the baseline root is absent and
+  distinguishes the validator mechanism that governs it from the policy
+  gate that keeps committing any baseline prohibited; the control-protocol
   specification now matches the codec and adapter on exited-process
   observations (rejected from the child in every position, synthesized by
   the adapter from the OS boundary), on deadline aborts (no exit record is
