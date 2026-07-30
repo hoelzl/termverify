@@ -155,7 +155,10 @@ class JsonlConcurrentReadError(RuntimeError):
     A caller defect, never subject evidence: the adapter re-raises it to
     the harness like its own contract violations (a second concurrent
     read cannot be classified as a peer failure — the subject did
-    nothing). Mirrors the ConPTY side's ``ConptyConcurrentIOError``.
+    nothing). Mirrors the ConPTY side's ``ConptyConcurrentIOError`` as a
+    dedicated type; unlike that side, which classifies the violation
+    into a structured ``adapter-runtime-failed`` result, this adapter
+    re-raises it.
     """
 
 
