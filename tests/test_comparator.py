@@ -519,7 +519,7 @@ def test_comparison_is_symmetric(
 
 
 def test_the_reproduced_glyphwright_transcript_is_self_equivalent() -> None:
-    from test_recorder_conformance import reproduce_spike_transcript
+    from tests.test_recorder_conformance import reproduce_spike_transcript
 
     _, reproduced = reproduce_spike_transcript()
     verdict = compare_transcripts(reproduced, reproduced)
@@ -528,7 +528,7 @@ def test_the_reproduced_glyphwright_transcript_is_self_equivalent() -> None:
 
 
 def test_mutated_glyphwright_copies_diverge_where_mutated() -> None:
-    from test_recorder_conformance import reproduce_spike_transcript
+    from tests.test_recorder_conformance import reproduce_spike_transcript
 
     _, reproduced = reproduce_spike_transcript()
     mutations: list[tuple[int, dict[str, JsonValue], str]] = [

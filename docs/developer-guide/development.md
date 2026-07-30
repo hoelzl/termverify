@@ -81,15 +81,26 @@ allowing integer rounding to absorb a regression.
 - The floor is enforced by every `pytest --cov` run, which includes the CI
   quality matrix and the documented validation commands; the pre-push test
   hook deliberately runs without coverage for speed.
-- The native ConPTY binding (`termverify._conpty`) is the single reviewed
-  coverage exclusion: it executes only on Windows legs, so including it would
-  make the cross-platform floor depend on the host OS. It is no longer the
-  thin wrapper the exclusion once assumed (#197 roughly tripled it), so the
-  Windows legs additionally measure it against the ConPTY suites with a
-  supplemental, non-gating report (`conpty-coverage.toml`, #236) that keeps
-  its gaps visible without making the floor OS-dependent. Adapter logic above
-  it is written against an injected binding and stays fully ratcheted. Adding
-  any other exclusion requires the same owner review as lowering the floor.
+- `scripts/` is measured alongside the package (owner decision 2026-07-24,
+  review Slice 8.3): the governance validators are load-bearing gates, so
+  their coverage is ratcheted rather than invisible. Joining them re-based
+  the floor once, to the integer floor of the newly observed total
+  (93.55% on 2026-07-30 — the validators' CLI and error legs are less
+  covered than the package; the package-only total was 95.3% at the
+  re-baseline, so this is the honest number, not a package regression).
+- Two reviewed coverage exclusions exist. The native ConPTY binding
+  (`termverify._conpty`) executes only on Windows legs, so including it
+  would make the cross-platform floor depend on the host OS. It is no
+  longer the thin wrapper the exclusion once assumed (#197 roughly tripled
+  it), so the Windows legs additionally measure it against the ConPTY
+  suites with a supplemental, non-gating report (`conpty-coverage.toml`,
+  #236) that keeps its gaps visible without making the floor OS-dependent;
+  adapter logic above it is written against an injected binding and stays
+  fully ratcheted. `scripts/check_installed_package.py` runs only as a CI
+  subprocess against the built wheel and sdist, so no in-process test can
+  execute it, and measuring it would only dilute the ratchet with
+  permanently-missed statements. Adding any other exclusion requires the
+  same owner review as lowering the floor.
 - Platform-specific legs (today: `_jsonl_pipe.py`) carry per-OS markers —
   `# coverage: exclude-posix` / `# coverage: exclude-windows` — never a bare
   `# pragma: no cover`, which is a static source exclusion that would remove

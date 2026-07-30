@@ -2038,6 +2038,17 @@ def test_parse_transcript_rejects_oversized_json_integer_cleanly(
         parse_transcript(data)
 
 
+def test_parse_transcript_rejects_a_line_that_is_not_utf8() -> None:
+    """A line whose bytes are not valid UTF-8 is rejected as invalid JSON.
+
+    Direct fixture for the ``UnicodeDecodeError`` leg of ``_parse_line``,
+    previously exercised only through JSON-level malformations (review
+    2026-07-24, Slice 8.3).
+    """
+    with pytest.raises(TranscriptValidationError, match="line 1: invalid JSON"):
+        parse_transcript(b'{"kind": "\xff\xfe"}\n')
+
+
 def test_parse_transcript_preserves_duplicate_member_diagnostic() -> None:
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
     data = fixture.replace(b'"seq":0}', b'"seq":0,"seq":0}', 1)

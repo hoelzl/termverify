@@ -57,7 +57,10 @@ testpaths = ["tests"]
 
 [tool.coverage.run]
 branch = true
-source = ["termverify"]
+# scripts/ joins the measurement per the owner decision of 2026-07-24
+# (review Slice 8.3): the governance validators are load-bearing gates, so
+# their coverage is ratcheted with the package instead of staying invisible.
+source = ["termverify", "scripts"]
 # The native ConPTY binding executes only on the Windows CI legs; including it
 # would make the cross-platform ratchet floor depend on the host OS. Adapter
 # logic above it must remain fully ratcheted
@@ -68,7 +71,12 @@ source = ["termverify"]
 # therefore measured by the supplemental non-gating Windows-leg run
 # (conpty-coverage.toml, #236; disposition: Slice 8.3 of the 2026-07-24
 # remediation handover) while staying out of this gating floor.
-omit = ["*/termverify/_conpty.py"]
+#
+# check_installed_package.py runs only as a CI subprocess against the built
+# wheel/sdist (ci.yml package job); no in-process test can execute it, so
+# measuring it would add permanently-missed statements that dilute the
+# ratchet without guarding anything.
+omit = ["*/termverify/_conpty.py", "*/scripts/check_installed_package.py"]
 
 [tool.coverage.report]
 show_missing = true
@@ -80,12 +88,17 @@ skip_covered = true
 # legs select one marker via coverage-windows.toml / coverage-posix.toml so
 # each leg is measured exactly where it runs.
 exclude_also = ['# coverage: exclude-(posix|windows)']
-# No-regression ratchet floor: integer floor of the reviewed observed total
-# (94.43% on 2026-07-17). Raise only for sustained durable coverage; lowering
-# requires explicit owner review (docs/developer-guide/development.md).
-# precision = 2 makes the comparison a strict floor instead of granting a
-# hidden half-point of integer rounding grace.
-fail_under = 94
+# No-regression ratchet floor: integer floor of the reviewed observed total.
+# Re-baselined once on 2026-07-30 when scripts/ joined the measurement
+# (owner decision 2026-07-24, review Slice 8.3): observed 93.55% — the
+# validators' CLI and error legs are less covered than the package, which
+# is the honest number, not a package regression (the package-only total
+# was 95.3% at the re-baseline). Raise only for sustained durable coverage;
+# lowering requires explicit owner review
+# (docs/developer-guide/development.md). precision = 2 makes the comparison
+# a strict floor instead of granting a hidden half-point of integer
+# rounding grace.
+fail_under = 93
 precision = 2
 
 [tool.ruff]
