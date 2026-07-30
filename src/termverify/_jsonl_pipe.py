@@ -97,7 +97,11 @@ from contextlib import suppress
 from typing import IO, Final, cast
 
 from termverify.control import _MAX_LINE_BYTES
-from termverify.jsonl import JsonlChildClosedError, JsonlEndOfStreamError
+from termverify.jsonl import (
+    JsonlChildClosedError,
+    JsonlConcurrentReadError,
+    JsonlEndOfStreamError,
+)
 
 __all__ = ["FORCED_TERMINATION_SIGNAL", "PipeJsonlChild"]
 
@@ -599,8 +603,11 @@ class PipeJsonlChild:
             if self._read_in_flight:
                 # A caller defect, not a subject failure: the closed error
                 # is classified as a peer failure by the adapter, so a
-                # violated single-flight contract must not wear it.
-                raise RuntimeError("the JSONL pipe binding allows one in-flight read")
+                # violated single-flight contract must not wear it. The
+                # dedicated type passes through the adapter unclassified.
+                raise JsonlConcurrentReadError(
+                    "the JSONL pipe binding allows one in-flight read"
+                )
             self._read_in_flight = True
             self._interrupted_read.clear()
         try:

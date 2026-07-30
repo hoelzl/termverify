@@ -88,12 +88,13 @@ see the `termverify._conpty` module docstring and
 deadline for the read phase and do not read the 2x figure as a bound on
 `dispatch` as a whole.
 
-Teardown carries one more disclosed residual: a forced close cancels
-in-flight native I/O with a bounded retry (30 seconds), and if the native
-call never unsticks, the close raises — the blocked frame and the native
-handles it pins then leak for the life of the process. Releasing them under
-an in-flight native call can crash the interpreter, so the leak is the
-disclosed outcome, never traded for a crash or reported as a clean close.
+Teardown carries one more disclosed residual: every close cancels in-flight
+native I/O with a bounded retry (30 seconds), and if the native call never
+unsticks, the close raises — the blocked frame and the native handles it
+pins then stay held until the blocked call returns, possibly for the life
+of the process. Releasing them under an in-flight native call can crash the
+interpreter, so the leak is the disclosed outcome, never traded for a crash
+or reported as a clean close.
 
 **This can abort runs that previously passed.** Budget the deadline above
 the longest single epoch a real subject needs, output included. An ordinary

@@ -53,7 +53,11 @@ import pytest
 
 from termverify._jsonl_pipe import FORCED_TERMINATION_SIGNAL, PipeJsonlChild
 from termverify.control import _MAX_LINE_BYTES, ControlProtocolError, parse_message
-from termverify.jsonl import JsonlChildClosedError, JsonlEndOfStreamError
+from termverify.jsonl import (
+    JsonlChildClosedError,
+    JsonlConcurrentReadError,
+    JsonlEndOfStreamError,
+)
 
 _OS_WAIT_TIMEOUT_S = 30.0
 _POLL_INTERVAL_S = 0.02
@@ -299,7 +303,7 @@ def test_second_concurrent_read_raises_the_bindings_own_error() -> None:
         # second read is genuinely concurrent, not merely sequential.
         time.sleep(_READ_ARRIVAL_S)
         try:
-            with pytest.raises(RuntimeError, match="one in-flight read"):
+            with pytest.raises(JsonlConcurrentReadError, match="one in-flight read"):
                 child.read_line()
         finally:
             child.write_line(b"ping\n")

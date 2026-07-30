@@ -1,10 +1,13 @@
 - **Runtime/adapter minors from the 2026-07-24 adversarial review are swept**
   (issue #200, Slice 8.1) — every section-4 runtime bullet now has a
   disposition. Fixed: a second concurrent `read_line` on the JSONL pipe
-  binding raises the binding's own `RuntimeError` instead of
-  `JsonlChildClosedError`, which the adapter would have classified as a
-  peer failure — a harness defect no longer wears a subject's failure
-  code; a refused release-only close decides the refusal inside the lock
+  binding raises the new `termverify.jsonl.JsonlConcurrentReadError` (a
+  `RuntimeError`, mirroring the ConPTY side's `ConptyConcurrentIOError`)
+  instead of `JsonlChildClosedError`, and the adapter re-raises it to the
+  harness caller instead of classifying it — a harness defect no longer
+  wears any subject failure code, neither the old `peer-lifecycle` nor
+  the `peer-malformed` its blanket read-failure arm would otherwise
+  assign; a refused release-only close decides the refusal inside the lock
   window before any closed state exists, so a concurrent read can no
   longer observe the transient `_closed` window and fail spuriously; the
   VT normalizer tolerates the secondary device-attributes query

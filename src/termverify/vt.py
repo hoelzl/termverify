@@ -169,7 +169,10 @@ class VtScreenNormalizer:
             # DEL is discarded, as real terminals do: it neither prints
             # nor moves the cursor, and failing the run on it would make
             # the normalizer stricter than any terminal a subject meets
-            # (review 2026-07-24, section 4).
+            # (review 2026-07-24, section 4). Ground state only, a
+            # disclosed narrowing: real terminals also ignore DEL inside
+            # escape and CSI sequences, where this fail-closed subset
+            # still rejects it until observed evidence argues otherwise.
             return
         if 0x80 <= code <= 0x9F:
             raise VtNormalizationError("unsupported control character", character)

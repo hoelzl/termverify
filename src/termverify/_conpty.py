@@ -71,12 +71,13 @@ written here are far smaller than any plausible buffer, so this remains a
 stated bound rather than an observed failure.
 
 Disclosed boundary — a close that cannot cancel in-flight native I/O leaks
-it (review 2026-07-24, section 4). ``close`` retries ``cancel_io`` against a
-blocked native call for up to 30 seconds; on expiry it raises, and the
-blocked frame plus the native handles it pins stay held for the life of the
-process. The alternative — releasing handles under an in-flight native call
-— is the crash case above, so the leak is disclosed rather than traded for
-an interpreter crash, and the raising close never reports success it cannot
+it (review 2026-07-24, section 4). Every ``close`` retries ``cancel_io``
+against a blocked native call for up to 30 seconds; on expiry it raises,
+and the blocked frame plus the native handles it pins stay held until the
+blocked call returns — possibly for the life of the process. The
+alternative — releasing handles under an in-flight native call — is the
+crash case above, so the leak is disclosed rather than traded for an
+interpreter crash, and the raising close never reports success it cannot
 vouch for.
 
 ``write`` intentionally returns ``None``: the ConPTY write return value is not
@@ -1708,11 +1709,12 @@ class ConptyChild:
 
         Disclosed boundary: if cancellation cannot unstick the native call
         within the timeout, this raises and the close stops — the blocked
-        frame, and the native handles it pins, then leak for the life of
-        the process. Releasing the handles under an in-flight native call
-        is the interpreter-crash case the module docstring rules out, so
-        the leak is the honest outcome: disclosed in the raise, never
-        traded for a crash or reported as a completed close.
+        frame, and the native handles it pins, then stay held until the
+        blocked call returns, possibly for the life of the process.
+        Releasing the handles under an in-flight native call is the
+        interpreter-crash case the module docstring rules out, so the
+        leak is the honest outcome: disclosed in the raise, never traded
+        for a crash or reported as a completed close.
         """
         deadline = time.monotonic() + _READ_CANCEL_TIMEOUT_SECONDS
         while True:
@@ -1725,9 +1727,10 @@ class ConptyChild:
             if time.monotonic() >= deadline:
                 raise OSError(
                     "pending native ConPTY I/O did not cancel during close;"
-                    " the blocked frame and the native handles it pins leak"
-                    " for the life of the process (releasing them under an"
-                    " in-flight native call can crash the interpreter)"
+                    " the blocked frame and the native handles it pins stay"
+                    " held until the blocked call returns, possibly for the"
+                    " life of the process (releasing them under an in-flight"
+                    " native call can crash the interpreter)"
                 )
             time.sleep(_READ_CANCEL_RETRY_SECONDS)
 

@@ -646,10 +646,15 @@ def test_secondary_device_attributes_query_is_consumed() -> None:
 
 def test_other_gt_prefixed_sequences_stay_fail_closed() -> None:
     """Only the secondary-DA query is tolerated; ``>`` stays fail-closed
-    for every other final so the subset does not silently widen."""
+    for every other final, and in every non-leading position, so the
+    subset does not silently widen."""
     normalizer = _normalizer()
     with pytest.raises(VtNormalizationError):
         normalizer.feed(f"{ESC}[>4m")
+    with pytest.raises(VtNormalizationError):
+        _normalizer().feed(f"{ESC}[1>c")
+    with pytest.raises(VtNormalizationError):
+        _normalizer().feed(f"{ESC}[?>c")
 
 
 def test_del_is_ignored_like_a_real_terminal() -> None:

@@ -122,6 +122,7 @@ __all__ = [
     "JsonlBindingPort",
     "JsonlChildClosedError",
     "JsonlChildPort",
+    "JsonlConcurrentReadError",
     "JsonlEndOfStreamError",
     "JsonlWatchdogPort",
     "TimerWatchdog",
@@ -148,6 +149,16 @@ class JsonlChildClosedError(Exception):
     """The binding was closed outside the abort deadline."""
 
 
+class JsonlConcurrentReadError(RuntimeError):
+    """The binding's single-flight read contract was violated.
+
+    A caller defect, never subject evidence: the adapter re-raises it to
+    the harness like its own contract violations (a second concurrent
+    read cannot be classified as a peer failure — the subject did
+    nothing). Mirrors the ConPTY side's ``ConptyConcurrentIOError``.
+    """
+
+
 @runtime_checkable
 class JsonlChildPort(Protocol):
     """One spawned control-protocol child: line I/O plus exit evidence."""
@@ -159,8 +170,11 @@ class JsonlChildPort(Protocol):
     def read_line(self) -> bytes:
         """Read one framed message line from the child's stdout.
 
-        Raises :class:`JsonlEndOfStreamError` at end-of-stream and
-        :class:`JsonlChildClosedError` when the binding was closed.
+        Raises :class:`JsonlEndOfStreamError` at end-of-stream,
+        :class:`JsonlChildClosedError` when the binding was closed, and
+        :class:`JsonlConcurrentReadError` when the port's single-flight
+        read contract is violated — a caller defect the adapter
+        re-raises rather than classifying as subject evidence.
         """
         ...  # pragma: no cover - structural declaration
 
@@ -607,6 +621,11 @@ class JsonlAdapter:
             line = child.read_line()
         except JsonlEndOfStreamError:
             raise
+        except JsonlConcurrentReadError:
+            # A violated single-flight contract is a harness defect: it
+            # propagates like the adapter's own contract violations and
+            # never becomes structured subject evidence.
+            raise
         except JsonlChildClosedError as error:
             raise _EpochFailure(
                 _PEER_LIFECYCLE,
@@ -671,7 +690,9 @@ class JsonlAdapter:
         delivered" are different facts about the subject. A reader must be
         able to tell them apart from the record alone.
         """
-        code = _HANDSHAKE_TIMEOUT if phase == "handshake" else _EPOCH_TIMEOUT
+        # Handshake deadline failures are built inline in _start_handshake;
+        # this path is reached only for epoch and stop-drain aborts.
+        code = _EPOCH_TIMEOUT
         reached = (
             "before the message could be written to the child"
             if during == "write"
