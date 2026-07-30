@@ -78,17 +78,36 @@ def test_canonical_invalid_lifecycle_fixture_is_rejected(
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [
-        ("record-kind", "record kind is not defined by v1"),
-        ("run-identity", "record run_id or id is invalid"),
+        ("record-kind", "record 9 (future.record): record kind is not defined by v1"),
+        (
+            "run-identity",
+            "record 1 (capability.result): record run_id or id is invalid",
+        ),
         ("run-config", "run.started seed is invalid"),
         ("terminal", "run.finished exit is invalid"),
         ("negotiation", "capability results are out of order"),
-        ("input", "input at_ms does not match the manual clock"),
-        ("diagnostic", "diagnostic payload is invalid"),
-        ("observation", "observation ui focus is not a region"),
-        ("execution-epoch", "input epoch must close before another input"),
-        ("evidence-time", "observation at_ms does not match the manual clock"),
-        ("exit-coherence", "observation process exit does not match run.finished exit"),
+        (
+            "input",
+            "record 9 (input.text): input at_ms does not match the manual clock",
+        ),
+        ("diagnostic", "record 10 (diagnostic): diagnostic payload is invalid"),
+        (
+            "observation",
+            "record 10 (observation): observation ui focus is not a region",
+        ),
+        (
+            "execution-epoch",
+            "record 10 (input.text): input epoch must close before another input",
+        ),
+        (
+            "evidence-time",
+            "record 10 (observation): at_ms does not match the manual clock",
+        ),
+        (
+            "exit-coherence",
+            "record 10 (observation): observation process exit does not match"
+            " run.finished exit",
+        ),
     ],
 )
 def test_lifecycle_phase_mutations_retain_diagnostic_category(

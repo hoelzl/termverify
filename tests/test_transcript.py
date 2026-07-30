@@ -1487,6 +1487,106 @@ def test_parse_transcript_rejects_value_nodes_beyond_v1_limit() -> None:
         parse_transcript(encoded)
 
 
+def _set_record_value_count(record: dict[str, JsonValue], target: int) -> None:
+    """Give *record* an ``x-pad`` payload member sizing it to *target* nodes."""
+    payload = record["payload"]
+    assert isinstance(payload, dict)
+    pad: list[JsonValue] = [[] for _ in range(10)]
+    payload["x-pad"] = pad
+    remaining = target - _json_value_count(record)
+    for child in pad:
+        assert isinstance(child, list)
+        added = min(10_000, remaining)
+        child.extend([None] * added)
+        remaining -= added
+    assert remaining == 0
+    assert _json_value_count(record) == target
+
+
+def _bare_delivery_wire(transcript: list[dict[str, JsonValue]]) -> bytes:
+    return b"".join(
+        json.dumps(
+            record, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        ).encode()
+        + b"\n"
+        for record in transcript
+    )
+
+
+def test_compat_normalization_at_the_value_ceiling_rejects_at_parse() -> None:
+    """The parse→serialize round-trip is closed at the budget margin.
+
+    Compat normalization (bare delivery → ``spawn-env``) adds one value
+    node after the wire-form budget check, so a legacy record at exactly
+    the v1 value ceiling used to parse while its serialization raised
+    (review 2026-07-24, section 4). The normalized form is now held to
+    the same budget at parse time: anything parse accepts, serialize
+    accepts.
+    """
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[1]["payload"]
+    assert isinstance(payload, dict)
+    payload["tier"] = "delivered"
+    payload["delivery"] = {"env": {"TERMVERIFY_SEED": "0"}}
+    _set_record_value_count(transcript[1], 100_000)
+
+    with pytest.raises(TranscriptValidationError, match="value count"):
+        parse_transcript(_bare_delivery_wire(transcript))
+
+
+def test_compat_normalization_below_the_value_ceiling_round_trips() -> None:
+    """One node below the margin, the normalized record still fits and the
+    accepted transcript round-trips."""
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[1]["payload"]
+    assert isinstance(payload, dict)
+    payload["tier"] = "delivered"
+    payload["delivery"] = {"env": {"TERMVERIFY_SEED": "0"}}
+    _set_record_value_count(transcript[1], 99_999)
+
+    parsed = parse_transcript(_bare_delivery_wire(transcript))
+
+    delivery = cast(dict[str, JsonValue], parsed[1]["payload"])["delivery"]
+    assert isinstance(delivery, dict) and delivery["channel"] == "spawn-env"
+    assert _json_value_count(parsed[1]) == 100_000
+    assert parse_transcript(serialize_transcript(parsed)) == parsed
+
+
+def test_duplicate_member_error_truncates_the_attacker_controlled_key() -> None:
+    """The duplicate-member message is bounded and control-character-safe.
+
+    The error fires inside ``object_pairs_hook`` before string budgets
+    apply, so the key can be megabytes of attacker-controlled bytes with
+    embedded ANSI sequences (review 2026-07-24, section 4). The message
+    must neither echo it unbounded nor pass control characters through.
+    """
+    key_json = "k" * 100_000 + chr(92) + "u001b[2J"
+    line = f'{{"{key_json}":1,"{key_json}":2}}'.encode()
+
+    with pytest.raises(TranscriptValidationError) as excinfo:
+        parse_transcript(line + b"\n")
+
+    message = str(excinfo.value)
+    assert "duplicate JSON member" in message
+    assert len(message) < 200
+    assert "\x1b" not in message
+
+
+def test_semantic_rejections_name_the_failing_record() -> None:
+    """A semantic rejection names the failing record's seq and kind, so a
+    rejection in a 10,000-record transcript is attributable (review
+    2026-07-24, section 4)."""
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[INPUT_INDEX]["payload"]
+    assert isinstance(payload, dict)
+    payload["at_ms"] = 999
+
+    with pytest.raises(
+        TranscriptValidationError, match=rf"record {INPUT_INDEX} \(input\."
+    ):
+        serialize_transcript(transcript)
+
+
 def test_transcript_accepts_value_nodes_at_v1_limit() -> None:
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
     _set_observation_record_value_count(transcript, 100_000)
@@ -1838,7 +1938,7 @@ def test_parse_transcript_preserves_duplicate_member_diagnostic() -> None:
     fixture = (FIXTURES / "valid" / "basic.jsonl").read_bytes()
     data = fixture.replace(b'"seq":0}', b'"seq":0,"seq":0}', 1)
 
-    with pytest.raises(TranscriptValidationError, match="duplicate JSON member: seq"):
+    with pytest.raises(TranscriptValidationError, match="duplicate JSON member: 'seq'"):
         parse_transcript(data)
 
 

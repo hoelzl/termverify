@@ -76,6 +76,19 @@ class TranscriptValidationError(ValueError):
     """Raised when a transcript violates the v1 contract."""
 
 
+def _record_error(record: Record, message: str) -> TranscriptValidationError:
+    """Attach the failing record's locator to a semantic rejection.
+
+    ``seq`` and ``kind`` are envelope-validated before any semantic pass
+    runs, so both are safe to echo; a rejection in a 10,000-record
+    transcript must be attributable to its record (review 2026-07-24,
+    section 4).
+    """
+    return TranscriptValidationError(
+        f"record {record['seq']} ({record['kind']}): {message}"
+    )
+
+
 def parse_transcript(data: bytes) -> list[Record]:
     """Parse canonical v1 JSONL *data* and validate its envelope and lifecycle.
 
@@ -127,6 +140,13 @@ def _normalize_delivery_channel(records: list[Record]) -> None:
     form carries both ``channel`` and ``env`` and this rule leaves it
     untouched. The rule therefore never relaxes acceptance: it only
     rewrites the bare form toward the canonical one.
+
+    The rewrite adds one value node after the wire-form budget checks
+    ran, so the normalized record is re-held to the per-record budgets
+    here: a bare-form record whose canonical form exceeds them is
+    rejected at parse, which closes the parse→serialize round-trip at
+    the margin (review 2026-07-24, section 4) — anything parse accepts,
+    serialize accepts.
     """
     for record in records:
         if record["kind"] != "capability.result":
@@ -137,6 +157,7 @@ def _normalize_delivery_channel(records: list[Record]) -> None:
         delivery = payload.get("delivery")
         if isinstance(delivery, dict) and "channel" not in delivery:
             payload["delivery"] = {"channel": "spawn-env", **delivery}
+            _validate_json_value(record)
 
 
 _COMPAT_RULES: tuple[Callable[[list[Record]], None], ...] = (
@@ -320,37 +341,53 @@ def _reject_duplicate_members(
     result: dict[str, JsonValue] = {}
     for key, value in pairs:
         if key in result:
-            raise TranscriptValidationError(f"duplicate JSON member: {key}")
+            # This fires inside ``object_pairs_hook``, before the string
+            # budgets apply, so the key is attacker-controlled up to the
+            # line ceiling and may embed control/ANSI bytes. Echo only a
+            # bounded, escaped excerpt (review 2026-07-24, section 4).
+            excerpt = repr(key[:40]) + ("…" if len(key) > 40 else "")
+            raise TranscriptValidationError(f"duplicate JSON member: {excerpt}")
         result[key] = value
     return result
 
 
 def _validate_envelope(record: Record, sequence: int) -> None:
+    # The locator names the position, not record["seq"]: the envelope is
+    # what is being validated here, so its own members are not yet
+    # trustworthy enough to echo.
     required = {"protocol", "run_id", "seq", "id", "kind", "payload"}
     if not required <= record.keys() or any(
         not key.startswith("x-") and key not in required for key in record
     ):
-        raise TranscriptValidationError("record has invalid envelope members")
+        raise TranscriptValidationError(
+            f"record {sequence}: record has invalid envelope members"
+        )
     if (
         record["protocol"] != _PROTOCOL
         or not isinstance(record["seq"], int)
         or isinstance(record["seq"], bool)
         or record["seq"] != sequence
     ):
-        raise TranscriptValidationError("record protocol or sequence is invalid")
+        raise TranscriptValidationError(
+            f"record {sequence}: record protocol or sequence is invalid"
+        )
     if not all(
         isinstance(record[key], str) and record[key] for key in ("run_id", "id", "kind")
     ):
         raise TranscriptValidationError(
-            "record identifiers and kind must be non-empty strings"
+            f"record {sequence}: record identifiers and kind must be non-empty strings"
         )
     if any(
         _IDENTIFIER_PATTERN.fullmatch(cast(str, record[key])) is None
         for key in ("run_id", "id")
     ):
-        raise TranscriptValidationError("record identifier grammar is invalid")
+        raise TranscriptValidationError(
+            f"record {sequence}: record identifier grammar is invalid"
+        )
     if not isinstance(record["payload"], dict):
-        raise TranscriptValidationError("record payload must be an object")
+        raise TranscriptValidationError(
+            f"record {sequence}: record payload must be an object"
+        )
 
 
 def _validate_record_kinds_and_payload_members(records: list[Record]) -> None:
@@ -358,8 +395,8 @@ def _validate_record_kinds_and_payload_members(records: list[Record]) -> None:
         kind = record["kind"]
         if kind not in _RECORD_KINDS:
             if isinstance(kind, str) and kind.startswith("input."):
-                raise TranscriptValidationError("input kind is not defined by v1")
-            raise TranscriptValidationError("record kind is not defined by v1")
+                raise _record_error(record, "input kind is not defined by v1")
+            raise _record_error(record, "record kind is not defined by v1")
         payload = record["payload"]
         if (
             isinstance(kind, str)
@@ -367,9 +404,7 @@ def _validate_record_kinds_and_payload_members(records: list[Record]) -> None:
             and isinstance(payload, dict)
             and _has_unknown_generic_members(payload, _PAYLOAD_MEMBERS[kind])
         ):
-            raise TranscriptValidationError(
-                f"{kind} payload member is not defined by v1"
-            )
+            raise _record_error(record, f"{kind} payload member is not defined by v1")
 
 
 def _validate_run_placement_and_identity(records: list[Record]) -> None:
@@ -390,7 +425,7 @@ def _validate_run_placement_and_identity(records: list[Record]) -> None:
     identifiers: set[JsonValue] = set()
     for record in records:
         if record["run_id"] != run_id or record["id"] in identifiers:
-            raise TranscriptValidationError("record run_id or id is invalid")
+            raise _record_error(record, "record run_id or id is invalid")
         identifiers.add(record["id"])
 
 
@@ -433,7 +468,7 @@ def _validate_run_started(records: list[Record]) -> dict[str, JsonValue]:
     if not isinstance(terminal_config, dict) or _has_unknown_generic_members(
         terminal_config, frozenset({"columns", "rows", "capabilities"})
     ):
-        raise TranscriptValidationError("run.started terminal is invalid")
+        raise TranscriptValidationError("run.started terminal members are invalid")
     terminal_dimensions = (
         terminal_config.get("columns"),
         terminal_config.get("rows"),
@@ -442,18 +477,24 @@ def _validate_run_started(records: list[Record]) -> dict[str, JsonValue]:
         isinstance(value, int) and not isinstance(value, bool) and value > 0
         for value in terminal_dimensions
     ):
-        raise TranscriptValidationError("run.started terminal is invalid")
+        raise TranscriptValidationError(
+            "run.started terminal columns and rows must be positive integers"
+        )
     terminal_capabilities = terminal_config.get("capabilities")
     if not isinstance(terminal_capabilities, list) or not all(
         isinstance(capability, str) and capability
         for capability in terminal_capabilities
     ):
-        raise TranscriptValidationError("run.started terminal is invalid")
+        raise TranscriptValidationError(
+            "run.started terminal capabilities must be non-empty strings"
+        )
     canonical_capabilities = cast(list[str], terminal_capabilities)
     if canonical_capabilities != sorted(canonical_capabilities) or len(
         canonical_capabilities
     ) != len(set(canonical_capabilities)):
-        raise TranscriptValidationError("run.started terminal is invalid")
+        raise TranscriptValidationError(
+            "run.started terminal capabilities must be sorted and unique"
+        )
     network_config = config["network"]
     if not isinstance(network_config, dict):
         raise TranscriptValidationError("run.started network is invalid")
@@ -720,30 +761,30 @@ def _validate_manual_clock(config: dict[str, JsonValue]) -> int:
     return manual_time
 
 
+def _manual_time_after(record: Record, manual_time: int) -> int:
+    """The manual clock in force after *record* — the chain rule's single
+    source; both validation walks advance through it (review 2026-07-24,
+    section 4: the chain must not be computed by two drifting copies)."""
+    if record["kind"] == "input.clock_advanced":
+        payload = cast(dict[str, JsonValue], record["payload"])
+        return cast(int, payload["at_ms"])
+    return manual_time
+
+
 def _validate_inputs(records: list[Record], manual_time: int) -> None:
+    # Input-kind membership and payload-member closure are enforced once,
+    # by _validate_record_kinds_and_payload_members over the shared
+    # _INPUT_MEMBERS table, before this pass runs; restating them here
+    # was pure drift risk (review 2026-07-24, section 4).
     for record in records:
-        if not isinstance(record["kind"], str) or not record["kind"].startswith(
-            "input."
-        ):
+        kind = record["kind"]
+        if not isinstance(kind, str) or not kind.startswith("input."):
             continue
-        if record["kind"] not in _INPUT_KINDS:
-            raise TranscriptValidationError("input kind is not defined by v1")
-        input_payload = record["payload"]
-        if not isinstance(input_payload, dict):
-            raise TranscriptValidationError("input payload must be an object")
-        if any(
-            key not in _INPUT_MEMBERS[record["kind"]] and not key.startswith("x-")
-            for key in input_payload
-        ):
-            raise TranscriptValidationError(
-                f"{record['kind']} payload member is not defined by v1"
-            )
+        input_payload = cast(dict[str, JsonValue], record["payload"])
         at_ms = input_payload.get("at_ms")
         if not isinstance(at_ms, int) or isinstance(at_ms, bool) or at_ms < 0:
-            raise TranscriptValidationError(
-                "input at_ms must be a non-negative integer"
-            )
-        if record["kind"] == "input.clock_advanced":
+            raise _record_error(record, "input at_ms must be a non-negative integer")
+        if kind == "input.clock_advanced":
             delta_ms = input_payload.get("delta_ms")
             if (
                 not isinstance(delta_ms, int)
@@ -751,33 +792,25 @@ def _validate_inputs(records: list[Record], manual_time: int) -> None:
                 or delta_ms <= 0
                 or at_ms != manual_time + delta_ms
             ):
-                raise TranscriptValidationError(
-                    "input.clock_advanced must advance the manual clock"
+                raise _record_error(
+                    record, "input.clock_advanced must advance the manual clock"
                 )
-            manual_time = at_ms
         elif at_ms != manual_time:
-            raise TranscriptValidationError(
-                "input at_ms does not match the manual clock"
-            )
-        if record["kind"] == "input.text" and not isinstance(
+            raise _record_error(record, "input at_ms does not match the manual clock")
+        manual_time = _manual_time_after(record, manual_time)
+        if kind == "input.text" and not isinstance(input_payload.get("text"), str):
+            raise _record_error(record, "input.text requires a string text member")
+        if kind == "input.clipboard_set" and not isinstance(
             input_payload.get("text"), str
         ):
-            raise TranscriptValidationError("input.text requires a string text member")
-        if record["kind"] == "input.clipboard_set" and not isinstance(
-            input_payload.get("text"), str
-        ):
-            raise TranscriptValidationError(
-                "input.clipboard_set requires a string text member"
+            raise _record_error(
+                record, "input.clipboard_set requires a string text member"
             )
-        if record["kind"] == "input.stop" and any(
-            key != "at_ms" and not key.startswith("x-") for key in input_payload
-        ):
-            raise TranscriptValidationError("input.stop forbids additional members")
         if record["kind"] == "input.key":
             keys = input_payload.get("keys")
             if not is_key_chord(keys):
-                raise TranscriptValidationError(
-                    "input.key requires one canonical termverify.key/v1 chord"
+                raise _record_error(
+                    record, "input.key requires one canonical termverify.key/v1 chord"
                 )
         if record["kind"] == "input.resize":
             dimensions = (input_payload.get("columns"), input_payload.get("rows"))
@@ -785,8 +818,8 @@ def _validate_inputs(records: list[Record], manual_time: int) -> None:
                 isinstance(value, int) and not isinstance(value, bool) and value > 0
                 for value in dimensions
             ):
-                raise TranscriptValidationError(
-                    "input.resize requires positive columns and rows"
+                raise _record_error(
+                    record, "input.resize requires positive columns and rows"
                 )
         if record["kind"] == "input.mouse":
             action = input_payload.get("action")
@@ -801,9 +834,7 @@ def _validate_inputs(records: list[Record], manual_time: int) -> None:
                     for value in coordinates
                 )
             ):
-                raise TranscriptValidationError(
-                    "input.mouse action or position is invalid"
-                )
+                raise _record_error(record, "input.mouse action or position is invalid")
             button = input_payload.get("button")
             delta = input_payload.get("delta")
             if action in {"press", "release"}:
@@ -812,7 +843,7 @@ def _validate_inputs(records: list[Record], manual_time: int) -> None:
                     or button not in {"left", "middle", "right"}
                     or "delta" in input_payload
                 ):
-                    raise TranscriptValidationError("input.mouse button is invalid")
+                    raise _record_error(record, "input.mouse button is invalid")
             elif action == "scroll":
                 if (
                     "button" in input_payload
@@ -820,13 +851,9 @@ def _validate_inputs(records: list[Record], manual_time: int) -> None:
                     or isinstance(delta, bool)
                     or not delta
                 ):
-                    raise TranscriptValidationError(
-                        "input.mouse scroll delta is invalid"
-                    )
+                    raise _record_error(record, "input.mouse scroll delta is invalid")
             elif "button" in input_payload or "delta" in input_payload:
-                raise TranscriptValidationError(
-                    "input.mouse move forbids button and delta"
-                )
+                raise _record_error(record, "input.mouse move forbids button and delta")
 
 
 def _validate_diagnostics(records: list[Record]) -> None:
@@ -835,7 +862,7 @@ def _validate_diagnostics(records: list[Record]) -> None:
             continue
         diagnostic_payload = record["payload"]
         if not isinstance(diagnostic_payload, dict):
-            raise TranscriptValidationError("diagnostic payload must be an object")
+            raise _record_error(record, "diagnostic payload must be an object")
         diagnostic_time = diagnostic_payload.get("at_ms")
         if (
             not isinstance(diagnostic_time, int)
@@ -845,7 +872,7 @@ def _validate_diagnostics(records: list[Record]) -> None:
             or not diagnostic_payload["code"]
             or not isinstance(diagnostic_payload.get("message"), str)
         ):
-            raise TranscriptValidationError("diagnostic payload is invalid")
+            raise _record_error(record, "diagnostic payload is invalid")
 
 
 def _validate_observations(
@@ -858,7 +885,7 @@ def _validate_observations(
             continue
         observation_payload = record["payload"]
         if not isinstance(observation_payload, dict):
-            raise TranscriptValidationError("observation payload must be an object")
+            raise _record_error(record, "observation payload must be an object")
         observation_time = observation_payload.get("at_ms")
         if (
             not isinstance(observation_time, int)
@@ -868,7 +895,7 @@ def _validate_observations(
             or not isinstance(observation_payload.get("events"), list)
             or not isinstance(observation_payload.get("ui"), dict)
         ):
-            raise TranscriptValidationError("observation payload is invalid")
+            raise _record_error(record, "observation payload is invalid")
         ui = observation_payload["ui"]
         assert isinstance(ui, dict)
         cursor = ui.get("cursor")
@@ -884,7 +911,7 @@ def _validate_observations(
             or not isinstance(ui.get("mode"), str)
             and ui.get("mode") is not None
         ):
-            raise TranscriptValidationError("observation ui is invalid")
+            raise _record_error(record, "observation ui is invalid")
         cursor_values = (cursor.get("column"), cursor.get("row"))
         if (
             _has_unknown_generic_members(
@@ -896,13 +923,13 @@ def _validate_observations(
             )
             or not isinstance(cursor.get("visible"), bool)
         ):
-            raise TranscriptValidationError("observation ui cursor is invalid")
+            raise _record_error(record, "observation ui cursor is invalid")
         regions = ui["regions"]
         assert isinstance(regions, list)
         region_ids: set[str] = set()
         for region in regions:
             if not isinstance(region, dict):
-                raise TranscriptValidationError("observation ui region is invalid")
+                raise _record_error(record, "observation ui region is invalid")
             region_id = region.get("id")
             bounds = region.get("bounds")
             if (
@@ -916,7 +943,7 @@ def _validate_observations(
                 or not region["role"]
                 or not isinstance(bounds, dict)
             ):
-                raise TranscriptValidationError("observation ui region is invalid")
+                raise _record_error(record, "observation ui region is invalid")
             dimensions = (bounds.get("columns"), bounds.get("rows"))
             origin = (bounds.get("column"), bounds.get("row"))
             if (
@@ -934,10 +961,10 @@ def _validate_observations(
                     for value in origin
                 )
             ):
-                raise TranscriptValidationError("observation ui bounds are invalid")
+                raise _record_error(record, "observation ui bounds are invalid")
             region_ids.add(region_id)
         if ui["focus"] is not None and ui["focus"] not in region_ids:
-            raise TranscriptValidationError("observation ui focus is not a region")
+            raise _record_error(record, "observation ui focus is not a region")
         events = observation_payload["events"]
         assert isinstance(events, list)
         for event in events:
@@ -948,11 +975,11 @@ def _validate_observations(
                 or not event["type"]
                 or "data" not in event
             ):
-                raise TranscriptValidationError("observation event is invalid")
+                raise _record_error(record, "observation event is invalid")
         if "frame" in observation_payload:
             frame = observation_payload["frame"]
             if not isinstance(frame, dict):
-                raise TranscriptValidationError("observation frame is invalid")
+                raise _record_error(record, "observation frame is invalid")
             lines = frame.get("lines")
             dimensions = (frame.get("columns"), frame.get("rows"))
             if (
@@ -967,11 +994,11 @@ def _validate_observations(
                 )
                 or len(lines) != frame.get("rows")
             ):
-                raise TranscriptValidationError("observation frame is invalid")
+                raise _record_error(record, "observation frame is invalid")
         if "process" in observation_payload:
             process = observation_payload["process"]
             if not isinstance(process, dict):
-                raise TranscriptValidationError("observation process is invalid")
+                raise _record_error(record, "observation process is invalid")
             if process.get("state") == "running" and not _has_unknown_generic_members(
                 process, frozenset({"state"})
             ):
@@ -993,7 +1020,7 @@ def _validate_observations(
                     and bool(exit_value["value"])
                 )
             ):
-                raise TranscriptValidationError("observation process is invalid")
+                raise _record_error(record, "observation process is invalid")
             if terminal_kind == "run.finished":
                 finished_exit = cast(
                     dict[str, JsonValue],
@@ -1004,8 +1031,9 @@ def _validate_observations(
                 ) or not _json_equivalent(
                     exit_value.get("value"), finished_exit.get("value")
                 ):
-                    raise TranscriptValidationError(
-                        "observation process exit does not match run.finished exit"
+                    raise _record_error(
+                        record,
+                        "observation process exit does not match run.finished exit",
                     )
 
 
@@ -1042,28 +1070,28 @@ def _validate_execution_epochs(body: list[Record]) -> None:
             if kind == "diagnostic":
                 continue
             if kind != "observation":
-                raise TranscriptValidationError(
-                    "initial readiness observation must precede input"
+                raise _record_error(
+                    record, "initial readiness observation must precede input"
                 )
             readiness_observed = True
         elif isinstance(kind, str) and kind.startswith("input."):
             if stop_seen:
-                raise TranscriptValidationError("input is not allowed after input.stop")
+                raise _record_error(record, "input is not allowed after input.stop")
             if input_epoch_open:
-                raise TranscriptValidationError(
-                    "input epoch must close before another input"
+                raise _record_error(
+                    record, "input epoch must close before another input"
                 )
             input_epoch_open = True
             stop_seen = kind == "input.stop"
         elif kind == "observation":
             if not input_epoch_open:
-                raise TranscriptValidationError(
-                    "observation is not allowed while the run is idle"
+                raise _record_error(
+                    record, "observation is not allowed while the run is idle"
                 )
             input_epoch_open = False
         elif kind == "diagnostic" and not input_epoch_open:
-            raise TranscriptValidationError(
-                "diagnostic is not allowed while the run is idle"
+            raise _record_error(
+                record, "diagnostic is not allowed while the run is idle"
             )
         if kind == "observation":
             payload = record["payload"]
@@ -1073,26 +1101,34 @@ def _validate_execution_epochs(body: list[Record]) -> None:
                 and process.get("state") == "exited"
                 and index != len(body) - 1
             ):
-                raise TranscriptValidationError(
-                    "process exit observation must be the final body record"
+                raise _record_error(
+                    record, "process exit observation must be the final body record"
                 )
 
 
 def _validate_evidence_times(records: list[Record], manual_time: int) -> None:
     for record in records:
         payload = cast(dict[str, JsonValue], record["payload"])
-        if record["kind"] == "input.clock_advanced":
-            manual_time = cast(int, payload["at_ms"])
-        elif (
+        if (
             record["kind"] in {"diagnostic", "observation"}
             and payload["at_ms"] != manual_time
         ):
-            raise TranscriptValidationError(
-                f"{record['kind']} at_ms does not match the manual clock"
-            )
+            raise _record_error(record, "at_ms does not match the manual clock")
+        manual_time = _manual_time_after(record, manual_time)
 
 
 def _json_equivalent(left: JsonValue, right: JsonValue) -> bool:
+    """Structural JSON equality, strict about types.
+
+    Caveat (review 2026-07-24, section 4): RFC 8785 serializes an
+    integral float as an integer (``10.0`` → ``10``), which re-parses as
+    ``int``, and this comparison is type-strict — so an in-memory record
+    holding ``10.0`` is **not** ``_json_equivalent`` to its own
+    serialized round-trip. Today nothing depends on that: every caller
+    compares values that are either both freshly parsed or both from the
+    same in-memory source. Do not build cross-source comparisons on this
+    helper without first settling the integral-float question.
+    """
     if type(left) is not type(right):
         return False
     if isinstance(left, list):
