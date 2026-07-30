@@ -7,11 +7,6 @@ source of truth for volatile work state.
 
 ## Active
 
-- [Adversarial review 2026-07-24 remediation handover](adversarial-review-2026-07-24-remediation-handover.md)
-  — **active**; plans and tracks remediation of every finding in the
-  [2026-07-24 adversarial review](../reviews/adversarial-review-2026-07-24.md)
-  (`main` @ `8f33e6c`) through phased, slice-based fixes, disclosures, and
-  recorded owner decisions.
 - [Pre-release boundary hardening handover](pre-release-boundary-hardening-handover.md)
   — **active**; accepts the transferred vocabulary, correlation, containment,
   schema-distribution, terminal-production, and release-governance boundaries.
@@ -26,6 +21,13 @@ None.
 
 ## Archive
 
+- [Adversarial review 2026-07-24 remediation handover](archive/adversarial-review-2026-07-24-remediation-handover.md)
+  — **complete** (retired 2026-07-31); every finding in the
+  [2026-07-24 adversarial review](../reviews/adversarial-review-2026-07-24.md)
+  (`main` @ `8f33e6c`) was fixed, disclosed, or retired by a recorded owner
+  decision across Phases 0–9. No successor: the initiative it names as next
+  (a POSIX PTY adapter and an `examples/` vertical, issue #204) was
+  deliberately left outside its completion criteria and gets its own handover.
 - [Phase 1 readiness hardening handover](archive/phase-1-readiness-hardening-handover.md)
   — **superseded**; its amended completion boundary passed independent integrated
   review, and every transferred criterion moved intact to the active Pre-release

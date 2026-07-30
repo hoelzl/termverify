@@ -2,14 +2,17 @@
 
 ## Handover metadata
 
-- **Status:** active — created 2026-07-24 at owner request to plan and track
+- **Status:** complete — created 2026-07-24 at owner request to plan and track
   remediation of every finding in the
-  [2026-07-24 adversarial review](../reviews/adversarial-review-2026-07-24.md)
-  (reviewed revision: `main` @ `8f33e6c`).
+  [2026-07-24 adversarial review](../../reviews/adversarial-review-2026-07-24.md)
+  (reviewed revision: `main` @ `8f33e6c`); retired 2026-07-31 with Phases 0–9
+  done and every review finding disposed as fixed, disclosed, or retired by a
+  recorded owner decision. Work that outlived the remediation lives on GitHub
+  issues, not here — see the retirement checkpoint in §4.
 - **Owner:** project maintainer
 - **Created:** 2026-07-24
-- **Updated:** 2026-07-29 (checkpoint f: **Phases 1–7 complete**, 0.1.1
-  released; next item is Phase 8 / #200–#203)
+- **Updated:** 2026-07-31 (retirement checkpoint g: **Phases 1–9 complete**;
+  `main` @ `aa21271`, version `0.2.0.dev0`)
 - **Review required:** yes — every slice that changes runtime behavior, the
   public API, protocol prose with normative force, or release/security claims
   requires TDD evidence, full validation, and an independent adversarial
@@ -19,7 +22,7 @@
   found substantive defects in merged code, one of them a behavioral
   regression on `main`; see the checkpoint note in §4.
 - **Predecessor:** none (the archived
-  [adversarial review remediation handover](archive/adversarial-review-remediation-handover.md)
+  [adversarial review remediation handover](adversarial-review-remediation-handover.md)
   covered the earlier review cycle through PR #80 and is complete; this
   handover addresses the new 2026-07-24 review and does not reopen it).
 - **Successor:** none
@@ -62,7 +65,9 @@ remediation plan; do not restate the review's evidence here.
 
 Relevant links:
 
-- Review: `docs/agent/reviews/adversarial-review-2026-07-24.md`
+- Review: `docs/agent/reviews/adversarial-review-2026-07-24.md` (this document
+  now lives under `docs/agent/handovers/archive/`; repository-root paths in it
+  are unaffected, relative links were repaired at retirement)
 - Reviewed revision: `8f33e6c`
 - GitHub issues: to be filed per slice (Phase 0 below); record issue numbers
   in this document as they are created.
@@ -834,7 +839,37 @@ Slice 1.1 (same file; Slice 1.1 also adds the prototyping-stage banner).
 **Acceptance:** every present-tense capability claim in README corresponds to
 code in `src/`.
 
-### Phase 8 — Minor-findings sweep [TODO]
+### Phase 8 — Minor-findings sweep [DONE 2026-07-30]
+
+All four slices merged 2026-07-30 after fresh-context adversarial review:
+8.1 as PR #260 (#200), 8.2 as PR #262 (#201), 8.3 as PR #263 (#202), 8.4 as
+PR #264 (#203). Two 8.3 items had landed early as PRs #240/#241 (see
+checkpoint e). Every §4 review bullet carries a disposition in its slice's
+changelog fragment: fixes, three disclosures (ConPTY `cancel_io` leak, the
+RFC 8785 integral-float caveat, the `termverify.dev` hijack surface), and one
+recorded won't-fix (the unconditional 2 s exit-reap grace). The dispositions
+that were *not* pure fixes, kept here because a fragment is easy to lose:
+
+- **Won't-fix — the 2 s exit-reap grace stays unconditional.** The adapter's
+  own failure paths never consult it, a conforming child's exit after a
+  terminal message returns the wait in milliseconds, and a graceless probe
+  would trade transcript determinism for latency that only a breaching
+  subject pays.
+- **Disclosed — a ConPTY close that cannot cancel in-flight native I/O**
+  within its bounded retry raises and leaks the blocked frame and its pinned
+  handles for the process's life; releasing them mid-call is the
+  interpreter-crash case. Stated at the module docstring, the raise, and the
+  developer guide.
+- **Re-baselined, not regressed — the coverage floor moved 94 → 93** when
+  `scripts/` joined measurement (owner decision 2026-07-24). Package-only was
+  95.3% at that commit; the delta is the validators' CLI legs.
+
+Three findings surfaced *by* this phase's reviews outlived it and are tracked
+on GitHub: **#258** (deadline-abort exit-record disclosure — owner decision),
+**#261** (write-side single-flight sibling plus the re-raise-vs-classify
+polarity — owner decision, then a POSIX-capable slice), and the standing
+Windows-containment cluster **#213/#217/#238**. Original slice text follows
+for the record.
 
 Group the remaining minors into four thematic slices. Each item's disposition
 is fix, disclose, or a recorded won't-fix; none silently dropped. See review
@@ -891,7 +926,15 @@ is fix, disclose, or a recorded won't-fix; none silently dropped. See review
 **Acceptance:** each §4 review bullet has a disposition traceable from its
 slice PR or a recorded decision.
 
-### Phase 9 — Strategic owner decisions (review recs 10–12) [TODO]
+### Phase 9 — Strategic owner decisions (review recs 10–12) [DONE 2026-07-24]
+
+All four decisions were taken and recorded on 2026-07-24; the heading lagged
+its contents until retirement. 9.2's mechanization shipped with Slice 8.4
+(`scripts/validate_prose_status.py`), 9.3's suspension is
+`docs/agent/design/prototyping-stage-protocol-governance.md`, 9.4's removal
+merged as PR #220, and 9.1's vertical initiative is **#204** — deliberately
+outside this handover's completion criteria and needing its own handover when
+started.
 
 Not implementation phases — decision requests. File one issue each; outcomes
 are recorded owner decisions under `docs/agent/design/`; any resulting
@@ -974,6 +1017,41 @@ implementation gets its own future handover/boundary, not this one.
   already resolved by PR #183.
 - **Phase 0 complete (2026-07-24):** issues #184–#204 filed under the
   `review-2026-07-24` label (mapping table in Phase 0 above).
+- **Retirement checkpoint 2026-07-31g (seventh session).** The handover is
+  **complete** and archived. `main` @ `aa21271`, 1,955 tests green, version
+  `0.2.0.dev0`, no worktrees or feature branches outstanding.
+  - **Merged since checkpoint f:** #257 (PR #259, the repo-wide
+    capability-truth audit that PR #256's review rounds forced out of #199's
+    scope — ~25 doc-side repairs across 12 files), then Phase 8 entire:
+    #200 (PR #260), #201 (PR #262), #202 (PR #263), #203 (PR #264).
+    **Phases 0–9 are done**, so every completion criterion in the metadata
+    block is met: each review finding is fixed, disclosed, or retired by a
+    recorded decision, and none was silently dropped.
+  - **The standing lesson held to the last slice, and turned inward again.**
+    The reviews on this batch caught two Criticals inside the #201 *fix*
+    (an attacker-controlled `kind` echoed into an error message — the exact
+    defect class the slice existed to close, reintroduced one member over;
+    and a 22-byte serialize gap), #263's own red CI leg, and a
+    `commit_message` key in the bumpversion config that had been silently
+    dead since 0.1.0, shipping the wrong commit format for every release.
+    Seventh instance: what survives implementation is caught by *running*
+    the claim, and a fix is as likely to author the next defect as the code
+    it replaces.
+  - **Carried forward, deliberately, as GitHub issues — this handover owns
+    none of them:**
+    - **#204** — the vertical initiative (POSIX PTY adapter + `examples/`,
+      then drei and GlyphWright). Owner decision 9.1 made it next; it needs
+      its own boundary design and handover. The horizontal-specification
+      moratorium stays in force until it exists.
+    - **#258** (question) and **#261** (bug + polarity question) — both
+      await an owner decision before any slice can start; #261's fix
+      additionally needs a POSIX-capable TDD environment.
+    - **#213 / #217 / #238** — the Windows containment cluster. Still one
+      question asked three times: does the JSONL transport own its Windows
+      spawn and pipe handles the way `_conpty.py` now does. Size as one
+      slice with a recorded own-the-spawn-versus-disclose decision.
+    - **#114** — GlyphWright's prioritization input; it is a natural input
+      to #204's design rather than standalone work.
 - **Checkpoint 2026-07-29f (sixth session).**
   - **Merged:** #198 (PR #254) — the authoritative codec and the key
     registries' entry points are now exported from `termverify`, so the
@@ -1254,24 +1332,26 @@ implementation gets its own future handover/boundary, not this one.
     `docs/knowledge/product-vision.md` (which already existed, and was
     extended rather than duplicated) is the single source for planned scope.
 
-11. **Resume with Phase 8 (#200–#203)**, minus the two 8.3 items #240/#241
-    already executed — see checkpoint e, and deduct them when sizing 8.3.
-    Note #203 owns the general prose-status validator; #199 deliberately
-    added only a README-specific check, so that scope is untouched. The
-    *manual* repo-wide capability-truth audit that PR #256's review rounds
-    surfaced is #257 (outside this handover); doing it before #203 gives the
-    validator a true baseline to ratchet.
+11. ~~**Resume with Phase 8 (#200–#203)**~~ **done 2026-07-30** — PRs #260,
+    #262, #263, #264, preceded by the capability-truth audit #257 (PR #259),
+    which was run first exactly so #203's validator ratcheted a true
+    baseline. The two 8.3 items #240/#241 had already landed under Phase 5.
+    **Phase 8 was the last implementation phase; this handover is complete
+    and archived (retirement checkpoint g).**
 
-    **Give the Windows containment findings one home.** #238 (JSONL spawn
-    keeps the job-assignment window) and the reopened Windows halves of
-    #213/#217 are the same question asked three times: whether the JSONL
-    transport owns its Windows spawn and pipe handles the way `_conpty.py`
-    now does. Size them as one slice with a recorded owner decision on
-    own-the-spawn versus disclose, not as three minors. They are no longer
-    Phase 5 work.
+12. **Nothing here is next.** The successors are GitHub issues and, for the
+    vertical, a new handover:
+    - **#204** — POSIX PTY adapter + `examples/` vertical, then drei and
+      GlyphWright. Its own boundary design and handover; #114 is design
+      input to it. This is the recorded owner direction for what follows
+      the remediation.
+    - **#258**, **#261** — open owner decisions; neither is startable as a
+      slice until decided.
+    - **#213 / #217 / #238** — the Windows containment cluster, to be sized
+      as one slice with an own-the-spawn-versus-disclose decision.
 
-    Housekeeping when convenient: five dependabot PRs are open (#248–#252);
-    only the `astral-sh/setup-uv` 8→9 major bump needs reading before merge.
+    Housekeeping done at retirement time: the five dependabot PRs
+    (#248–#252) named in the previous checkpoint are no longer open.
 
 Superseded next-step detail from the previous checkpoint, kept because the
 file survey is still accurate:
@@ -1311,7 +1391,9 @@ Gotchas:
 
 ## 6. Key files & architecture
 
-No remediation files exist yet. Files this initiative will touch, by phase:
+Written before any slice ran, and kept as written: the list below is what the
+initiative *planned* to touch, by phase. What it actually touched is the merged
+PRs and `CHANGELOG.md`; read those, not this, for the shipped surface.
 
 - `README.md`, `SECURITY.md`, `CHANGELOG.md` fragments — Phases 1, 7, 8.4
 - `docs/knowledge/protocol.md` — Phases 1, 3
