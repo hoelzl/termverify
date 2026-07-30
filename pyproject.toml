@@ -138,7 +138,12 @@ commit = true
 # uses; it is inert while tag = false.)
 tag = false
 tag_name = "v{new_version}"
-commit_message = "Bump version {current_version} → {new_version}"
+# The key is `message`: the previously configured `commit_message` was
+# silently ignored and the tool's default ("Bump version: X → Y", with a
+# colon) shipped instead (PR #264 review, I1). The Release workflow keys
+# on the "Bump version" prefix, which both forms carry; this makes the
+# produced message match the documented one.
+message = "Bump version {current_version} → {new_version}"
 # Manual .dev0 marker scheme (owner decision 2026-07-24, review Slice 8.4):
 # main always carries the next planned version with a `.dev0` marker, so the
 # release commit is `bump-my-version bump pre` — a real strip commit

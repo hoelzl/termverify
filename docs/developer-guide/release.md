@@ -85,10 +85,14 @@ whose `CHANGELOG.md` lacks the matching release section.
 
 1. Confirm the changelog heading, tag, and PyPI version agree. The collector
    already left a fresh `Unreleased` section in place for the next cycle.
-2. Bump `main` to the next planned development version: `uv --no-config run
-   bump-my-version bump <part>` (`minor` for `A.B.C → A.(B+1).0.dev0`, and
-   `patch` or `major` accordingly). This is where the next version is
-   chosen; the release itself only ever strips the marker. The resulting
-   `Bump version` commit is ignored by the `Release` workflow because the
-   new version carries the marker.
+2. After the `Release` workflow completes, bump `main` to the next planned
+   development version: `uv --no-config run bump-my-version bump <part>`
+   (`minor` for `A.B.C → A.(B+1).0.dev0`, and `patch` or `major`
+   accordingly). This is where the next version is chosen; the release
+   itself only ever strips the marker. The resulting `Bump version` commit
+   is ignored by the `Release` workflow because the new version carries
+   the marker — and waiting for the workflow first keeps the strip commit
+   and the re-bump out of one push, where the workflow would read the
+   re-bumped dev version and skip the release (recoverable via the
+   fallback tag, but avoidable).
 3. Record follow-up work as issues rather than editing the published notes.

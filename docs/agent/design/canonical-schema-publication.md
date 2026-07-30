@@ -129,10 +129,12 @@ only a mirror of committed content.
   ignores the identifier-first rule. Residual exposure is documentation
   trust (the site mirrors `main`) and downstream tooling that chooses to
   resolve `$id`s. Accepted for the prototyping stage: the domain renews
-  under the owner's IONOS account, `.dev` sits on the HSTS preload list (a
-  hijacker still needs a valid certificate), and no automated
-  registration-expiry monitoring is set up; revisit the monitoring decision
-  at the first supported external artifact.
+  under the owner's IONOS account, `.dev` sits on the HSTS preload list
+  (which blocks plain-HTTP interception but is no barrier to the
+  enumerated threats — whoever controls the domain can obtain a valid
+  certificate), and no automated registration-expiry monitoring is set up;
+  revisit the monitoring decision at the first supported external
+  artifact.
 
 ## Operational prerequisites (owner-manual)
 

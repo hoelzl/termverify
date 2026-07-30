@@ -152,7 +152,41 @@ def test_removed_claim_sites_fail_loudly(tmp_path: Path) -> None:
     assert all("not found" in error for error in errors)
 
 
+def test_missing_claim_file_is_a_curated_error(tmp_path: Path) -> None:
+    validator = load_validator()
+
+    errors = validator.validate_registry_counts(tmp_path)
+
+    assert len(errors) == len(validator.REGISTRY_COUNT_CLAIMS)
+    assert all("missing" in error for error in errors)
+
+
+def test_missing_changelog_is_a_curated_error(tmp_path: Path) -> None:
+    _write_pyproject(tmp_path, "0.2.0")
+
+    validator = load_validator()
+
+    errors = validator.validate_version_discipline(tmp_path)
+    assert len(errors) == 1
+    assert "missing" in errors[0]
+
+
 def test_main_runs_green_on_the_real_repository() -> None:
     validator = load_validator()
 
     assert validator.main() == 0
+
+
+def test_main_reports_failures_with_a_nonzero_exit(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    import pytest
+
+    assert isinstance(monkeypatch, pytest.MonkeyPatch)
+    _write_pyproject(tmp_path, "0.2.0")
+    (tmp_path / "CHANGELOG.md").write_text("nothing released\n", encoding="utf-8")
+    (tmp_path / "docs" / "agent" / "design").mkdir(parents=True)
+    validator = load_validator()
+    monkeypatch.chdir(tmp_path)
+
+    assert validator.main() == 1

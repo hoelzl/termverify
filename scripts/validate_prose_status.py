@@ -71,7 +71,11 @@ def validate_version_discipline(root: Path) -> list[str]:
             f" [tool.bumpversion] current_version {current}"
         )
     if ".dev" not in version:
-        changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+        changelog_path = root / "CHANGELOG.md"
+        if not changelog_path.is_file():
+            errors.append(f"{changelog_path}: missing")
+            return errors
+        changelog = changelog_path.read_text(encoding="utf-8")
         if f"## [{version}] - " not in changelog:
             errors.append(
                 f"pyproject.toml: version {version} carries no .dev marker,"
@@ -106,7 +110,14 @@ def validate_registry_counts(root: Path) -> list[str]:
     expected = {"names": len(KEY_NAMES), "chords": len(all_key_chords())}
     errors: list[str] = []
     for relative, pattern, kind in REGISTRY_COUNT_CLAIMS:
-        text = (root / relative).read_text(encoding="utf-8")
+        path = root / relative
+        if not path.is_file():
+            errors.append(
+                f"{relative}: missing — update REGISTRY_COUNT_CLAIMS in"
+                " scripts/validate_prose_status.py together with the prose"
+            )
+            continue
+        text = path.read_text(encoding="utf-8")
         matches = re.findall(pattern, text)
         if not matches:
             errors.append(
