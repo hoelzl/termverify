@@ -64,18 +64,6 @@ from typing import Final, cast
 
 import pytest
 
-# Shared Windows evidence fixtures: the OS process-handle helpers prove
-# teardown outside the binding, and the enforcing constraint ports let a
-# start negotiate fully; both are established test fixtures, deliberately
-# imported rather than duplicated.
-from test_conpty_binding import (
-    _close_process_handle,
-    _open_process_handle,
-    _terminate_process,
-    _wait_for_os_exit_code,
-)
-from test_conpty_epochs import _configuration, _EnforcingPorts
-
 from termverify._conpty import (
     FORCED_TERMINATION_EXIT_CODE,
     ConptyChild,
@@ -114,6 +102,18 @@ from termverify.conpty import (
 from termverify.cooperation import CooperationConstraintPorts, RealDirectoryProbe
 from termverify.recorder import run_scripted
 from termverify.vt import VtScreenNormalizer
+
+# Shared Windows evidence fixtures: the OS process-handle helpers prove
+# teardown outside the binding, and the enforcing constraint ports let a
+# start negotiate fully; both are established test fixtures, deliberately
+# imported rather than duplicated.
+from tests.test_conpty_binding import (
+    _close_process_handle,
+    _open_process_handle,
+    _terminate_process,
+    _wait_for_os_exit_code,
+)
+from tests.test_conpty_epochs import _configuration, _EnforcingPorts
 
 _INITIAL_ROWS: Final = 24
 _INITIAL_COLUMNS: Final = 80

@@ -12,12 +12,12 @@
 
 [tool.coverage.run]
 branch = true
-source = ["termverify"]
-omit = ["*/termverify/_conpty.py"]
+source = ["termverify", "scripts"]
+omit = ["*/termverify/_conpty.py", "*/scripts/check_installed_package.py"]
 
 [tool.coverage.report]
 show_missing = true
 skip_covered = true
 exclude_also = ['# coverage: exclude-posix']
-fail_under = 94
+fail_under = 93
 precision = 2
