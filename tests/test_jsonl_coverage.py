@@ -43,6 +43,7 @@ from termverify.jsonl import (
     JsonlAdapter,
     JsonlChildClosedError,
     JsonlChildPort,
+    JsonlConcurrentReadError,
     JsonlEndOfStreamError,
     JsonlWatchdogPort,
     _assemble_spawn_overlay,
@@ -551,6 +552,20 @@ def test_dispatch_rejects_read_failure_during_epoch() -> None:
     result = adapter.dispatch(TextInput(at_ms=ManualTime(0), text="x"))
     assert isinstance(_terminal(result).outcome, RunFailed)
     assert _details(_failed(result).failure)["during"] == "read"
+
+
+def test_dispatch_propagates_the_bindings_single_flight_violation() -> None:
+    """A violated binding single-flight contract is a harness defect.
+
+    It propagates to the caller exactly like the adapter's own contract
+    violations (``RuntimeError("JSONL adapter is not idle")``), and never
+    becomes structured subject evidence — neither ``peer-lifecycle`` nor
+    ``peer-malformed`` (review 2026-07-24, section 4; PR #260 round 1).
+    """
+    adapter, child, _ = _started_adapter()
+    child._read_error = JsonlConcurrentReadError("one in-flight read")
+    with pytest.raises(JsonlConcurrentReadError):
+        adapter.dispatch(TextInput(at_ms=ManualTime(0), text="x"))
 
 
 def test_dispatch_rejects_deadline_abort_during_epoch() -> None:

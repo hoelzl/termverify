@@ -122,6 +122,7 @@ __all__ = [
     "JsonlBindingPort",
     "JsonlChildClosedError",
     "JsonlChildPort",
+    "JsonlConcurrentReadError",
     "JsonlEndOfStreamError",
     "JsonlWatchdogPort",
     "TimerWatchdog",
@@ -148,6 +149,19 @@ class JsonlChildClosedError(Exception):
     """The binding was closed outside the abort deadline."""
 
 
+class JsonlConcurrentReadError(RuntimeError):
+    """The binding's single-flight read contract was violated.
+
+    A caller defect, never subject evidence: the adapter re-raises it to
+    the harness like its own contract violations (a second concurrent
+    read cannot be classified as a peer failure — the subject did
+    nothing). Mirrors the ConPTY side's ``ConptyConcurrentIOError`` as a
+    dedicated type; unlike that side, which classifies the violation
+    into a structured ``adapter-runtime-failed`` result, this adapter
+    re-raises it.
+    """
+
+
 @runtime_checkable
 class JsonlChildPort(Protocol):
     """One spawned control-protocol child: line I/O plus exit evidence."""
@@ -159,8 +173,11 @@ class JsonlChildPort(Protocol):
     def read_line(self) -> bytes:
         """Read one framed message line from the child's stdout.
 
-        Raises :class:`JsonlEndOfStreamError` at end-of-stream and
-        :class:`JsonlChildClosedError` when the binding was closed.
+        Raises :class:`JsonlEndOfStreamError` at end-of-stream,
+        :class:`JsonlChildClosedError` when the binding was closed, and
+        :class:`JsonlConcurrentReadError` when the port's single-flight
+        read contract is violated — a caller defect the adapter
+        re-raises rather than classifying as subject evidence.
         """
         ...  # pragma: no cover - structural declaration
 
@@ -607,6 +624,11 @@ class JsonlAdapter:
             line = child.read_line()
         except JsonlEndOfStreamError:
             raise
+        except JsonlConcurrentReadError:
+            # A violated single-flight contract is a harness defect: it
+            # propagates like the adapter's own contract violations and
+            # never becomes structured subject evidence.
+            raise
         except JsonlChildClosedError as error:
             raise _EpochFailure(
                 _PEER_LIFECYCLE,
@@ -671,7 +693,9 @@ class JsonlAdapter:
         delivered" are different facts about the subject. A reader must be
         able to tell them apart from the record alone.
         """
-        code = _HANDSHAKE_TIMEOUT if phase == "handshake" else _EPOCH_TIMEOUT
+        # Handshake deadline failures are built inline in _start_handshake;
+        # this path is reached only for epoch and stop-drain aborts.
+        code = _EPOCH_TIMEOUT
         reached = (
             "before the message could be written to the child"
             if during == "write"
@@ -832,18 +856,15 @@ class JsonlAdapter:
     def _read_epoch(self, at_ms: ManualTime, phase: str) -> _ReadOutcome:
         """Read one epoch: diagnostics, then one closing message.
 
-        ``phase`` is ``"epoch"`` (after an input), ``"stop"`` (the drain),
-        or ``"handshake"`` (after session.hello); it selects the
-        diagnostic budget, the deadline failure code, and which kinds are
-        legal closings.
+        Every caller passes ``phase="epoch"`` (after an input); it names
+        the phase in failure details and deadline aborts. The handshake
+        reads its reply in ``_start_handshake`` and the stop drain in
+        ``_run_stop_drain`` — neither reaches this loop.
         """
         child = cast(JsonlChildPort, self._child)
         expired = threading.Event()
         diagnostics: list[Diagnostic] = []
-        budget = (
-            MAX_STARTUP_DIAGNOSTICS if phase == "handshake" else (MAX_EPOCH_DIAGNOSTICS)
-        )
-        handshake_replies = {"session.unsupported", "session.failed", "session.ready"}
+        budget = MAX_EPOCH_DIAGNOSTICS
         while True:
             try:
                 kind, payload = self._read_message(child, expired)
@@ -891,27 +912,6 @@ class JsonlAdapter:
                         ),
                     )
                 continue
-            if phase == "handshake":
-                if kind in handshake_replies:
-                    # Replies carry their own classification for start();
-                    # surface the raw payload through a sentinel observation
-                    # slot by returning it via the terminal path is wrong —
-                    # instead this branch is handled by _start_handshake,
-                    # which never reaches here.
-                    raise AssertionError(
-                        "handshake replies are handled by _start_handshake"
-                    )
-                return _ReadOutcome(
-                    observation=None,
-                    diagnostics=(),
-                    terminal=self._fail_runtime(
-                        at_ms,
-                        _PEER_LIFECYCLE,
-                        "the child answered session.hello with a message kind"
-                        " that is not a handshake reply",
-                        {"during": phase, "kind": kind},
-                    ),
-                )
             if kind == "observation":
                 process = payload.get("process")
                 if type(process) is dict and process.get("state") == "exited":

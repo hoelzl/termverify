@@ -53,7 +53,11 @@ import pytest
 
 from termverify._jsonl_pipe import FORCED_TERMINATION_SIGNAL, PipeJsonlChild
 from termverify.control import _MAX_LINE_BYTES, ControlProtocolError, parse_message
-from termverify.jsonl import JsonlChildClosedError, JsonlEndOfStreamError
+from termverify.jsonl import (
+    JsonlChildClosedError,
+    JsonlConcurrentReadError,
+    JsonlEndOfStreamError,
+)
 
 _OS_WAIT_TIMEOUT_S = 30.0
 _POLL_INTERVAL_S = 0.02
@@ -274,6 +278,101 @@ def test_release_only_close_of_a_live_child_is_refused() -> None:
         # After refusal and a real forced close, the close is settled:
         # a further close returns immediately.
         child.close(force=False)
+
+
+def test_second_concurrent_read_raises_the_bindings_own_error() -> None:
+    """A second in-flight read is a caller contract violation.
+
+    It must surface as the binding's own ``RuntimeError``, never as
+    ``JsonlChildClosedError`` — the adapter classifies the closed error as
+    a peer failure, which would pin a harness bug on the subject
+    (review 2026-07-24, section 4). The violated binding stays usable:
+    the first read still completes normally.
+    """
+    child = _spawn()
+    with _reaped(child):
+        child.read_line()
+        child.read_line()
+        child.read_line()
+        outcome: list[BaseException | None] = []
+        reader = threading.Thread(
+            target=lambda: outcome.append(_call_capturing(child.read_line))
+        )
+        reader.start()
+        # Arrangement: let the first read reach the blocking syscall so the
+        # second read is genuinely concurrent, not merely sequential.
+        time.sleep(_READ_ARRIVAL_S)
+        try:
+            with pytest.raises(JsonlConcurrentReadError, match="one in-flight read"):
+                child.read_line()
+        finally:
+            child.write_line(b"ping\n")
+            reader.join(timeout=_OS_WAIT_TIMEOUT_S)
+        assert not reader.is_alive(), "the first read was never unblocked"
+        assert outcome == [None], f"the first read failed: {outcome}"
+
+
+def test_read_racing_a_refused_release_only_close_never_sees_closed() -> None:
+    """A refused release-only close is invisible to a concurrent reader.
+
+    The refusal decision must happen before any closed state becomes
+    observable: a read racing the refused close either waits or succeeds,
+    but never fails with the binding's closed error (review 2026-07-24,
+    section 4: the transient ``_closed`` window). The child's liveness
+    poll is gated so the race is deterministic — private arrangement,
+    public evidence: the assertions are on ``read_line``'s and ``close``'s
+    public outcomes.
+    """
+    child = _spawn()
+    with _reaped(child):
+        child.read_line()
+        child.read_line()
+        child.read_line()
+        # The racing read's reply is already on its way before the race
+        # begins, so the reader returns promptly once allowed to proceed.
+        child.write_line(b"ping\n")
+        process = child._process  # noqa: SLF001 - gated-poll arrangement
+        assert process is not None
+        original_poll = process.poll
+        in_poll = threading.Event()
+        release_poll = threading.Event()
+
+        def gated_poll() -> int | None:
+            in_poll.set()
+            release_poll.wait(timeout=_OS_WAIT_TIMEOUT_S)
+            return original_poll()
+
+        process.poll = gated_poll  # type: ignore[method-assign]
+        try:
+            closer_outcome: list[BaseException | None] = []
+            closer = threading.Thread(
+                target=lambda: closer_outcome.append(
+                    _call_capturing(lambda: child.close(force=False))
+                )
+            )
+            closer.start()
+            assert in_poll.wait(timeout=_OS_WAIT_TIMEOUT_S)
+            reader_outcome: list[BaseException | None] = []
+            reader = threading.Thread(
+                target=lambda: reader_outcome.append(_call_capturing(child.read_line))
+            )
+            reader.start()
+            # Without the ordering fix the racing read fails immediately
+            # with the closed error; give it the arrival window, then let
+            # the refusal proceed.
+            time.sleep(_READ_ARRIVAL_S)
+            release_poll.set()
+            closer.join(timeout=_OS_WAIT_TIMEOUT_S)
+            reader.join(timeout=_OS_WAIT_TIMEOUT_S)
+        finally:
+            process.poll = original_poll  # type: ignore[method-assign]
+        assert not closer.is_alive() and not reader.is_alive()
+        assert isinstance(closer_outcome[0], RuntimeError), (
+            f"the release-only close was not refused: {closer_outcome}"
+        )
+        assert reader_outcome == [None], (
+            f"the racing read observed the refused close: {reader_outcome}"
+        )
 
 
 def test_release_only_close_of_an_exited_child_captures_the_record() -> None:
