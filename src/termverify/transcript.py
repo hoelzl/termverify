@@ -79,13 +79,27 @@ class TranscriptValidationError(ValueError):
 def _record_error(record: Record, message: str) -> TranscriptValidationError:
     """Attach the failing record's locator to a semantic rejection.
 
-    ``seq`` and ``kind`` are envelope-validated before any semantic pass
-    runs, so both are safe to echo; a rejection in a 10,000-record
-    transcript must be attributable to its record (review 2026-07-24,
-    section 4).
+    A rejection in a 10,000-record transcript must be attributable to its
+    record (review 2026-07-24, section 4). ``seq`` is envelope-validated
+    to equal the record's position before any semantic pass runs, and the
+    line locator is stated alongside it because the byte-level parse
+    errors count lines 1-based. ``kind``, by contrast, is only
+    guaranteed to be a non-empty string by the envelope — callers may
+    let this helper echo it only after the kind pass has constrained it
+    to the closed v1 vocabulary; the kind pass itself raises
+    position-only messages (an unknown kind is attacker-chosen text).
     """
+    sequence = cast(int, record["seq"])
     return TranscriptValidationError(
-        f"record {record['seq']} ({record['kind']}): {message}"
+        f"record {sequence} ({record['kind']}, line {sequence + 1}): {message}"
+    )
+
+
+def _record_position_error(record: Record, message: str) -> TranscriptValidationError:
+    """The kind-free locator for rejections of the kind itself."""
+    sequence = cast(int, record["seq"])
+    return TranscriptValidationError(
+        f"record {sequence} (line {sequence + 1}): {message}"
     )
 
 
@@ -116,8 +130,13 @@ def parse_transcript(data: bytes) -> list[Record]:
         _validate_json_nesting(line, number)
     try:
         records = [_parse_line(line, number) for number, line in enumerate(lines)]
-        for rule in _COMPAT_RULES:
-            rule(records)
+        added_bytes = sum(rule(records) for rule in _COMPAT_RULES)
+        if len(data) + added_bytes > _MAX_TRANSCRIPT_BYTES:
+            # Every wire line was verified byte-for-byte canonical, so the
+            # normalized transcript's canonical size is the wire size plus
+            # what the compat rules report having added; re-holding it to
+            # the ceiling keeps serialize(parse(x)) closed at the margin.
+            raise TranscriptValidationError("transcript bytes exceed the v1 limit")
         _validate_lifecycle(records)
         return records
     except RecursionError as error:
@@ -126,7 +145,7 @@ def parse_transcript(data: bytes) -> list[Record]:
         ) from error
 
 
-def _normalize_delivery_channel(records: list[Record]) -> None:
+def _normalize_delivery_channel(records: list[Record]) -> int:
     """Normalize the legacy bare delivery form to the canonical tagged form.
 
     Compat rule for the amendment of 2026-07-20 (channel-tagged delivery
@@ -141,26 +160,42 @@ def _normalize_delivery_channel(records: list[Record]) -> None:
     untouched. The rule therefore never relaxes acceptance: it only
     rewrites the bare form toward the canonical one.
 
-    The rewrite adds one value node after the wire-form budget checks
-    ran, so the normalized record is re-held to the per-record budgets
-    here: a bare-form record whose canonical form exceeds them is
-    rejected at parse, which closes the parse→serialize round-trip at
-    the margin (review 2026-07-24, section 4) — anything parse accepts,
-    serialize accepts.
+    The rewrite adds nodes and bytes after the wire-form budget checks
+    ran, so the normalized record is re-held to every per-record budget
+    here — the value budgets via ``_validate_json_value`` and the
+    canonical line-byte ceiling directly — and the bytes the rewrite
+    added are returned so the caller can re-hold the whole-transcript
+    ceiling too. A bare-form record whose canonical form exceeds any of
+    them is rejected at parse, which closes the parse→serialize
+    round-trip at the margin (review 2026-07-24, section 4): anything
+    parse accepts, serialize accepts.
     """
+    added_bytes = 0
     for record in records:
         if record["kind"] != "capability.result":
             continue
         payload = record["payload"]
-        if not isinstance(payload, dict):
+        if not isinstance(payload, dict) or payload.get("tier") != "delivered":
+            # A non-delivered result may not carry a delivery member at
+            # all; leaving it unrewritten lets validation state that
+            # instead of a budget message.
             continue
         delivery = payload.get("delivery")
         if isinstance(delivery, dict) and "channel" not in delivery:
+            before = len(_canonical_record(record))
             payload["delivery"] = {"channel": "spawn-env", **delivery}
-            _validate_json_value(record)
+            try:
+                _validate_json_value(record)
+            except TranscriptValidationError as error:
+                raise _record_error(record, str(error)) from error
+            line = len(_canonical_record(record))
+            if line > _MAX_LINE_BYTES:
+                raise _record_error(record, "line bytes exceed the v1 limit")
+            added_bytes += line - before
+    return added_bytes
 
 
-_COMPAT_RULES: tuple[Callable[[list[Record]], None], ...] = (
+_COMPAT_RULES: tuple[Callable[[list[Record]], int], ...] = (
     _normalize_delivery_channel,
 )
 
@@ -344,8 +379,10 @@ def _reject_duplicate_members(
             # This fires inside ``object_pairs_hook``, before the string
             # budgets apply, so the key is attacker-controlled up to the
             # line ceiling and may embed control/ANSI bytes. Echo only a
-            # bounded, escaped excerpt (review 2026-07-24, section 4).
-            excerpt = repr(key[:40]) + ("…" if len(key) > 40 else "")
+            # bounded, escaped excerpt (review 2026-07-24, section 4);
+            # ``ascii`` escapes non-ASCII too, and the second slice
+            # bounds the escape expansion itself.
+            excerpt = ascii(key[:40])[:96] + ("..." if len(key) > 40 else "")
             raise TranscriptValidationError(f"duplicate JSON member: {excerpt}")
         result[key] = value
     return result
@@ -360,7 +397,8 @@ def _validate_envelope(record: Record, sequence: int) -> None:
         not key.startswith("x-") and key not in required for key in record
     ):
         raise TranscriptValidationError(
-            f"record {sequence}: record has invalid envelope members"
+            f"record {sequence} (line {sequence + 1}): record has invalid"
+            " envelope members"
         )
     if (
         record["protocol"] != _PROTOCOL
@@ -369,24 +407,27 @@ def _validate_envelope(record: Record, sequence: int) -> None:
         or record["seq"] != sequence
     ):
         raise TranscriptValidationError(
-            f"record {sequence}: record protocol or sequence is invalid"
+            f"record {sequence} (line {sequence + 1}): record protocol or"
+            " sequence is invalid"
         )
     if not all(
         isinstance(record[key], str) and record[key] for key in ("run_id", "id", "kind")
     ):
         raise TranscriptValidationError(
-            f"record {sequence}: record identifiers and kind must be non-empty strings"
+            f"record {sequence} (line {sequence + 1}): record identifiers and"
+            " kind must be non-empty strings"
         )
     if any(
         _IDENTIFIER_PATTERN.fullmatch(cast(str, record[key])) is None
         for key in ("run_id", "id")
     ):
         raise TranscriptValidationError(
-            f"record {sequence}: record identifier grammar is invalid"
+            f"record {sequence} (line {sequence + 1}): record identifier"
+            " grammar is invalid"
         )
     if not isinstance(record["payload"], dict):
         raise TranscriptValidationError(
-            f"record {sequence}: record payload must be an object"
+            f"record {sequence} (line {sequence + 1}): record payload must be an object"
         )
 
 
@@ -394,9 +435,12 @@ def _validate_record_kinds_and_payload_members(records: list[Record]) -> None:
     for record in records:
         kind = record["kind"]
         if kind not in _RECORD_KINDS:
+            # The unknown kind is precisely the attacker-chosen case: it
+            # must not be echoed (the same flood-and-inject vector as the
+            # duplicate-member key); the position alone is attributable.
             if isinstance(kind, str) and kind.startswith("input."):
-                raise _record_error(record, "input kind is not defined by v1")
-            raise _record_error(record, "record kind is not defined by v1")
+                raise _record_position_error(record, "input kind is not defined by v1")
+            raise _record_position_error(record, "record kind is not defined by v1")
         payload = record["payload"]
         if (
             isinstance(kind, str)
@@ -806,13 +850,13 @@ def _validate_inputs(records: list[Record], manual_time: int) -> None:
             raise _record_error(
                 record, "input.clipboard_set requires a string text member"
             )
-        if record["kind"] == "input.key":
+        if kind == "input.key":
             keys = input_payload.get("keys")
             if not is_key_chord(keys):
                 raise _record_error(
                     record, "input.key requires one canonical termverify.key/v1 chord"
                 )
-        if record["kind"] == "input.resize":
+        if kind == "input.resize":
             dimensions = (input_payload.get("columns"), input_payload.get("rows"))
             if not all(
                 isinstance(value, int) and not isinstance(value, bool) and value > 0
@@ -821,7 +865,7 @@ def _validate_inputs(records: list[Record], manual_time: int) -> None:
                 raise _record_error(
                     record, "input.resize requires positive columns and rows"
                 )
-        if record["kind"] == "input.mouse":
+        if kind == "input.mouse":
             action = input_payload.get("action")
             coordinates = (input_payload.get("column"), input_payload.get("row"))
             if (
@@ -860,9 +904,8 @@ def _validate_diagnostics(records: list[Record]) -> None:
     for record in records:
         if record["kind"] != "diagnostic":
             continue
-        diagnostic_payload = record["payload"]
-        if not isinstance(diagnostic_payload, dict):
-            raise _record_error(record, "diagnostic payload must be an object")
+        # The envelope pass guaranteed the payload is an object.
+        diagnostic_payload = cast(dict[str, JsonValue], record["payload"])
         diagnostic_time = diagnostic_payload.get("at_ms")
         if (
             not isinstance(diagnostic_time, int)
@@ -883,9 +926,8 @@ def _validate_observations(
     for record in records:
         if record["kind"] != "observation":
             continue
-        observation_payload = record["payload"]
-        if not isinstance(observation_payload, dict):
-            raise _record_error(record, "observation payload must be an object")
+        # The envelope pass guaranteed the payload is an object.
+        observation_payload = cast(dict[str, JsonValue], record["payload"])
         observation_time = observation_payload.get("at_ms")
         if (
             not isinstance(observation_time, int)

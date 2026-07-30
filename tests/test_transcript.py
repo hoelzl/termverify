@@ -1573,18 +1573,86 @@ def test_duplicate_member_error_truncates_the_attacker_controlled_key() -> None:
 
 
 def test_semantic_rejections_name_the_failing_record() -> None:
-    """A semantic rejection names the failing record's seq and kind, so a
-    rejection in a 10,000-record transcript is attributable (review
-    2026-07-24, section 4)."""
+    """A semantic rejection names the failing record's seq, kind, and
+    1-based line, so a rejection in a 10,000-record transcript is
+    attributable in either coordinate system (review 2026-07-24,
+    section 4)."""
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
     payload = transcript[INPUT_INDEX]["payload"]
     assert isinstance(payload, dict)
     payload["at_ms"] = 999
 
     with pytest.raises(
-        TranscriptValidationError, match=rf"record {INPUT_INDEX} \(input\."
+        TranscriptValidationError,
+        match=rf"record {INPUT_INDEX} \(input\..*, line {INPUT_INDEX + 1}\)",
     ):
         serialize_transcript(transcript)
+
+
+def test_unknown_kind_rejection_does_not_echo_the_kind() -> None:
+    """An unknown kind is attacker-chosen text up to the string budget:
+    the rejection names the position only — bounded, exact, and free of
+    the kind's bytes (PR #262 review round 1, C1)."""
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    transcript[INPUT_INDEX]["kind"] = "\x1b[2J" + "A" * 500_000
+
+    with pytest.raises(TranscriptValidationError) as excinfo:
+        serialize_transcript(transcript)
+
+    assert str(excinfo.value) == (
+        f"record {INPUT_INDEX} (line {INPUT_INDEX + 1}):"
+        " record kind is not defined by v1"
+    )
+
+
+def _sized_bare_delivery_wire(target_line_bytes: int) -> bytes:
+    """Wire bytes whose bare-delivery record line is *target_line_bytes*.
+
+    Control characters encode as six-byte ``\\u00xx`` escapes, so the pad
+    reaches multi-mebibyte canonical lines while staying far inside the
+    decoded string budgets.
+    """
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[1]["payload"]
+    assert isinstance(payload, dict)
+    payload["tier"] = "delivered"
+    payload["delivery"] = {"env": {"TERMVERIFY_SEED": "0"}}
+    payload["x-pad"] = ""
+
+    def line_bytes() -> int:
+        return len(
+            json.dumps(
+                transcript[1], ensure_ascii=False, separators=(",", ":"), sort_keys=True
+            ).encode()
+        )
+
+    payload["x-pad"] = "\x01" * ((target_line_bytes - line_bytes()) // 6)
+    payload["x-pad"] = cast(str, payload["x-pad"]) + "a" * (
+        target_line_bytes - line_bytes()
+    )
+    assert line_bytes() == target_line_bytes
+    return _bare_delivery_wire(transcript)
+
+
+def test_compat_normalization_at_the_line_byte_ceiling_rejects_at_parse() -> None:
+    """The 22 canonical bytes the rewrite adds are re-held to the line
+    ceiling: a bare-form record at exactly the wire line limit rejects at
+    parse instead of parsing and failing to serialize (PR #262 review
+    round 1, C2)."""
+    data = _sized_bare_delivery_wire(4 * 1024 * 1024)
+
+    with pytest.raises(TranscriptValidationError, match="line bytes exceed"):
+        parse_transcript(data)
+
+
+def test_compat_normalization_below_the_line_byte_ceiling_round_trips() -> None:
+    """At wire limit minus the 22 added bytes, the normalized line lands
+    exactly on the ceiling and the accepted transcript round-trips."""
+    data = _sized_bare_delivery_wire(4 * 1024 * 1024 - 22)
+
+    parsed = parse_transcript(data)
+
+    assert parse_transcript(serialize_transcript(parsed)) == parsed
 
 
 def test_transcript_accepts_value_nodes_at_v1_limit() -> None:

@@ -78,35 +78,40 @@ def test_canonical_invalid_lifecycle_fixture_is_rejected(
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [
-        ("record-kind", "record 9 (future.record): record kind is not defined by v1"),
+        ("record-kind", "record 9 (line 10): record kind is not defined by v1"),
         (
             "run-identity",
-            "record 1 (capability.result): record run_id or id is invalid",
+            "record 1 (capability.result, line 2): record run_id or id is invalid",
         ),
         ("run-config", "run.started seed is invalid"),
         ("terminal", "run.finished exit is invalid"),
         ("negotiation", "capability results are out of order"),
         (
             "input",
-            "record 9 (input.text): input at_ms does not match the manual clock",
+            "record 9 (input.text, line 10): input at_ms does not match the"
+            " manual clock",
         ),
-        ("diagnostic", "record 10 (diagnostic): diagnostic payload is invalid"),
+        (
+            "diagnostic",
+            "record 10 (diagnostic, line 11): diagnostic payload is invalid",
+        ),
         (
             "observation",
-            "record 10 (observation): observation ui focus is not a region",
+            "record 10 (observation, line 11): observation ui focus is not a region",
         ),
         (
             "execution-epoch",
-            "record 10 (input.text): input epoch must close before another input",
+            "record 10 (input.text, line 11): input epoch must close before"
+            " another input",
         ),
         (
             "evidence-time",
-            "record 10 (observation): at_ms does not match the manual clock",
+            "record 10 (observation, line 11): at_ms does not match the manual clock",
         ),
         (
             "exit-coherence",
-            "record 10 (observation): observation process exit does not match"
-            " run.finished exit",
+            "record 10 (observation, line 11): observation process exit does"
+            " not match run.finished exit",
         ),
     ],
 )
