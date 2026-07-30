@@ -108,11 +108,11 @@ allowing integer rounding to absorb a regression.
 - **Unit:** pure normalization, comparison, protocol, and replay behavior.
 - **Property:** Hypothesis strategies in this repository's own suite generate
   legal and illegal transcript and interaction sequences
-  (`tests/test_transcript_lifecycle.py`). No state-machine or model-based
+  (e.g. `tests/test_transcript_lifecycle.py`). No state-machine or model-based
   runner exists; TermVerify-shipped property harnesses are `[planned]`.
 - **Integration:** adapters running an application in process or subprocess mode.
 - **PTY/end-to-end (Windows only today):** actual terminal input/output and
-  semantic screen observations through the ConPTY adapter; a POSIX PTY adapter
-  is `[planned]`.
+  normalized rendered-screen evidence through the ConPTY adapter; a POSIX PTY
+  adapter is `[planned]`.
 
 PTY tests must tolerate Windows and CI differences deliberately. A direct adapter remains the fast default; PTY support is required for production-fidelity scenarios, not for every unit test — and it exists only on Windows today.

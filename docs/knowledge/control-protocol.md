@@ -157,7 +157,7 @@ correlation contract rather than wall-clock quiet-window polling.
 | --- | --- | --- |
 | `run_id` | string | The run identifier, lowercase ASCII letters, digits, `.`, `_`, `-`; non-empty. |
 | `config` | object | The requested deterministic constraints, exactly the `termverify.transcript/v1` `run.started.payload.config` shape (seed as a decimal string, clock mode and initial milliseconds, locale, timezone, terminal, filesystem, network). |
-| `at_ms` | integer | The initial manual time in milliseconds, exactly `config.clock.initial_ms`. The codec checks only that it is an integer; the equality is a producer obligation. |
+| `at_ms` | integer | The initial manual time in milliseconds, exactly `config.clock.initial_ms`. The codec checks only that it is a non-negative integer; the equality is a producer obligation. |
 
 The child must treat the configuration as non-negotiable: it may refuse
 (`session.unsupported`) or fail (`session.failed`), never reply with
@@ -210,7 +210,7 @@ different effective values.
 | `ui` | object | `{"regions": [...], "focus": string \| null, "cursor": {"column", "row", "visible"}, "mode": string \| null}` — the structured UI observation, same shape as the contract's `UiObservation` value (regions carry `id`, `role`, `column`, `row`, `columns`, `rows`; ids are unique; focus names a region). |
 | `events` | array | Zero or more `{"type": non-empty string, "data": JSON value}` entries in application emission order. |
 | `frame` | object or absent | `{"lines": array of strings, "columns", "rows"}` with `lines.length == rows`; the subject's rendered surface, if it has one. |
-| `process` | object or absent | `{"state": "running"}` or `{"state": "exited", "exit": <exit record>}`. A child-sent `observation` must never carry exited-process evidence: the adapter rejects it as a peer-lifecycle failure in every position (readiness, epoch, and stop drain), observes the real exit at the OS boundary, and synthesizes the exited-process observation itself. The codec accepts the shape; the positional rule is the adapter's. |
+| `process` | object or absent | `{"state": "running"}` or `{"state": "exited", "exit": <exit record>}`. A child-sent `observation` must never carry exited-process evidence. In `session.ready` the codec itself rejects it, surfacing as `peer-malformed`; in the epoch and stop-drain positions the codec accepts the shape and the adapter rejects it as `peer-lifecycle`. The adapter observes the real exit at the OS boundary and synthesizes the exited-process observation itself. |
 
 An exit record is `{"kind": "code", "value": integer}` or
 `{"kind": "signal", "value": non-empty string}` — the transcript

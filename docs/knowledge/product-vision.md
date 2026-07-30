@@ -13,7 +13,7 @@ Terminal applications are often tested only through internal unit tests or fragi
 
 TermVerify is a reusable toolkit of contracts and runners for deterministic terminal interaction, structured observation, replay, and comparison. It is intended for games, editors, shells, dashboards, and other TUIs.
 
-This document is the **single source** for scope that does not exist yet. Nothing below is a complete current capability — each planned entry states plainly which parts exist; `README.md` lists the current capabilities, and links here for the rest.
+This document is the **single source** for scope that does not exist yet. Nothing below is a complete current capability — entries note plainly where partial machinery exists; `README.md` lists the current capabilities, and links here for the rest.
 
 Other documents may *name* a planned item and link here — the README does, and [the verification model](verification-model.md) marks the layers and oracle types it describes `[planned]` — but the description, the rationale, and the sequencing live here and are not restated. That split exists because it failed once: the 2026-07-24 adversarial review found four of six README capabilities promised in the present tense with nothing in `src/` behind them (finding P5).
 
@@ -66,6 +66,10 @@ Running the same script against two adapters — direct versus terminal, or a su
 ## Metamorphic oracles
 
 Checking that an equivalent transformation of a run preserves a specified outcome — the same script at a different terminal size, or with equivalent input encodings. [The verification model](verification-model.md) lists this as an oracle type; nothing in `src/` supplies the transformation or the metamorphic equivalence relation. Shares the generator infrastructure with property testing above.
+
+## State save/restore persistence
+
+[The verification model](verification-model.md) lists a persistence oracle — save/load preserves canonical semantic state — as `[planned]`. No save or restore operation exists anywhere: the adapter surface is exactly start, dispatch, advance clock, and stop, and no input kind or transcript record captures a save or a load. The oracle needs those operations first, and the operations wait on a driving use case — a subject with real save/load semantics exercised through an adapter, which the vertical slice above is meant to surface.
 
 ## Failure minimization
 
