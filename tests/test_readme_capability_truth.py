@@ -99,6 +99,11 @@ _DEFERRED_GUARDS: dict[str, tuple[str, ...]] = {
     "Reviewed golden snapshots": (r"golden", r"baseline\w*", r"snapshot\w*"),
     "Differential testing": (r"differential",),
     "Metamorphic oracles": (r"metamorphic",),
+    "State save/restore persistence": (
+        r"save[/ -]restore",
+        r"save[/ -]load",
+        r"persistence oracle\w*",
+    ),
     "Failure minimization": (r"minimization", r"minimiz\w*ing", r"shrink\w*"),
     "CI artifacts and reports": (r"ci artifact\w*", r"artifact\w*"),
 }

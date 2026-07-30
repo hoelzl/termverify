@@ -75,6 +75,7 @@ truthful and never over-claims — the run is more constrained than the
 receipt asserts, never less — so the closed `termverify.enforcement-tier/v1`
 vocabulary has no separate no-reach tier. An application that can prove
 zero reach (for example by a guarded import or a static capability audit)
-may record the stronger claim in a `diagnostic` record or an `x-` member on
-the receipt; both are non-oracle evidence and change nothing about
-negotiation.
+may record the stronger claim in a `diagnostic` record; it is non-oracle
+evidence and changes nothing about negotiation. (The wire protocol also
+tolerates an `x-` member on a `capability.result` payload, but the Python
+receipt types carry no extension member, so no adapter API produces one.)

@@ -25,26 +25,30 @@ planned items are sequenced the way they are is in
 A golden master is optional, never the only oracle.
 
 - **Semantic:** explicit expected state/event assertions.
-- **Replay:** a stored action transcript produces the approved outcome.
+- **Replay:** a stored action transcript reproduces the recorded outcome.
 - **Property:** generated input preserves invariants. `[planned]`
 - **Differential:** candidate and reference agree after normalization. `[planned]`
 - **Metamorphic:** an equivalent transformation preserves a specified outcome. `[planned]`
 - **Snapshot:** a reviewed normalized UI observation remains stable. `[planned]`
-- **Persistence:** save/load preserves canonical semantic state.
+- **Persistence:** save/load preserves canonical semantic state. `[planned]`
 
 `[planned]` marks an oracle TermVerify does not yet supply machinery for. The
-unmarked ones need no machinery beyond what ships: semantic and persistence
-oracles are ordinary assertions over observations, and replay is
-`termverify.replay`.
+unmarked ones need no machinery beyond what ships: semantic oracles are
+ordinary assertions over observations, and replay is `termverify.replay`. A
+persistence oracle additionally needs save/load operations on the adapter
+surface, which do not exist yet.
 
 # Baseline governance
 
-For baselines committed to the TermVerify repository, changed snapshots or
+For baselines committed to the TermVerify repository, changed baseline files or
 approved divergences are behavioral changes. They need a readable diff,
 rationale, and explicit human review. Review may be independent or, while the
-repository has one maintainer, an explicitly recorded maintainer self-review;
-CI detects unapproved changes but does not create approval. This repository
-policy does not prescribe baseline governance for downstream projects.
+repository has one maintainer, an explicitly recorded maintainer self-review.
+The evidence-governance validator — run by local pre-commit and by CI — rejects
+a baseline whose approval or readable-diff records do not match; it never
+creates approval. No baseline files are committed today, and the snapshot layer
+above is `[planned]`. This repository policy does not prescribe baseline
+governance for downstream projects.
 
 The accepted [evidence-governance policy](evidence-governance.md) defines the
 redaction, capture, metadata, and validation controls that must be accepted and

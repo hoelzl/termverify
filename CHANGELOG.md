@@ -101,9 +101,6 @@ and folded into this file by `scripts/collect_changelog.py` at release time.
   the wire-protocol version is unchanged. This exception does not set a
   precedent: any future change to registry membership, meaning, or spelling
   requires a new registry version per `docs/knowledge/protocol.md`.
-=======
-Unreleased changes are collected as fragment files in [`changelog.d/`](changelog.d/)
-and folded into this file by `scripts/collect_changelog.py` at release time.
 
 - Made pre-push failures fast and diagnosable (issue #168): the pre-push
   stage now runs the cheap checks first (mypy, distribution build) and the

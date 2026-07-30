@@ -8,9 +8,10 @@ owner-reviewed completion state recorded in the active handover under
 
 ## Preconditions
 
-1. `main` is green: the full validation gate in `AGENTS.md` passes, including
-   the coverage ratchet, workflow-security, and dependency-vulnerability
-   checks.
+1. `main` is green: the full validation gate in `AGENTS.md` passes (including
+   the coverage ratchet), and the CI-only `Security` workflow checks —
+   workflow security (zizmor) and dependency vulnerabilities (OSV-Scanner) —
+   are green on the release commit.
 2. `CHANGELOG.md` has an accurate section for the new version: every breaking
    change carries a migration note, and no unreleased behavior is described as
    released.

@@ -1,8 +1,9 @@
 # Adapter-Author Surface
 
 External subjects implement the TermVerify producer contract: an `Adapter`
-drives a run, `ConstraintPorts` enforces the requested constraints, and (for
-the in-process path) `DirectApplication` executes input and clock epochs. The
+drives a run, `ConstraintPorts` applies the requested constraints and states
+each receipt's enforcement tier, and (for the in-process path)
+`DirectApplication` executes input and clock epochs. The
 curated public surface for that work is the top-level `termverify` package:
 every contract name is re-exported there and is identical to its module-path
 definition, so both import styles are interchangeable.
@@ -57,10 +58,12 @@ underscore path.
 - **Observations and evidence values**: `Observation`, `UiObservation`,
   `ProcessObservation`, `Frame`, `Cursor`, `Region`, `Event`, `Diagnostic`.
 - **Supporting types**: `ConstraintName`, `JsonInput`, `FrozenJsonValue`,
-  `freeze_json`, the package version string `__version__`, and the
+  `freeze_json`, the package version string `__version__`, the
   transcript-schema access API (`TRANSCRIPT_SCHEMA_V1_ID`,
-  `transcript_schema_v1_bytes`, `transcript_schema_v1_json`,
-  `persist_transcript_evidence`).
+  `transcript_schema_v1_bytes`, `transcript_schema_v1_json`), and safe
+  evidence persistence (`persist_transcript_evidence`, the surface's only
+  transcript-writing function; only `mode="safe"` persists —
+  `mode="sensitive"` raises).
 - **The authoritative transcript codec**: `parse_transcript`,
   `serialize_transcript`, and `TranscriptValidationError`. These decide
   `termverify.transcript/v1` acceptance; the schema access API above is a
@@ -75,8 +78,9 @@ underscore path.
   from `termverify.key/v1`, and `encode_key_chord` from
   `termverify.key-encoding/v1`. Use `is_key_chord` to validate a chord
   before putting it in a `KeyInput`, and `encode_key_chord` when your
-  adapter drives a real terminal — it returns the xterm-legacy bytes, or
-  `None` for the explicit fail-closed verdict *unencodable*. Both functions
+  adapter drives a real terminal — it returns the xterm-legacy encoding as a
+  `str` (encode it yourself for a byte channel), or `None` for the explicit
+  fail-closed verdict *unencodable*. Both functions
   take a chord by **exact type**: a `list` or `tuple` of `str`, matching the
   codec's fail-closed discipline. A `NamedTuple` of key names or any other
   `Sequence` is rejected even when the names it carries are valid, and

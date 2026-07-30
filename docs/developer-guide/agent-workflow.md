@@ -5,10 +5,10 @@ TermVerify is developed so that human developers and autonomous coding agents ca
 ## Tight loop
 
 1. **Orient:** read `AGENTS.md`, the smallest relevant knowledge pages, and executable sources of truth.
-2. **Specify:** express one observable behavior as a unit test, property, transcript, or semantic snapshot expectation.
+2. **Specify:** express one observable behavior as a unit test, property, or transcript expectation; semantic snapshot expectations are `[planned]` (see the evidence hierarchy below).
 3. **Red:** run it and observe the expected failure.
 4. **Green:** make the minimum implementation change.
-5. **Exercise:** drive the application through the appropriate adapter; use PTY mode when the user-facing terminal path is relevant.
+5. **Exercise:** drive the application through the appropriate adapter; use the ConPTY adapter (Windows-only today) when the user-facing terminal path is relevant — no POSIX PTY adapter exists yet.
 6. **Review:** inspect diffs and reports, then run the wider quality gate.
 7. **Preserve:** turn every discovered bug into durable, replayable evidence.
 
