@@ -150,8 +150,9 @@ classification permits protocol fixtures to exercise synthetic text, state,
 events, and frames without treating a repository path alone as proof that
 captured evidence is public.
 
-`tests/fixtures/baselines/` remains governed by the approval records below.
-Repository `artifacts/` and `reports/` roots and every GitHub Actions
+`tests/fixtures/baselines/` is the designated baseline root; it is currently
+absent, and any baseline added there becomes subject to the approval records
+below. Repository `artifacts/` and `reports/` roots and every GitHub Actions
 `actions/upload-artifact` step remain rejected until separately enabled.
 
 ## Baseline proposal and approval
@@ -162,8 +163,10 @@ downstream projects using TermVerify. Downstream projects retain ownership of
 their own baseline governance; future reusable tooling must keep those policies
 configurable.
 
-No baseline files are committed until this design is accepted and its validator
-is implemented. The designated baseline root is `tests/fixtures/baselines/`.
+The design is accepted and its validator is implemented, but committed
+baselines remain disabled pending their separate reviewed enablement boundary
+(see the status header above); no baseline files are committed today. The
+designated baseline root is `tests/fixtures/baselines/`.
 Once enabled, every baseline under that root must have a nearby
 `<baseline-name>.approval.json` sidecar and `<baseline-name>.review.md`
 readable-diff record. V1 baselines are UTF-8 text without a byte-order mark,

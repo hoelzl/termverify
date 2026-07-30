@@ -535,9 +535,11 @@ observation's regions.
 are optional evidence layers. When present, `frame` is
 `{"lines": [string, ...], "columns": positive integer, "rows": positive integer}`
 with `len(lines) == rows`; `process` is `{"state": "running"}` or
-`{"state": "exited", "exit": <run.finished exit object>}`. A comparator
-evaluates `state` and `events` before optional rendering evidence; a matching
-frame cannot conceal a domain mismatch. Application-specific values belong
+`{"state": "exited", "exit": <run.finished exit object>}`. The shipped
+comparator compares whole record payloads by exact canonical equality, so a
+`frame` difference and a `state` difference are both reported and a matching
+frame cannot conceal a domain mismatch; it does not rank domain evidence above
+rendering evidence. Application-specific values belong
 under documented `x-` members or a registered normalizer, not under new generic
 v1 member names.
 

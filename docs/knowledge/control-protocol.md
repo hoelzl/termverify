@@ -66,8 +66,10 @@ attaches to it.
 
 ## Fixed v1 resource limits
 
-The codec enforces the same fixed, protocol-owned ceilings as the
-transcript protocol's per-record budgets. They do not inherit
+The protocol owns the same fixed ceilings as the transcript protocol's
+per-record budgets. The codec enforces the six per-message ceilings; the
+two diagnostic-count ceilings are protocol-owned constants declared by
+the codec and counted by the driving adapter. None of them inherit
 interpreter recursion settings, host memory, or ambient configuration:
 
 | Resource | V1 maximum | Counting rule |
@@ -155,7 +157,7 @@ correlation contract rather than wall-clock quiet-window polling.
 | --- | --- | --- |
 | `run_id` | string | The run identifier, lowercase ASCII letters, digits, `.`, `_`, `-`; non-empty. |
 | `config` | object | The requested deterministic constraints, exactly the `termverify.transcript/v1` `run.started.payload.config` shape (seed as a decimal string, clock mode and initial milliseconds, locale, timezone, terminal, filesystem, network). |
-| `at_ms` | integer | The initial manual time in milliseconds, exactly `config.clock.initial_ms`. |
+| `at_ms` | integer | The initial manual time in milliseconds, exactly `config.clock.initial_ms`. The codec checks only that it is an integer; the equality is a producer obligation. |
 
 The child must treat the configuration as non-negotiable: it may refuse
 (`session.unsupported`) or fail (`session.failed`), never reply with
@@ -195,7 +197,7 @@ different effective values.
 | Kind | Payload members | Meaning |
 | --- | --- | --- |
 | `input.text` | `text`: string | Literal text input. |
-| `input.key` | `keys`: array of strings | One canonical `termverify.key/v1` semantic chord. The child is a structured peer: no `termverify.key-encoding/v1` byte encoding is involved. |
+| `input.key` | `keys`: array of strings | One canonical `termverify.key/v1` semantic chord. The codec checks only a non-empty array of strings; chord validity is a producer obligation here, unlike `termverify.transcript/v1`, whose codec validates it. The child is a structured peer: no `termverify.key-encoding/v1` byte encoding is involved. |
 | `input.resize` | `columns`, `rows`: positive integers | Terminal dimension change. |
 | `input.clock` | `at_ms`: non-negative integer | The manual time the subject must treat as current from this epoch onward. The epoch opens at this time; it is the prior manual time plus the advance, and the first advance starts from the negotiated initial time. |
 | `input.stop` | *(empty object)* | Request a cooperative shutdown; the drain epoch follows. |
@@ -208,7 +210,7 @@ different effective values.
 | `ui` | object | `{"regions": [...], "focus": string \| null, "cursor": {"column", "row", "visible"}, "mode": string \| null}` — the structured UI observation, same shape as the contract's `UiObservation` value (regions carry `id`, `role`, `column`, `row`, `columns`, `rows`; ids are unique; focus names a region). |
 | `events` | array | Zero or more `{"type": non-empty string, "data": JSON value}` entries in application emission order. |
 | `frame` | object or absent | `{"lines": array of strings, "columns", "rows"}` with `lines.length == rows`; the subject's rendered surface, if it has one. |
-| `process` | object or absent | `{"state": "running"}` or `{"state": "exited", "exit": <exit record>}`. An exited process observation is valid only in a terminal epoch's closing observation. |
+| `process` | object or absent | `{"state": "running"}` or `{"state": "exited", "exit": <exit record>}`. A child-sent `observation` must never carry exited-process evidence: the adapter rejects it as a peer-lifecycle failure in every position (readiness, epoch, and stop drain), observes the real exit at the OS boundary, and synthesizes the exited-process observation itself. The codec accepts the shape; the positional rule is the adapter's. |
 
 An exit record is `{"kind": "code", "value": integer}` or
 `{"kind": "signal", "value": non-empty string}` — the transcript
@@ -247,7 +249,7 @@ never diagnostics:
 | `handshake-timeout` | The abort deadline expired before the child completed the handshake reply — or before `session.hello` could be written to it, which a subject that never reads its stdin causes. The `during` detail distinguishes the two (`read` or `write`). |
 | `peer-malformed` | A child message is not a valid v1 message: malformed JSON, wrong protocol tag, unknown kind, missing or misspelled required member, non-`x-` extension violation, or a resource-limit breach. |
 | `peer-lifecycle` | A structurally valid message arrives out of lifecycle position: traffic before `session.hello` could only be a race on reused pipes, a second readiness, an observation with no epoch open, an input's closing message never arriving before the next input, or traffic after a terminal message. |
-| `epoch-timeout` | The abort deadline expired with an epoch open: either no closing observation or terminal message arrived in time, or the epoch's input could not be written to the child at all — a subject that stops reading its stdin blocks the write once the pipe buffer fills. The `during` detail says which (`read` or `write`), because "the reply never came" and "the input never arrived" are different facts about the subject. The deadline is host abort policy, not evidence. When the deadline expiry forces the adapter to terminate the child tree, the forced-termination exit record is disclosed as such in the terminal result. |
+| `epoch-timeout` | The abort deadline expired with an epoch open: either no closing observation or terminal message arrived in time, or the epoch's input could not be written to the child at all — a subject that stops reading its stdin blocks the write once the pipe buffer fills. The `during` detail says which (`read` or `write`), because "the reply never came" and "the input never arrived" are different facts about the subject. The deadline is host abort policy, not evidence. When the deadline expiry forces the adapter to terminate the child tree, the terminal result is a `run.failed` carrying the abort deadline, phase, and `during` details and no exit record: a deadline abort discloses no exit evidence. |
 
 Subject-reported failures arrive as `session.failed` or `run.failed`
 messages and keep the subject's own error codes.

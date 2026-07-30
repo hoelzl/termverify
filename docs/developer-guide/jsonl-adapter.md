@@ -24,6 +24,8 @@ The adapter speaks to any `JsonlChildPort`; the concrete wiring lives in the
 private `termverify._jsonl_pipe` module:
 
 ```python
+import sys
+
 from termverify.cooperation import CooperationConstraintPorts
 from termverify.jsonl import JsonlAdapter, JsonlBinding
 

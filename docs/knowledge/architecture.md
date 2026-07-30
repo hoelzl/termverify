@@ -42,7 +42,7 @@ accepted boundary.
 
 # Boundary
 
-Applications expose a small adapter surface: start a deterministic run, dispatch an input event, advance an explicit clock, observe structured state/UI evidence, optionally save/restore state, and stop.
+Applications expose a small adapter surface: start a deterministic run, dispatch an input event, advance an explicit clock, observe structured state/UI evidence, and stop. State save/restore is not part of the adapter surface.
 
 Phase 1 serializes that surface into single-flight execution epochs. Complete
 capability negotiation is followed by one positional initial readiness
