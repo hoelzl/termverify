@@ -52,6 +52,19 @@ jobs:
           echo "tag=$tag"         >> "$GITHUB_OUTPUT"
           echo "Resolved in-tree version: $version (tag $tag)"
 
+          # Manual .dev0 marker scheme (issue #203): main carries the next
+          # planned version with a dev marker between releases, and the
+          # post-release re-bump commit also starts with "Bump version" —
+          # a dev-marked version is never releasable, on either the branch
+          # or the fallback tag path.
+          case "$version" in
+            *.dev*)
+              echo "In-tree version $version carries the dev marker — never released."
+              echo "release=false" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
+
           tag_exists() { git ls-remote --tags origin "refs/tags/$tag" | grep -q .; }
 
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then

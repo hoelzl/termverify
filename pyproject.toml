@@ -1,6 +1,6 @@
 [project]
 name = "termverify"
-version = "0.1.1"
+version = "0.2.0.dev0"
 description = "Protocol-driven verification for autonomous terminal applications."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -129,7 +129,7 @@ module = "termverify._jsonl_pipe"
 warn_unreachable = false
 
 [tool.bumpversion]
-current_version = "0.1.1"
+current_version = "0.2.0.dev0"
 commit = true
 # No local tag: the Release workflow (.github/workflows/release.yml) creates the
 # authoritative vX.Y.Z tag on the server *after* the CI-green gate, so a red
@@ -138,7 +138,25 @@ commit = true
 # uses; it is inert while tag = false.)
 tag = false
 tag_name = "v{new_version}"
-commit_message = "Bump version {current_version} → {new_version}"
+# The key is `message`: the previously configured `commit_message` was
+# silently ignored and the tool's default ("Bump version: X → Y", with a
+# colon) shipped instead (PR #264 review, I1). The Release workflow keys
+# on the "Bump version" prefix, which both forms carry; this makes the
+# produced message match the documented one.
+message = "Bump version {current_version} → {new_version}"
+# Manual .dev0 marker scheme (owner decision 2026-07-24, review Slice 8.4):
+# main always carries the next planned version with a `.dev0` marker, so the
+# release commit is `bump-my-version bump pre` — a real strip commit
+# (`X.Y.Z.dev0 → X.Y.Z`), never a degenerate same-version bump — and the
+# post-release step (`bump minor`/`patch`/`major`) chooses the next planned
+# version and restores the marker in one commit. The Release workflow
+# refuses to release any version carrying the marker.
+parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)(\\.(?P<pre>dev0))?"
+serialize = ["{major}.{minor}.{patch}.{pre}", "{major}.{minor}.{patch}"]
+
+[tool.bumpversion.parts.pre]
+values = ["dev0", "final"]
+optional_value = "final"
 
 [[tool.bumpversion.files]]
 # pyproject.toml is the single version source of truth: [project] version is

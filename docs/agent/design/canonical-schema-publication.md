@@ -118,6 +118,23 @@ only a mirror of committed content.
 - **Identifier-first.** The `$id` remains primarily an identifier.
   Consumers must treat resolution as a convenience; documentation must not
   instruct anyone to fetch schemas at validation time.
+- **Domain hijack surface (recorded 2026-07-30, review Slice 8.4 / issue
+  #203).** `termverify.dev` is a single owner-registered domain; a
+  registration lapse or registrar/DNS-account compromise would let a third
+  party serve arbitrary bytes at every published `$id`. The recorded
+  mitigation posture is the design itself, not monitoring machinery: the
+  library never fetches the `$id`, no gate depends on the domain, the
+  packaged resource is the only validation source, and schema acceptance is
+  not conformance — so a hijacked domain can mislead only a consumer who
+  ignores the identifier-first rule. Residual exposure is documentation
+  trust (the site mirrors `main`) and downstream tooling that chooses to
+  resolve `$id`s. Accepted for the prototyping stage: the domain renews
+  under the owner's IONOS account, `.dev` sits on the HSTS preload list
+  (which blocks plain-HTTP interception but is no barrier to the
+  enumerated threats — whoever controls the domain can obtain a valid
+  certificate), and no automated registration-expiry monitoring is set up;
+  revisit the monitoring decision at the first supported external
+  artifact.
 
 ## Operational prerequisites (owner-manual)
 
