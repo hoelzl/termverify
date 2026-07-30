@@ -382,7 +382,9 @@ def _reject_duplicate_members(
             # bounded, escaped excerpt (review 2026-07-24, section 4);
             # ``ascii`` escapes non-ASCII too, and the second slice
             # bounds the escape expansion itself.
-            excerpt = ascii(key[:40])[:96] + ("..." if len(key) > 40 else "")
+            escaped = ascii(key[:40])
+            truncated = len(key) > 40 or len(escaped) > 96
+            excerpt = escaped[:96] + ("..." if truncated else "")
             raise TranscriptValidationError(f"duplicate JSON member: {excerpt}")
         result[key] = value
     return result

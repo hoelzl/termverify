@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Never, cast
 
 import pytest
+import rfc8785
 
 from termverify.transcript import (
     JsonValue,
@@ -1504,13 +1505,7 @@ def _set_record_value_count(record: dict[str, JsonValue], target: int) -> None:
 
 
 def _bare_delivery_wire(transcript: list[dict[str, JsonValue]]) -> bytes:
-    return b"".join(
-        json.dumps(
-            record, ensure_ascii=False, separators=(",", ":"), sort_keys=True
-        ).encode()
-        + b"\n"
-        for record in transcript
-    )
+    return b"".join(rfc8785.dumps(record) + b"\n" for record in transcript)
 
 
 def test_compat_normalization_at_the_value_ceiling_rejects_at_parse() -> None:
@@ -1605,32 +1600,53 @@ def test_unknown_kind_rejection_does_not_echo_the_kind() -> None:
     )
 
 
-def _sized_bare_delivery_wire(target_line_bytes: int) -> bytes:
-    """Wire bytes whose bare-delivery record line is *target_line_bytes*.
+def _pad_record_line_to(record: dict[str, JsonValue], target_line_bytes: int) -> None:
+    """Give *record* an ``x-pad`` string sizing its canonical line exactly.
 
     Control characters encode as six-byte ``\\u00xx`` escapes, so the pad
     reaches multi-mebibyte canonical lines while staying far inside the
     decoded string budgets.
+    """
+    payload = record["payload"]
+    assert isinstance(payload, dict)
+    payload["x-pad"] = ""
+    payload["x-pad"] = "\x01" * ((target_line_bytes - len(rfc8785.dumps(record))) // 6)
+    payload["x-pad"] = cast(str, payload["x-pad"]) + "a" * (
+        target_line_bytes - len(rfc8785.dumps(record))
+    )
+    assert len(rfc8785.dumps(record)) == target_line_bytes
+
+
+def _sized_bare_delivery_wire(target_line_bytes: int) -> bytes:
+    """Wire bytes whose bare-delivery record line is *target_line_bytes*."""
+    transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
+    payload = transcript[1]["payload"]
+    assert isinstance(payload, dict)
+    payload["tier"] = "delivered"
+    payload["delivery"] = {"env": {"TERMVERIFY_SEED": "0"}}
+    _pad_record_line_to(transcript[1], target_line_bytes)
+    return _bare_delivery_wire(transcript)
+
+
+def _sized_total_wire(target_total_bytes: int) -> bytes:
+    """Wire bytes with one bare-delivery record and *target_total_bytes*.
+
+    Records 2-8 are fattened close to the line ceiling; the bare-delivery
+    record's pad then tunes the transcript to the exact total.
     """
     transcript = parse_transcript((FIXTURES / "valid" / "basic.jsonl").read_bytes())
     payload = transcript[1]["payload"]
     assert isinstance(payload, dict)
     payload["tier"] = "delivered"
     payload["delivery"] = {"env": {"TERMVERIFY_SEED": "0"}}
-    payload["x-pad"] = ""
-
-    def line_bytes() -> int:
-        return len(
-            json.dumps(
-                transcript[1], ensure_ascii=False, separators=(",", ":"), sort_keys=True
-            ).encode()
-        )
-
-    payload["x-pad"] = "\x01" * ((target_line_bytes - line_bytes()) // 6)
-    payload["x-pad"] = cast(str, payload["x-pad"]) + "a" * (
-        target_line_bytes - line_bytes()
+    for index in range(2, 9):
+        _pad_record_line_to(transcript[index], 4 * 1024 * 1024 - 64)
+    others = sum(
+        len(rfc8785.dumps(record)) + 1
+        for index, record in enumerate(transcript)
+        if index != 1
     )
-    assert line_bytes() == target_line_bytes
+    _pad_record_line_to(transcript[1], target_total_bytes - others - 1)
     return _bare_delivery_wire(transcript)
 
 
@@ -1653,6 +1669,26 @@ def test_compat_normalization_below_the_line_byte_ceiling_round_trips() -> None:
     parsed = parse_transcript(data)
 
     assert parse_transcript(serialize_transcript(parsed)) == parsed
+
+
+def test_compat_normalization_at_the_transcript_byte_ceiling_rejects_at_parse() -> None:
+    """The bytes the rewrite adds are re-held to the whole-transcript
+    ceiling: a transcript whose normalized form would exceed it rejects
+    at parse (PR #262 review round 2, I-1)."""
+    data = _sized_total_wire(32 * 1024 * 1024 - 21)
+
+    with pytest.raises(TranscriptValidationError, match="transcript bytes exceed"):
+        parse_transcript(data)
+
+
+def test_compat_normalization_below_the_transcript_byte_ceiling_serializes() -> None:
+    """At the transcript ceiling minus the 22 added bytes, the normalized
+    transcript serializes to exactly the ceiling."""
+    data = _sized_total_wire(32 * 1024 * 1024 - 22)
+
+    parsed = parse_transcript(data)
+
+    assert len(serialize_transcript(parsed)) == 32 * 1024 * 1024
 
 
 def test_transcript_accepts_value_nodes_at_v1_limit() -> None:
