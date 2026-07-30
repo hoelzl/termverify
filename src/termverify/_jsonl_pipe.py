@@ -597,9 +597,10 @@ class PipeJsonlChild:
             if self._closed:
                 raise JsonlChildClosedError("the JSONL pipe binding is closed")
             if self._read_in_flight:
-                raise JsonlChildClosedError(
-                    "the JSONL pipe binding allows one in-flight read"
-                )
+                # A caller defect, not a subject failure: the closed error
+                # is classified as a peer failure by the adapter, so a
+                # violated single-flight contract must not wear it.
+                raise RuntimeError("the JSONL pipe binding allows one in-flight read")
             self._read_in_flight = True
             self._interrupted_read.clear()
         try:
@@ -740,10 +741,23 @@ class PipeJsonlChild:
                 if done is None:
                     return
             else:
+                process = self._process
+                assert process is not None
+                # The refusal is decided before any closed state exists,
+                # inside the same lock window, so a concurrent read never
+                # observes a transiently closed binding that is about to
+                # refuse. `poll` is a non-blocking liveness probe; holding
+                # the lock across it is safe.
+                live = process.poll() is None
+                if live and not force:
+                    raise RuntimeError(
+                        "a release-only close of a live JSONL pipe child is"
+                        " refused: the binding never abandons a live tree"
+                        " and never fabricates an exit record"
+                    )
                 self._closed = True
                 self._closing = True
                 done = None
-                process = self._process
                 job = self._job
                 process_handle = self._process_handle
                 self._process = None
@@ -756,25 +770,10 @@ class PipeJsonlChild:
         if done is not None:
             done.wait()
             return
+        # Only the teardown-owning path reaches here, so the else branch
+        # above ran and bound the child; restated for the type checker,
+        # whose narrowing does not survive the branch join.
         assert process is not None
-        live = process.poll() is None
-        if live and not force:
-            # Refusal must be a true no-op: restore ownership so the
-            # binding is exactly as it was — still usable, and a later
-            # forced close can still tear the live tree down honestly.
-            # Nothing outside this lock window has run yet (no read can
-            # have been interrupted: the tree was never terminated).
-            with self._lock:
-                self._process = process
-                self._job = job
-                self._process_handle = process_handle
-                self._closed = False
-                self._closing = False
-            raise RuntimeError(
-                "a release-only close of a live JSONL pipe child is"
-                " refused: the binding never abandons a live tree"
-                " and never fabricates an exit record"
-            )
         # Wake FIRST, before termination and before any descriptor is
         # touched. On POSIX this is the binding's own interruption and it
         # cannot fail: a blocked read or write ends as a closed binding
@@ -965,6 +964,18 @@ class PipeJsonlChild:
         running is a protocol breach, and the grace must not turn that
         breach into a hang — after it, ``None`` stands and the adapter's
         fail-closed path reports the missing record.
+
+        Recorded decision (review 2026-07-24, section 4; issue #200): the
+        grace stays unconditional here. The adapter consults this only
+        after a child-sent terminal message — its own failure paths build
+        their results without an exit record — and after any terminal
+        message a conforming child's exit is imminent, so the wait
+        returns in milliseconds and captures the record
+        deterministically. A graceless probe would make the closing
+        exited-process observation's presence depend on OS reap timing —
+        transcript nondeterminism — to save bounded latency that only a
+        subject breaching the exit-after-terminal-message obligation
+        ever incurs, and only on an already-failed run.
         """
         if self._exit_status is not None:
             return

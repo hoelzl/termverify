@@ -396,12 +396,6 @@ def test_unknown_c0_control_fails_closed() -> None:
         normalizer.feed("\x01")
 
 
-def test_delete_character_fails_closed() -> None:
-    normalizer = _normalizer()
-    with pytest.raises(VtNormalizationError):
-        normalizer.feed("\x7f")
-
-
 def test_unknown_escape_final_fails_closed() -> None:
     normalizer = _normalizer()
     with pytest.raises(VtNormalizationError) as excinfo:
@@ -633,6 +627,39 @@ def test_device_attributes_query_is_consumed() -> None:
     normalizer = _normalizer()
     normalizer.feed(f"{ESC}[cA{ESC}[0cB")
     assert _lines(normalizer)[0] == "AB      "
+
+
+def test_secondary_device_attributes_query_is_consumed() -> None:
+    """``CSI > c`` is tolerated as a grid no-op, like primary DA.
+
+    Real terminals answer or ignore the secondary device-attributes
+    query; a conhost preamble that includes it must not turn every run
+    on that host into ``adapter-runtime-failed`` (review 2026-07-24,
+    section 4).
+    """
+    normalizer = _normalizer()
+    normalizer.feed(f"{ESC}[>cA{ESC}[>0cB")
+    snapshot = normalizer.snapshot()
+    assert snapshot.frame.lines[0] == "AB      "
+    assert snapshot.cursor == Cursor(column=2, row=0, visible=True)
+
+
+def test_other_gt_prefixed_sequences_stay_fail_closed() -> None:
+    """Only the secondary-DA query is tolerated; ``>`` stays fail-closed
+    for every other final so the subset does not silently widen."""
+    normalizer = _normalizer()
+    with pytest.raises(VtNormalizationError):
+        normalizer.feed(f"{ESC}[>4m")
+
+
+def test_del_is_ignored_like_a_real_terminal() -> None:
+    """DEL (0x7F) is a no-op: real terminals discard it, and a subject
+    emitting it must not fail the run (review 2026-07-24, section 4)."""
+    normalizer = _normalizer()
+    normalizer.feed("ab\x7fc")
+    snapshot = normalizer.snapshot()
+    assert snapshot.frame.lines[0] == "abc     "
+    assert snapshot.cursor == Cursor(column=3, row=0, visible=True)
 
 
 def test_focus_and_win32_input_modes_are_consumed_both_ways() -> None:

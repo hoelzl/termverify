@@ -165,7 +165,13 @@ class VtScreenNormalizer:
 
     def _consume_ground(self, character: str) -> None:
         code = ord(character)
-        if 0x7F <= code <= 0x9F:
+        if code == 0x7F:
+            # DEL is discarded, as real terminals do: it neither prints
+            # nor moves the cursor, and failing the run on it would make
+            # the normalizer stricter than any terminal a subject meets
+            # (review 2026-07-24, section 4).
+            return
+        if 0x80 <= code <= 0x9F:
             raise VtNormalizationError("unsupported control character", character)
         if code >= 0x20:
             self._write(character)
@@ -220,7 +226,7 @@ class VtScreenNormalizer:
         code = ord(character)
         if (
             character in _CSI_PARAM_CHARS
-            or (character == "?" and not self._collected)
+            or (character in "?>" and not self._collected)
             or 0x20 <= code <= 0x2F
         ):
             self._collected += character
@@ -314,6 +320,17 @@ class VtScreenNormalizer:
         if params.startswith("?"):
             self._dispatch_private_mode(params[1:], final, sequence)
             return
+        if params.startswith(">"):
+            if final == "c":
+                # Secondary device-attributes query: tolerated as a grid
+                # no-op exactly like the primary form below — real
+                # terminals answer or ignore it, and a conhost preamble
+                # that includes it must not fail every run on that host
+                # (review 2026-07-24, section 4). Every other ">" final
+                # stays fail-closed so the subset does not silently widen.
+                self._int_params(params[1:], sequence)
+                return
+            raise VtNormalizationError("unsupported control sequence", sequence)
         if final == "m":
             return
         if final in "tc":
