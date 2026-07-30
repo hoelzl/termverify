@@ -90,10 +90,14 @@ skip_covered = true
 exclude_also = ['# coverage: exclude-(posix|windows)']
 # No-regression ratchet floor: integer floor of the reviewed observed total.
 # Re-baselined once on 2026-07-30 when scripts/ joined the measurement
-# (owner decision 2026-07-24, review Slice 8.3): observed 93.55% — the
-# validators' CLI and error legs are less covered than the package, which
-# is the honest number, not a package regression (the package-only total
-# was 95.3% at the re-baseline). Raise only for sustained durable coverage;
+# (owner decision 2026-07-24, review Slice 8.3): observed 93.55% locally,
+# 93.29% on the Windows CI leg and 93.45% on the Ubuntu leg (the per-OS
+# overlays gate those) — the validators' CLI and error legs are less
+# covered than the package, which is the honest number, not a package
+# regression. The package-only total at the re-baseline was 95.37% and is
+# the reference figure for the next ratchet review; the Windows leg sits
+# ~0.3pp above this floor, so treat any margin erosion there as a real
+# regression, not noise. Raise only for sustained durable coverage;
 # lowering requires explicit owner review
 # (docs/developer-guide/development.md). precision = 2 makes the comparison
 # a strict floor instead of granting a hidden half-point of integer

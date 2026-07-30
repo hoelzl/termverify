@@ -114,8 +114,8 @@ class FakeChild:
             raise JsonlEndOfStreamError
         return self._inbound.pop(0)
 
-    def fail_next_reads(self, error: Exception) -> None:
-        """Public arrangement: every later read raises *error*.
+    def fail_reads(self, error: Exception) -> None:
+        """Public arrangement: every read from now on raises *error*.
 
         Post-construction counterpart to the ``read_error`` constructor
         argument, for tests that need the handshake to succeed first
@@ -409,7 +409,7 @@ def test_start_rejects_hello_write_failure() -> None:
 
 def test_start_rejects_child_closed_during_handshake() -> None:
     child = FakeChild([_hello_reply()])
-    child.fail_next_reads(JsonlChildClosedError("closed"))
+    child.fail_reads(JsonlChildClosedError("closed"))
     adapter, _, _ = _adapter(child)
     result = adapter.start(_RUN_ID, _config())
     assert isinstance(result, StartFailed)
@@ -418,7 +418,7 @@ def test_start_rejects_child_closed_during_handshake() -> None:
 
 def test_start_maps_handshake_eof_to_start_terminated() -> None:
     child = FakeChild([_hello_reply()])
-    child.fail_next_reads(JsonlEndOfStreamError())
+    child.fail_reads(JsonlEndOfStreamError())
     adapter, _, _ = _adapter(child)
     result = adapter.start(_RUN_ID, _config())
     assert isinstance(result, StartTerminated)
@@ -434,7 +434,7 @@ def test_start_rejects_read_failure_during_handshake() -> None:
 
 def test_start_rejects_deadline_abort_during_handshake() -> None:
     child = FakeChild([_hello_reply()])
-    child.fail_next_reads(JsonlEndOfStreamError())
+    child.fail_reads(JsonlEndOfStreamError())
     adapter, _, _ = _adapter(child, watchdog=FiringWatchdog())
     result = adapter.start(_RUN_ID, _config())
     # End-of-stream is classified before the deadline check: the child
@@ -554,7 +554,7 @@ def test_dispatch_rejects_write_failure() -> None:
 
 def test_dispatch_rejects_child_closed_during_epoch() -> None:
     adapter, child, _ = _started_adapter()
-    child.fail_next_reads(JsonlChildClosedError("closed"))
+    child.fail_reads(JsonlChildClosedError("closed"))
     result = adapter.dispatch(TextInput(at_ms=ManualTime(0), text="x"))
     assert isinstance(_terminal(result).outcome, RunFailed)
     assert _details(_failed(result).failure)["during"] == "read"
@@ -562,7 +562,7 @@ def test_dispatch_rejects_child_closed_during_epoch() -> None:
 
 def test_dispatch_rejects_read_failure_during_epoch() -> None:
     adapter, child, _ = _started_adapter()
-    child.fail_next_reads(OSError("boom"))
+    child.fail_reads(OSError("boom"))
     result = adapter.dispatch(TextInput(at_ms=ManualTime(0), text="x"))
     assert isinstance(_terminal(result).outcome, RunFailed)
     assert _details(_failed(result).failure)["during"] == "read"
@@ -577,7 +577,7 @@ def test_dispatch_propagates_the_bindings_single_flight_violation() -> None:
     ``peer-malformed`` (review 2026-07-24, section 4; PR #260 round 1).
     """
     adapter, child, _ = _started_adapter()
-    child.fail_next_reads(JsonlConcurrentReadError("one in-flight read"))
+    child.fail_reads(JsonlConcurrentReadError("one in-flight read"))
     with pytest.raises(JsonlConcurrentReadError):
         adapter.dispatch(TextInput(at_ms=ManualTime(0), text="x"))
 
@@ -591,7 +591,7 @@ def test_dispatch_rejects_deadline_abort_during_epoch() -> None:
         abort_deadline_ms=60_000,
         watchdog=FiringWatchdog(),
     )
-    child.fail_next_reads(JsonlEndOfStreamError())
+    child.fail_reads(JsonlEndOfStreamError())
     adapter.start(_RUN_ID, _config())
     # After start, the child is now closed by the watchdog; the adapter is
     # terminal, so dispatch must fail fast.

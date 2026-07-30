@@ -699,7 +699,17 @@ def _spy_spawned(
             pid = int(information.dwProcessId)
             spawned.append((pid, int(information.hThread), int(args[5])))
             if handles is not None:
-                handles.append(_open_process_handle(pid))
+                try:
+                    handles.append(_open_process_handle(pid))
+                except BaseException:
+                    # Fail closed like the code under test: a raise out of
+                    # this interception makes the binding treat the spawn
+                    # as failed, so the just-created suspended child must
+                    # not outlive the failed arrangement (PR #263 review,
+                    # I2). The kernel handle in `information` is live and
+                    # ours to use before the binding sees the result.
+                    _terminate_process(int(information.hProcess))
+                    raise
         return result
 
     monkeypatch.setattr(kernel32, "CreateProcessW", recording_create_process)
@@ -1370,9 +1380,30 @@ print(
     "TV_ENV_OVERRIDE:" + os.environ.get("TV_OVERRIDE_CANARY", "<missing>"),
     flush=True,
 )
-print("TV_CWD:" + os.getcwd(), flush=True)
+print("TV_CWD:" + os.getcwd() + ":TV_CWD_END", flush=True)
 print("TV_DELIVERY_DONE", flush=True)
 """
+
+
+def _extract_cwd(combined: str) -> str:
+    """Recover the child's cwd from raw terminal output.
+
+    Raw ConPTY output is diagnostic evidence, not a clean byte channel:
+    the renderer may inject OSC/CSI sequences and wrap-induced line breaks
+    into and after the child's text with no newline in between (the
+    windows-3.14 flake observed on PR #263's CI). The child brackets the
+    path with an explicit terminator, and every VT sequence and line
+    break is stripped before matching, so neither trailing escapes nor a
+    mid-path wrap can corrupt the capture.
+    """
+    flattened = re.sub(
+        r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;?]*[A-Za-z]|\x1b.|[\r\n]",
+        "",
+        combined,
+    )
+    match = re.search(r"TV_CWD:(.+?):TV_CWD_END", flattened)
+    assert match is not None, "TV_CWD marker not found in the drained output"
+    return match.group(1)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
@@ -1442,9 +1473,7 @@ def test_spawn_delivers_env_overlay_and_cwd(
     assert "TV_ENV_SEED:42" in combined
     assert "TV_ENV_AMBIENT:ambient" in combined
     assert "TV_ENV_OVERRIDE:delivered" in combined
-    cwd_match = re.search(r"TV_CWD:([^\r\n]+)", combined)
-    assert cwd_match is not None
-    assert Path(cwd_match.group(1)).resolve() == sandbox.resolve()
+    assert Path(_extract_cwd(combined)).resolve() == sandbox.resolve()
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
@@ -1469,9 +1498,7 @@ def test_spawn_without_overlay_keeps_the_ambient_defaults(
     combined = "".join(collected)
     assert "TV_ENV_SEED:<missing>" in combined
     assert "TV_ENV_AMBIENT:ambient" in combined
-    cwd_match = re.search(r"TV_CWD:([^\r\n]+)", combined)
-    assert cwd_match is not None
-    assert Path(cwd_match.group(1)).resolve() == Path(os.getcwd()).resolve()
+    assert Path(_extract_cwd(combined)).resolve() == Path(os.getcwd()).resolve()
 
 
 # --- geometry verification (issue #228) -------------------------------------
