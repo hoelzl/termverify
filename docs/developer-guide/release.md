@@ -20,20 +20,35 @@ owner-reviewed completion state recorded in the active handover under
 4. A human has reviewed the release pull request; agents must not approve or
    publish a release on their own authority.
 
+## Version scheme
+
+`main` always carries the *next planned* version with a `.dev0` marker
+(owner decision 2026-07-24, review Slice 8.4): between releases the in-tree
+version reads `A.B.C.dev0`, the release commit strips the marker to `A.B.C`
+— a real commit, never a degenerate same-version bump — and the post-release
+step chooses the next planned version and restores the marker. The `Release`
+workflow refuses to release any version carrying the marker, so the
+post-release `Bump version A.B.C → X.Y.Z.dev0` commit is inert, and
+`scripts/validate_prose_status.py` (pre-commit) rejects a marker-less tree
+whose `CHANGELOG.md` lacks the matching release section.
+
 ## Cutting the release
 
-1. On a release branch, run `uv --no-config run bump-my-version bump <part>`
-   (for example `patch` or `minor`). bump-my-version updates the single
-   version source of truth in `pyproject.toml` plus the project's own
-   `[[package]]` entry in `uv.lock`, and creates a `Bump version X.Y.Z →
-   A.B.C` commit (`[tool.bumpversion]` in `pyproject.toml`; `tag = false` —
-   no local tag is ever created).
-2. In the same branch, fold the pending changelog fragments into a dated
-   release section: `uv --no-config run python scripts/collect_changelog.py
-   A.B.C` (preview with `--dry-run`). This deletes the collected
-   `changelog.d/` fragments; day-to-day PRs never touch `CHANGELOG.md`'s
-   `[Unreleased]` section — they add fragments (`changelog.d/README.md`).
-   Open the release PR for human review.
+1. On a release branch, fold the pending changelog fragments into a dated
+   release section for the planned version: `uv --no-config run python
+   scripts/collect_changelog.py A.B.C` (preview with `--dry-run`). This
+   deletes the collected `changelog.d/` fragments; day-to-day PRs never
+   touch `CHANGELOG.md`'s `[Unreleased]` section — they add fragments
+   (`changelog.d/README.md`). The fragments are collected before the marker
+   is stripped so every commit on the branch keeps the prose-status
+   validator green.
+2. In the same branch, strip the dev marker: `uv --no-config run
+   bump-my-version bump pre`. bump-my-version turns `A.B.C.dev0` into
+   `A.B.C` in the single version source of truth in `pyproject.toml` plus
+   the project's own `[[package]]` entry in `uv.lock`, and creates the
+   `Bump version A.B.C.dev0 → A.B.C` commit the workflow keys on
+   (`[tool.bumpversion]` in `pyproject.toml`; `tag = false` — no local tag
+   is ever created). Open the release PR for human review.
 3. Merge the reviewed release pull request into `main`. The `Release`
    workflow detects the `Bump version` commit in the push and runs the gated
    pipeline: it waits for the `CI` workflow to be green on that commit,
@@ -43,12 +58,15 @@ owner-reviewed completion state recorded in the active handover under
    build-provenance attestations, publishes to PyPI via OIDC trusted
    publishing (no stored credentials; the `pypi` GitHub environment), and
    creates the GitHub release with the extracted changelog section and the
-   attested artifacts attached.
+   attested artifacts attached. The automated gate waits on the `CI`
+   workflow only — the `Security` workflow's green state on the release
+   commit is precondition 1, checked by the human, not an automated gate.
 4. As a fallback (for example to re-drive a failed publish after fixing
    credentials), push the `vA.B.C` tag manually at the release commit; the
-   workflow verifies the tag matches the version in `pyproject.toml` and runs
-   the same pipeline. Every step is idempotent: an existing tag, PyPI
-   version, or GitHub release is left as-is.
+   workflow verifies the tag matches the version in `pyproject.toml`,
+   refuses a dev-marked version, and runs the same pipeline. Every step is
+   idempotent: an existing tag, PyPI version, or GitHub release is left
+   as-is.
 
 ## Provenance
 
@@ -67,4 +85,10 @@ owner-reviewed completion state recorded in the active handover under
 
 1. Confirm the changelog heading, tag, and PyPI version agree. The collector
    already left a fresh `Unreleased` section in place for the next cycle.
-2. Record follow-up work as issues rather than editing the published notes.
+2. Bump `main` to the next planned development version: `uv --no-config run
+   bump-my-version bump <part>` (`minor` for `A.B.C → A.(B+1).0.dev0`, and
+   `patch` or `major` accordingly). This is where the next version is
+   chosen; the release itself only ever strips the marker. The resulting
+   `Bump version` commit is ignored by the `Release` workflow because the
+   new version carries the marker.
+3. Record follow-up work as issues rather than editing the published notes.

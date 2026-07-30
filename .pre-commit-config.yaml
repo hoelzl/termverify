@@ -34,6 +34,12 @@ repos:
         language: system
         pass_filenames: false
 
+      - id: validate-prose-status
+        name: validate prose status
+        entry: uv --no-config run python scripts/validate_prose_status.py
+        language: system
+        pass_filenames: false
+
       - id: type-check
         name: type check
         entry: uv --no-config run mypy src tests scripts
