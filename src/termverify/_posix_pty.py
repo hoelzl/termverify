@@ -26,8 +26,10 @@ this product runs a watchdog timer thread. So the binding spawns a
 fork-exec helper; see :data:`_TRAMPOLINE`). The fork is followed
 immediately by an exec, which CPython performs in C, so no Python code ever
 runs in a forked-but-not-exec'd child. ``execv`` replaces the process
-image, so the subject keeps the pid, the exit status, and the argv the
-caller asked for; the cost is one interpreter startup per spawn.
+image, so the subject keeps the pid and the exit status; the cost is one
+interpreter startup per spawn. ``argv[0]`` is the *resolved* path rather
+than the word the caller wrote — matching the JSONL transport, and worth
+knowing for a subject that branches on its own name.
 
 **Line discipline is set explicitly, and it is deliberately conventional.**
 Design rule 5 requires the discipline to be explicit and recorded rather
@@ -38,10 +40,24 @@ subject sees (design principle 2), and that terminal post-processes output
 (``OPOST|ONLCR``) and echoes input. Turning those off would make a plain
 ``print`` render as a staircase and would diverge from what the ConPTY
 binding's console already does. Full-screen subjects call ``tcsetattr``
-themselves and win, exactly as they do on a real terminal. The flags are
-set one by one in :func:`_configure_line_discipline`, so the state is a
-contract rather than an accident of whatever ``openpty`` handed back, and
-the child's own view of them is asserted in the binding's tests.
+themselves and win, exactly as they do on a real terminal.
+:func:`_configure_line_discipline` assigns the three flag words and the
+control characters outright — an overlay would leave every unnamed bit
+ambient — and states which fields stay inherited and why.
+
+**What that choice costs, stated rather than absorbed.** With ``ECHO`` and
+``ICANON`` on, the line discipline echoes every byte the harness writes
+back onto the master's read side, so *harness input appears in the
+subject's output stream*, and its interleaving with the subject's own
+output is decided by the kernel's scheduling rather than by either party.
+Three consequences follow, and they belong to the adapter above rather
+than to this module: a readiness marker appearing in **input** is
+indistinguishable from one the subject emitted; two replays of one run can
+order echo against output differently; and ``ISIG`` means some writes are
+not input at all — ``\x03`` delivers ``SIGINT`` to the foreground group and
+never reaches the subject as data. Issue #273 carries this to the adapter
+slice, where the marker scanner lives. ``IXON`` is off for a related
+reason recorded at :func:`_configure_line_discipline`.
 
 **Naming.** The error types here are POSIX-named while ``_conpty.py`` keeps
 its own. Calling a pty failure ``ConptyClosedError`` would be false at the
@@ -69,6 +85,7 @@ import subprocess
 import sys
 import threading
 from collections.abc import Mapping, Sequence
+from contextlib import suppress
 from typing import Final
 
 # ``fcntl`` and ``termios`` are Unix-only and are imported *inside* the
@@ -88,6 +105,7 @@ __all__ = [
     "PosixPtyEndOfStreamError",
     "PosixPtyUnsupportedError",
     "is_supported",
+    "set_terminal_flags",
     "terminal_flags",
 ]
 
@@ -128,14 +146,28 @@ _READ_CHUNK_BYTES: Final = 65536
 #: Which of the two changes alone would suffice was not measured; both
 #: are kept because they close different halves of the window.
 #:
-#: It reports a failed ``execv`` only as a non-zero interpreter exit, which
-#: is why the command is resolved by ``shutil.which`` in the parent: a
-#: missing command fails there, where the failure can name it, instead of
-#: arriving here as an opaque exit code.
+#: A failure before the exec reports itself on a **status pipe**, never on
+#: the terminal. Its fds 0/1/2 are the pty slave, so an unhandled exception
+#: would print a Python traceback straight into the subject's output stream
+#: and exit 1 — manufacturing subject evidence out of a harness failure,
+#: and indistinguishable from a subject that exited 1. ``shutil.which`` in
+#: the parent does not cover this: it proves the file exists and is
+#: executable, while ``execv`` still fails for a script with no shebang
+#: (``ENOEXEC``), a shebang naming an absent interpreter, ``ETXTBSY``, or
+#: an unlink between the check and the call. The pipe's write end is
+#: marked close-on-exec, so a successful exec closes it and the parent
+#: reads end-of-file; a failure writes the error first. Same shape as the
+#: exec-status pipe CPython's own ``subprocess`` uses, and the same reason.
 _TRAMPOLINE: Final = (
     "import fcntl,os,sys,termios\n"
-    "fcntl.ioctl(0, termios.TIOCSCTTY, 0)\n"
-    "os.execv(sys.argv[1], sys.argv[1:])\n"
+    "status = int(sys.argv[1])\n"
+    "fcntl.fcntl(status, fcntl.F_SETFD, fcntl.FD_CLOEXEC)\n"
+    "try:\n"
+    "    fcntl.ioctl(0, termios.TIOCSCTTY, 0)\n"
+    "    os.execv(sys.argv[2], sys.argv[2:])\n"
+    "except BaseException as error:\n"
+    "    os.write(status, repr(error).encode('utf-8', 'replace')[:512])\n"
+    "    os._exit(127)\n"
 )
 
 
@@ -186,6 +218,10 @@ def terminal_flags(fd: int) -> tuple[int, int, int]:  # coverage: exclude-window
     Public to the package rather than private because the binding's tests
     use it to *measure* the state a fresh pty is handed, instead of
     asserting a default the design deliberately refused to predict.
+
+    A thin ``tcgetattr`` wrapper, so unlike :func:`is_supported` it carries
+    no platform claim beyond "not Windows": it reads whatever terminal the
+    caller already has.
     """
     if sys.platform == "win32":  # coverage: exclude-posix - POSIX-only path
         raise AssertionError("the POSIX PTY path is POSIX-only")
@@ -195,31 +231,83 @@ def terminal_flags(fd: int) -> tuple[int, int, int]:  # coverage: exclude-window
     return attributes[0], attributes[1], attributes[3]
 
 
-def _configure_line_discipline(fd: int) -> None:  # coverage: exclude-windows
-    """Set the explicit, conventional terminal state on ``fd``.
+def set_terminal_flags(  # coverage: exclude-windows - POSIX-only helper
+    fd: int, iflag: int, oflag: int, lflag: int
+) -> None:
+    """Assign the three flag words on ``fd``, leaving the rest alone.
 
-    Recorded rather than inherited (design rule 5). Whether a fresh pty
-    already carries this state is *not* assumed here — the binding's tests
-    measure it — and setting it explicitly is what turns whatever the
-    kernel happens to hand back into a contract, so a future default
-    change becomes a test failure instead of an evidence change nobody
-    notices.
+    The counterpart to :func:`terminal_flags`, and it exists for the same
+    reason: the binding's tests clear these words before configuring, so
+    that a configuration doing nothing at all is distinguishable from one
+    that works. Without it the flags a fresh pty already carries make the
+    contract untestable.
     """
     if sys.platform == "win32":  # coverage: exclude-posix - POSIX-only path
         raise AssertionError("the POSIX PTY path is POSIX-only")
     import termios
 
-    attributes = termios.tcgetattr(fd)
-    iflag, oflag, cflag, lflag, ispeed, ospeed, cc = attributes
-    iflag |= termios.ICRNL | termios.IXON
-    iflag &= ~(termios.INLCR | termios.IGNCR)
-    oflag |= termios.OPOST | termios.ONLCR
-    lflag |= termios.ICANON | termios.ECHO | termios.ECHOE | termios.ISIG
-    lflag &= ~termios.ECHONL
+    _, _, cflag, _, ispeed, ospeed, cc = termios.tcgetattr(fd)
+    termios.tcsetattr(
+        fd, termios.TCSANOW, [iflag, oflag, cflag, lflag, ispeed, ospeed, cc]
+    )
+
+
+def _configure_line_discipline(fd: int) -> None:  # coverage: exclude-windows
+    """Set the terminal state on ``fd`` to an absolute, stated value.
+
+    Design rule 5 asks for a discipline that is recorded rather than
+    inherited. An overlay does not deliver that: OR-ing a handful of named
+    bits onto whatever ``openpty`` returned leaves every *unnamed* bit
+    ambient, and several of those change transcript bytes directly —
+    ``ECHOCTL`` decides whether a control byte echoes as ``^C``,
+    ``cc[VERASE]`` decides which byte erases at all, ``IUTF8`` decides how
+    a multibyte character erases. So the three flag words and the control
+    characters are assigned outright, and what is *not* set is stated:
+
+    - ``cflag``, ``ispeed`` and ``ospeed`` stay inherited. They describe a
+      serial line — parity, stop bits, baud — and a pseudoterminal has no
+      wire for them to describe. Nothing in them reaches evidence.
+
+    Two choices here are deliberate and cost something, so they are named
+    rather than left to be discovered:
+
+    - ``IXON`` is **off**. Software flow control would let a harness write
+      of ``0x13`` suspend the subject's output until ``0x11`` arrived —
+      a byte that silently stalls the evidence stream is the opposite of a
+      determinism input.
+    - ``ECHOCTL`` and ``IEXTEN`` are **off**, so no byte the harness writes
+      is echoed back in an expanded form the subject never produced.
+
+    ``ECHO`` and ``ICANON`` stay **on**, per the module docstring's
+    faithfulness argument — with the consequence recorded there.
+    """
+    if sys.platform == "win32":  # coverage: exclude-posix - POSIX-only path
+        raise AssertionError("the POSIX PTY path is POSIX-only")
+    import termios
+
+    _, _, cflag, _, ispeed, ospeed, cc = termios.tcgetattr(fd)
+    # IUTF8 governs how a multibyte character erases and is Linux-specific;
+    # typeshed does not declare it, so it is read defensively rather than
+    # named directly.
+    iflag = termios.ICRNL | getattr(termios, "IUTF8", 0)
+    oflag = termios.OPOST | termios.ONLCR
+    lflag = termios.ISIG | termios.ICANON | termios.ECHO | termios.ECHOE
+    control = list(cc)
+    for name, value in (
+        ("VINTR", 3),  # ^C
+        ("VQUIT", 28),  # ^\
+        ("VERASE", 127),  # DEL
+        ("VKILL", 21),  # ^U
+        ("VEOF", 4),  # ^D
+        ("VSUSP", 26),  # ^Z
+        ("VMIN", 1),
+        ("VTIME", 0),
+    ):
+        control[getattr(termios, name)] = value
     termios.tcsetattr(
         fd,
         termios.TCSANOW,
-        [iflag, oflag, cflag, lflag, ispeed, ospeed, cc],
+        [iflag, oflag, cflag, lflag, ispeed, ospeed, control],
     )
 
 
@@ -240,6 +328,27 @@ def _set_window_size(  # coverage: exclude-windows - POSIX-only leg
 
     packed = struct.pack("HHHH", rows, columns, 0, 0)
     fcntl.ioctl(fd, termios.TIOCSWINSZ, packed)
+
+
+def _read_exec_status(  # coverage: exclude-windows - POSIX-only helper
+    status_read: int,
+) -> str | None:
+    """Return the trampoline's failure text, or ``None`` if it exec'd.
+
+    Blocks until the write end is gone, which the exec itself does: the
+    trampoline marks it close-on-exec, so end-of-file *is* the success
+    signal. The wait is bounded by the trampoline's own length — an
+    ``ioctl`` and an ``execv`` — not by anything the subject does.
+    """
+    chunks: list[bytes] = []
+    while True:
+        chunk = os.read(status_read, 512)
+        if not chunk:
+            break
+        chunks.append(chunk)
+    if not chunks:
+        return None
+    return b"".join(chunks).decode("utf-8", "replace")
 
 
 def _wait_until_ready(  # coverage: exclude-windows - POSIX-only helper
@@ -294,6 +403,15 @@ class PosixPtyChild:
         self._master_fd = master_fd
         self._lock = threading.Lock()
         self._closed = False
+        # A teardown in flight, and the event that ends the wait for it.
+        # Without these a second close returns the instant it sees
+        # `_closed`, while the first is still inside its bounded wait for
+        # the exit record — so the caller reads `exit_status` and gets
+        # `None` for a child that is about to report -9. The adapter above
+        # consults `exit_status` immediately after closing, and its
+        # watchdog closes from a timer thread, so both callers are real.
+        self._closing = False
+        self._close_done = threading.Event()
         self._exit_status: int | None = None
         self._read_in_flight = False
         self._write_in_flight = False
@@ -309,10 +427,14 @@ class PosixPtyChild:
     def _adopt_wake_pipe(self) -> None:  # coverage: exclude-windows
         """Create the interruption pipe and make every descriptor non-blocking.
 
-        The wake pipe comes before any state the caller can observe, and it
-        is the only fallible step here, so a failure leaves nothing to
-        unwind. Both ends are non-blocking: a close signalling a full wake
-        pipe would be a teardown blocking on its own interruption.
+        The wake pipe comes before any state the caller can observe, so a
+        failure here leaves nothing half-built for the caller to unwind.
+        It is not the only fallible call — ``os.set_blocking`` can raise
+        too, and would strand the pipe — which is why ``spawn``'s handler
+        releases what it can rather than assuming a single failure point.
+
+        Both ends are non-blocking: a close signalling a full wake pipe
+        would be a teardown blocking on its own interruption.
         """
         self._wake_read, self._wake_write = os.pipe()
         os.set_blocking(self._wake_write, False)
@@ -368,6 +490,7 @@ class PosixPtyChild:
         if env_overlay is not None:
             merged.update(env_overlay)
         master_fd, slave_fd = os.openpty()
+        status_read, status_write = os.pipe()
         process: subprocess.Popen[bytes] | None = None
         try:
             _configure_line_discipline(slave_fd)
@@ -378,6 +501,7 @@ class PosixPtyChild:
                     "-I",
                     "-c",
                     _TRAMPOLINE,
+                    str(status_write),
                     command,
                     *arguments[1:],
                 ],
@@ -387,18 +511,38 @@ class PosixPtyChild:
                 env=merged,
                 cwd=cwd,
                 close_fds=True,
+                pass_fds=(status_write,),
                 # The session is created here, in CPython's C fork-exec
                 # helper, rather than by the trampoline — see _TRAMPOLINE.
                 start_new_session=True,
             )
         except BaseException:
             os.close(master_fd)
+            os.close(status_read)
             raise
         finally:
-            # The parent's copy goes as soon as the child owns its own: a
+            # The parent's copies go as soon as the child owns its own: a
             # slave held here would keep the master readable forever, so a
-            # child's exit would never surface as end-of-stream.
+            # child's exit would never surface as end-of-stream, and a
+            # status write end held here would never report end-of-file.
             os.close(slave_fd)
+            os.close(status_write)
+        try:
+            failure = _read_exec_status(status_read)
+        finally:
+            os.close(status_read)
+        if failure is not None:
+            # The child never became the subject. Reap it and fail the
+            # spawn naming the command, instead of handing back a binding
+            # whose first read would return a Python traceback.
+            with _suppress_os_errors():
+                process.kill()
+            with suppress(OSError, subprocess.TimeoutExpired):
+                process.wait(timeout=_CHILD_EXIT_WAIT_S)
+            os.close(master_fd)
+            raise OSError(
+                f"the subject could not be started: {arguments[0]} ({failure})"
+            )
         try:
             return cls(process, master_fd)
         except OSError as error:
@@ -489,20 +633,33 @@ class PosixPtyChild:
                 # wait again rather than reporting a spurious end-of-stream.
                 continue
             except OSError as error:
+                with self._lock:
+                    closed = self._closed
+                if closed:
+                    # Checked before end-of-stream, not after: a close may
+                    # have abandoned output the child had already written,
+                    # so reporting a clean end of the subject's stream here
+                    # would describe a teardown as the subject finishing.
+                    # The sibling pays for this check too; omitting it on
+                    # the end-of-stream legs alone is how the promise in
+                    # PosixPtyEndOfStreamError's own docstring gets broken.
+                    raise PosixPtyClosedError(
+                        "the POSIX PTY binding was closed during a read"
+                    ) from error
                 if error.errno == errno.EIO:
                     # A master whose last slave is gone reports EIO on
                     # Linux rather than an empty read. It is this
                     # platform's end-of-stream and is normalized to the
                     # binding's own signal — measured, not assumed.
                     raise self._end_of_stream() from error
+                raise
+            if not chunk:
                 with self._lock:
                     closed = self._closed
                 if closed:
                     raise PosixPtyClosedError(
                         "the POSIX PTY binding was closed during a read"
-                    ) from error
-                raise
-            if not chunk:
+                    )
                 raise self._end_of_stream()
             return chunk
 
@@ -519,6 +676,17 @@ class PosixPtyChild:
         in the process can reuse that number and the bytes would land in an
         unrelated file. Trading a hang for silent corruption is strictly
         worse than the hang.
+
+        Failure modes, stated because the layer above classifies them:
+        :class:`PosixPtyClosedError` when the binding is closed or a close
+        interrupts the write; :class:`PosixPtyConcurrentIOError` for a
+        violated single-flight contract; and a bare ``OSError`` with
+        ``errno.EIO`` when the subject is gone — a master whose last slave
+        has closed reports that rather than a broken pipe. The binding does
+        not translate ``EIO`` here into an end-of-stream signal: on the read
+        side that fact ends the evidence stream, while on the write side it
+        means the input had nowhere to go, and the two are not the same
+        claim about the run.
         """
         if not isinstance(text, str):
             raise TypeError("text must be a string")
@@ -559,11 +727,18 @@ class PosixPtyChild:
     def resize(  # coverage: exclude-windows - POSIX-only leg
         self, *, rows: int, columns: int
     ) -> None:
+        # The ioctl runs *under* the lock, unlike the read and write paths,
+        # which cannot hold it because they block. `TIOCSWINSZ` does not
+        # block, and holding the lock is what stops a concurrent close from
+        # freeing the master's descriptor number between the snapshot and
+        # the call. The number is immediately reusable: a harness driving
+        # several subjects mints more pty masters, so the resize could
+        # otherwise land on another subject's terminal — quietly, since
+        # `TIOCSWINSZ` succeeds there.
         with self._lock:
             if self._closed:
                 raise PosixPtyClosedError("the POSIX PTY binding is closed")
-            fd = self._master_fd
-        _set_window_size(fd, rows=rows, columns=columns)
+            _set_window_size(self._master_fd, rows=rows, columns=columns)
 
     def close(self, *, force: bool) -> None:  # coverage: exclude-windows
         """Release the pseudoterminal; optionally kill the session first.
@@ -575,31 +750,54 @@ class PosixPtyChild:
         syscall is ever left holding a descriptor number this method has
         already freed.
         """
+        process: subprocess.Popen[bytes] | None = None
+        wake = -1
         with self._lock:
-            if self._closed:
-                return
-            process = self._process
-            # Liveness is decided inline rather than through `is_alive`:
-            # the lock is not reentrant, and calling a method that takes it
-            # from inside the critical section would deadlock the teardown
-            # this method exists to guarantee.
-            if not force and process is not None and process.poll() is None:
-                raise PosixPtyClosedError(
-                    "a release-only close of a live pty child would abandon it;"
-                    " use force=True"
-                )
-            self._closed = True
-            wake = self._wake_write
-        if wake >= 0:
-            with _suppress_os_errors():
-                os.write(wake, b"\x00")
-        self._interrupted_read.wait(_IO_DELIVERY_WAIT_S)
-        self._interrupted_write.wait(_IO_DELIVERY_WAIT_S)
-        if process is not None:
-            if force:
-                self._terminate_session(process)
-            self._capture_exit_status_after_close(process)
-        self._release_descriptors()
+            already_closed = self._closed
+            if not already_closed:
+                process = self._process
+                # Liveness is decided inline rather than through
+                # `is_alive`: the lock is not reentrant, and calling a
+                # method that takes it from inside the critical section
+                # would deadlock the teardown this method exists to
+                # guarantee.
+                if not force and process is not None and process.poll() is None:
+                    raise RuntimeError(
+                        "a release-only close of a live pty child would abandon"
+                        " it; use force=True"
+                    )
+                self._closed = True
+                self._closing = True
+                wake = self._wake_write
+        if already_closed:
+            # Either another thread owns this teardown or one already
+            # finished. Wait for it rather than returning into a
+            # half-closed binding whose exit record has not been captured
+            # yet; a completed teardown has the event set and returns at
+            # once.
+            self._close_done.wait(_CHILD_EXIT_WAIT_S)
+            return
+        try:
+            if wake >= 0:
+                with _suppress_os_errors():
+                    os.write(wake, b"\x00")
+            self._interrupted_read.wait(_IO_DELIVERY_WAIT_S)
+            self._interrupted_write.wait(_IO_DELIVERY_WAIT_S)
+            if process is not None:
+                if force:
+                    self._terminate_session(process)
+                self._capture_exit_status_after_close(process)
+        finally:
+            # The release belongs here, not in the try: a termination that
+            # fails now *propagates* rather than being swallowed, and a
+            # raising close that skipped this would leak the master and the
+            # wake pipe on exactly the path where the child also survives.
+            # The binding is closed either way; what the caller learns is
+            # that the kill failed.
+            self._release_descriptors()
+            with self._lock:
+                self._closing = False
+            self._close_done.set()
 
     def _terminate_session(  # coverage: exclude-windows - POSIX-only leg
         self, process: subprocess.Popen[bytes]
@@ -627,12 +825,14 @@ class PosixPtyChild:
             # the child outlived the close and the bounded wait below
             # timed out. Fall through to the pid.
             pass
-        except OSError:
-            # Already gone, or not ours to signal. The bounded wait below
-            # reports what was actually observed either way.
-            return
-        with _suppress_os_errors():
-            process.kill()
+        # Every *other* signal failure — EPERM against a subject that
+        # changed uid, most realistically — propagates. Swallowing it
+        # would let `close` return normally having killed nothing, and the
+        # only trace would be `exit_status is None`, which is also what a
+        # slow reap looks like. The sibling binding raises here for the
+        # same reason: a caller is told the termination failed rather than
+        # reading a success the binding cannot vouch for.
+        process.kill()
 
     def _capture_exit_status_after_close(  # coverage: exclude-windows
         self, process: subprocess.Popen[bytes]

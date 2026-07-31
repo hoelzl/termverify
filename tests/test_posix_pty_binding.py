@@ -118,6 +118,9 @@ for name, flag, value in (
     ("ICANON", "lflag", termios.ICANON),
     ("ISIG", "lflag", termios.ISIG),
     ("ICRNL", "iflag", termios.ICRNL),
+    ("IXON", "iflag", termios.IXON),
+    ("ECHOCTL", "lflag", termios.ECHOCTL),
+    ("IEXTEN", "lflag", termios.IEXTEN),
 ):
     print(name, bool({"iflag": iflag, "oflag": oflag, "lflag": lflag}[flag] & value))
 print("CTTY", os.ttyname(0))
@@ -140,15 +143,24 @@ def test_the_child_inherits_the_line_discipline_the_binding_set() -> None:
     child = _spawn(_TERMIOS_CHILD)
     try:
         output = _read_until(child, "READY")
-        for flag, why in (
-            ("OPOST", "output post-processing must be on"),
-            ("ONLCR", "newline translation must be on"),
-            ("ECHO", "a conventional terminal echoes"),
-            ("ICANON", "a conventional terminal is canonical"),
-            ("ISIG", "a conventional terminal generates signals"),
-            ("ICRNL", "a conventional terminal maps CR to NL"),
+        for flag, expected, why in (
+            ("OPOST", True, "output post-processing must be on"),
+            ("ONLCR", True, "newline translation must be on"),
+            ("ECHO", True, "a conventional terminal echoes"),
+            ("ICANON", True, "a conventional terminal is canonical"),
+            ("ISIG", True, "a conventional terminal generates signals"),
+            ("ICRNL", True, "a conventional terminal maps CR to NL"),
+            # These three are ON in the kernel default and the binding
+            # turns them OFF, so they are what makes this test able to
+            # fail: with the configuration removed, the child would report
+            # them True. IXON would let a harness write of 0x13 stall the
+            # evidence stream; ECHOCTL and IEXTEN would echo harness bytes
+            # back in expanded forms the subject never produced.
+            ("IXON", False, "flow control must not be able to stall evidence"),
+            ("ECHOCTL", False, "control bytes must not echo as ^X"),
+            ("IEXTEN", False, "no implementation-defined input processing"),
         ):
-            assert f"{flag} True" in output, f"{why}; child reported: {output!r}"
+            assert f"{flag} {expected}" in output, f"{why}; child reported: {output!r}"
     finally:
         child.close(force=True)
 
@@ -167,6 +179,13 @@ def test_configuring_the_line_discipline_is_idempotent_and_measured() -> None:
     master_fd, slave_fd = os.openpty()  # type: ignore[attr-defined,unused-ignore]
     try:
         inherited = _posix_pty.terminal_flags(slave_fd)
+        # Wipe the three flag words first. Without this the test cannot
+        # fail: a fresh Linux pty already carries every flag the binding
+        # sets, so configuring is indistinguishable from doing nothing —
+        # the review's finding, and it was right. Deleting the body of
+        # _configure_line_discipline must break this test.
+        _posix_pty.set_terminal_flags(slave_fd, 0, 0, 0)
+        assert _posix_pty.terminal_flags(slave_fd) == (0, 0, 0)
         _posix_pty._configure_line_discipline(slave_fd)
         once = _posix_pty.terminal_flags(slave_fd)
         _posix_pty._configure_line_discipline(slave_fd)
@@ -174,18 +193,15 @@ def test_configuring_the_line_discipline_is_idempotent_and_measured() -> None:
     finally:
         os.close(master_fd)
         os.close(slave_fd)
-    # The inherited default is *recorded*, not asserted: pinning it would
-    # pin the kernel's choice rather than the binding's contract, and the
-    # design refused to predict it. It rides in the failure messages so a
-    # future divergence is visible at the point it breaks something.
+    assert once != (0, 0, 0), "configuration set nothing at all"
     assert once == twice, (
         f"configuring the line discipline is not idempotent:"
         f" inherited={inherited} once={once} twice={twice}"
     )
-    # What the flags *mean* is asserted where it is observable as
-    # behavior — by the child, in the test above. This one owns the two
-    # properties that test cannot see: the measurement, and stability
-    # under reapplication.
+    # `inherited` is deliberately not asserted on: pinning it would pin the
+    # kernel's choice rather than the binding's contract, and the design
+    # refused to predict it. It rides in the message above so a future
+    # divergence is visible wherever it breaks something.
 
 
 @_LINUX_ONLY
@@ -307,17 +323,18 @@ def test_a_second_concurrent_read_wears_its_own_error() -> None:
     reader.start()
     assert started.wait(_TIMEOUT_S)
     try:
-        # The blocked read is in flight; the second one must be refused
-        # rather than joining it on the descriptor.
+        # Wait for the read to be *in flight*, not merely for the thread to
+        # have started. The earlier version raced: if this thread's read won,
+        # it blocked in `poll` on a silent child with nothing to wake it, and
+        # the close that would have freed it sits after the loop — an
+        # indefinite hang rather than a failure, with no pytest-timeout
+        # configured to end it.
         deadline = time.monotonic() + _TIMEOUT_S
-        while True:
-            try:
-                child.read()
-            except PosixPtyConcurrentIOError:
-                break
-            except PosixPtyEndOfStreamError:  # pragma: no cover - defensive
-                pytest.fail("the child ended before the concurrency was observed")
-            assert time.monotonic() < deadline, "never observed an in-flight read"
+        while not child._read_in_flight:
+            assert time.monotonic() < deadline, "the reader never reached the poll"
+            time.sleep(0.01)
+        with pytest.raises(PosixPtyConcurrentIOError):
+            child.read()
     finally:
         child.close(force=True)
     reader.join(_TIMEOUT_S)
@@ -364,12 +381,22 @@ def test_a_forced_close_kills_the_session_and_records_the_real_exit() -> None:
 
 @_LINUX_ONLY
 def test_a_release_only_close_of_a_live_child_is_refused() -> None:
-    """Silently abandoning a live pty child has no honest reading."""
+    """Silently abandoning a live pty child has no honest reading.
+
+    The refusal must **not** wear ``PosixPtyClosedError``: that type means
+    "the binding is closed" everywhere else, so the natural idiom
+    ``except PosixPtyClosedError: pass`` around a release-only close would
+    turn a refusal-to-abandon into a leaked live child holding the pty.
+    The binding is still open afterwards, which is the other half.
+    """
     child = _spawn("import time; time.sleep(300)")
     try:
-        with pytest.raises(PosixPtyClosedError):
+        with pytest.raises(RuntimeError) as caught:
             child.close(force=False)
+        assert not isinstance(caught.value, PosixPtyClosedError)
         assert child.is_alive()
+        # Still usable, not half-closed.
+        child.resize(rows=10, columns=20)
     finally:
         child.close(force=True)
 
@@ -667,10 +694,17 @@ def test_a_forced_close_falls_back_to_the_pid_when_no_group_exists(
 
 
 @_LINUX_ONLY
-def test_a_close_that_may_not_signal_claims_no_exit_it_did_not_observe(
+def test_a_close_that_cannot_signal_says_so_rather_than_returning(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A signal we are not allowed to send is not an exit we can claim."""
+    """A failed kill must not read as a successful teardown.
+
+    An earlier version of this test pinned the opposite — it asserted the
+    close returned quietly on ``EPERM`` — which is how a test enshrines a
+    defect. Swallowing it would let ``close`` return having killed nothing,
+    with the only trace being ``exit_status is None``, which is also what a
+    slow reap looks like. Realistic whenever the subject changes uid.
+    """
     child = _spawn("import time; time.sleep(300)")
     pid = child.pid
     try:
@@ -679,16 +713,67 @@ def test_a_close_that_may_not_signal_claims_no_exit_it_did_not_observe(
             raise PermissionError(errno.EPERM, "not permitted")
 
         monkeypatch.setattr(os, "killpg", refused)
-        monkeypatch.setattr(
-            PosixPtyChild,
-            "_capture_exit_status_after_close",
-            lambda self, process: None,
-        )
-        child.close(force=True)
-        assert child.exit_status is None
+        monkeypatch.setattr(subprocess.Popen, "kill", refused)
+        with pytest.raises(PermissionError):
+            child.close(force=True)
     finally:
         # The close was refused the signal, so the child is still running:
         # this test owns ending it.
         monkeypatch.undo()
         with contextlib.suppress(OSError):
             os.killpg(pid, FORCED_TERMINATION_SIGNAL)  # type: ignore[attr-defined,unused-ignore]
+
+
+@_LINUX_ONLY
+def test_a_second_close_waits_for_the_first_to_capture_the_exit_record() -> None:
+    """A concurrent close must not hand back a half-closed binding.
+
+    The adapter above consults ``exit_status`` immediately after closing,
+    and its watchdog closes from a timer thread — so two closes in flight
+    is the designed path, not a hypothetical. A second close that returned
+    on seeing the ``_closed`` flag would let its caller read ``None`` for a
+    child that is about to report ``-9``.
+    """
+    child = _spawn("import time; time.sleep(300)")
+    observed: list[int | None] = []
+    started = threading.Event()
+
+    def slow_capture(self: PosixPtyChild, process: object) -> None:
+        started.set()
+        time.sleep(0.5)  # arrangement, not evidence: widen the window
+        self._exit_status = -FORCED_TERMINATION_SIGNAL
+
+    original = PosixPtyChild._capture_exit_status_after_close
+    PosixPtyChild._capture_exit_status_after_close = slow_capture  # type: ignore[method-assign]
+    try:
+        first = threading.Thread(target=lambda: child.close(force=True), daemon=True)
+        first.start()
+        assert started.wait(_TIMEOUT_S)
+        child.close(force=True)
+        observed.append(child.exit_status)
+        first.join(_TIMEOUT_S)
+    finally:
+        PosixPtyChild._capture_exit_status_after_close = original  # type: ignore[method-assign]
+    assert observed == [-FORCED_TERMINATION_SIGNAL], (
+        f"the second close returned before the exit record existed: {observed}"
+    )
+
+
+@_LINUX_ONLY
+def test_a_subject_that_cannot_be_executed_fails_the_spawn(tmp_path: object) -> None:
+    """A pre-exec failure must not become subject evidence.
+
+    The trampoline's fds 0/1/2 are the pty slave, so an unhandled failure
+    there would print a Python traceback straight into the subject's output
+    stream and exit 1 — indistinguishable from a subject that exited 1.
+    ``shutil.which`` does not prevent this: a script with no shebang is
+    executable and still cannot be ``execv``'d.
+    """
+    import pathlib
+
+    script = pathlib.Path(str(tmp_path)) / "no-shebang"
+    script.write_bytes(b"echo this file has no shebang\n")
+    script.chmod(0o755)
+    with pytest.raises(OSError, match="the subject could not be started") as caught:
+        PosixPtyChild.spawn([str(script)], rows=_INITIAL_ROWS, columns=_INITIAL_COLUMNS)
+    assert "no-shebang" in str(caught.value)
