@@ -4,7 +4,7 @@
   recorded during the remediation planning for the
   [2026-07-24 adversarial review](../reviews/adversarial-review-2026-07-24.md).
 - **Issue:** tracking issue to be filed in Phase 0 of the
-  [remediation handover](../handovers/adversarial-review-2026-07-24-remediation-handover.md);
+  [remediation handover](../handovers/archive/adversarial-review-2026-07-24-remediation-handover.md);
   this record is the authoritative decision either way.
 - **Date:** 2026-07-24
 - **Inputs:** the 2026-07-24 adversarial review findings P2 (frozen
