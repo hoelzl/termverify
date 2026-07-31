@@ -23,7 +23,10 @@ the boundary's decision 2 (claim only what CI verifies).
 
 from __future__ import annotations
 
+import contextlib
+import errno
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -419,3 +422,246 @@ def test_the_environment_overlay_and_cwd_compose_inside_the_binding() -> None:
         assert "TV overlaid /tmp" in output, output
     finally:
         child.close(force=True)
+
+
+# --------------------------------------------------------------------------
+# Failure legs
+#
+# Fault injection rather than luck: an untested failure leg drifts in prose
+# before it drifts in code, and every one of these is a path the binding
+# promises something about. Patches are scoped to the descriptor or the call
+# under test, so nothing else in the process is affected.
+# --------------------------------------------------------------------------
+
+
+@_LINUX_ONLY
+def test_an_empty_argv_names_no_subject() -> None:
+    with pytest.raises(ValueError, match="argv must name a subject command"):
+        PosixPtyChild.spawn([], rows=_INITIAL_ROWS, columns=_INITIAL_COLUMNS)
+
+
+@_LINUX_ONLY
+def test_a_failed_spawn_releases_the_master(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No descriptor outlives a spawn that never produced a child."""
+
+    def refuse(*args: object, **kwargs: object) -> object:
+        raise OSError("refused")
+
+    before = len(os.listdir("/proc/self/fd"))
+    monkeypatch.setattr(subprocess, "Popen", refuse)
+    with pytest.raises(OSError, match="refused"):
+        _spawn("pass")
+    monkeypatch.undo()
+    assert len(os.listdir("/proc/self/fd")) == before
+
+
+@_LINUX_ONLY
+def test_a_failed_construction_kills_the_child_it_cannot_adopt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The fail-closed path whose trigger is descriptor exhaustion.
+
+    ``os.pipe`` is what fails on EMFILE/ENFILE, and it fails *after* the
+    child exists — so the binding must end that child rather than leak it.
+    """
+    reached: list[int] = []
+
+    def refuse() -> tuple[int, int]:
+        reached.append(1)
+        raise OSError("EMFILE")
+
+    monkeypatch.setattr(os, "pipe", refuse)
+    with pytest.raises(OSError, match="failed to adopt the pty descriptors"):
+        _spawn("import time; time.sleep(300)")
+    monkeypatch.undo()
+    assert reached, "the fault was never reached"
+
+
+@_LINUX_ONLY
+def test_exit_status_is_observed_without_a_close() -> None:
+    """The property reports a real exit the moment the OS has one."""
+    child = _spawn("pass")
+    try:
+        with pytest.raises(PosixPtyEndOfStreamError):
+            for _ in range(100):
+                child.read()
+        assert child.exit_status == 0
+        assert child.is_alive() is False
+    finally:
+        child.close(force=True)
+
+
+@_LINUX_ONLY
+def test_a_read_retries_when_readability_is_lost_after_the_poll(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty return and a lost race are not the same fact.
+
+    Reporting end-of-stream for a ``BlockingIOError`` would turn a
+    scheduling artifact into a claim that the subject ended.
+    """
+    child = _spawn("print('HELLO')")
+    try:
+        real_read = os.read
+        pending = [True]
+
+        def flaky(fd: int, size: int) -> bytes:
+            if fd == child._master_fd and pending[0]:
+                pending[0] = False
+                raise BlockingIOError
+            return real_read(fd, size)
+
+        monkeypatch.setattr(os, "read", flaky)
+        assert "HELLO" in _read_until(child, "HELLO")
+        assert pending[0] is False, "the fault was never reached"
+    finally:
+        monkeypatch.undo()
+        child.close(force=True)
+
+
+@_LINUX_ONLY
+def test_an_empty_read_is_end_of_stream(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Defensive leg: Linux answers EIO, but an empty read means the same."""
+    child = _spawn("import time; time.sleep(300)")
+    try:
+        real_read = os.read
+
+        def empty(fd: int, size: int) -> bytes:
+            if fd == child._master_fd:
+                return b""
+            return real_read(fd, size)
+
+        monkeypatch.setattr(os, "read", empty)
+        with pytest.raises(PosixPtyEndOfStreamError):
+            child.read()
+    finally:
+        monkeypatch.undo()
+        child.close(force=True)
+
+
+@_LINUX_ONLY
+def test_a_read_that_fails_for_another_reason_is_not_end_of_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    child = _spawn("import time; time.sleep(300)")
+    try:
+        real_read = os.read
+
+        def broken(fd: int, size: int) -> bytes:
+            if fd == child._master_fd:
+                raise OSError(errno.EBADF, "bad descriptor")
+            return real_read(fd, size)
+
+        monkeypatch.setattr(os, "read", broken)
+        with pytest.raises(OSError) as caught:
+            child.read()
+        assert not isinstance(caught.value, PosixPtyEndOfStreamError)
+    finally:
+        monkeypatch.undo()
+        child.close(force=True)
+
+
+@_LINUX_ONLY
+def test_write_rejects_a_non_string() -> None:
+    child = _spawn("import time; time.sleep(300)")
+    try:
+        with pytest.raises(TypeError, match="text must be a string"):
+            child.write(b"bytes")  # type: ignore[arg-type]
+    finally:
+        child.close(force=True)
+
+
+@_LINUX_ONLY
+def test_a_second_concurrent_write_wears_its_own_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The write-side twin of the read-side guard (issue #261)."""
+    child = _spawn("import time; time.sleep(300)")
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocking_write(self: PosixPtyChild, fd: int, wake: int, payload: bytes) -> None:
+        entered.set()
+        release.wait(_TIMEOUT_S)
+
+    monkeypatch.setattr(PosixPtyChild, "_write_all", blocking_write)
+    writer = threading.Thread(target=lambda: child.write("first"), daemon=True)
+    writer.start()
+    try:
+        assert entered.wait(_TIMEOUT_S)
+        with pytest.raises(PosixPtyConcurrentIOError):
+            child.write("second")
+    finally:
+        release.set()
+        writer.join(_TIMEOUT_S)
+        monkeypatch.undo()
+        child.close(force=True)
+
+
+@_LINUX_ONLY
+def test_a_write_woken_by_a_close_reports_the_closed_binding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    child = _spawn("import time; time.sleep(300)")
+    try:
+        monkeypatch.setattr(
+            _posix_pty,
+            "_wait_until_ready",
+            lambda fd, wake, *, write: True,
+        )
+        with pytest.raises(PosixPtyClosedError, match="closed during a write"):
+            child.write("never arrives")
+    finally:
+        monkeypatch.undo()
+        child.close(force=True)
+
+
+@_LINUX_ONLY
+def test_a_forced_close_falls_back_to_the_pid_when_no_group_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The repair for the CI red: ESRCH means kill the process itself.
+
+    A child forked but not yet through ``setsid`` has no group of its own,
+    and swallowing that ``ESRCH`` is what let it outlive its own teardown.
+    """
+    child = _spawn("import time; time.sleep(300)")
+    pid = child.pid
+
+    def no_such_group(pgid: int, signal_number: int) -> None:
+        raise ProcessLookupError(errno.ESRCH, "no such process group")
+
+    monkeypatch.setattr(os, "killpg", no_such_group)
+    child.close(force=True)
+    monkeypatch.undo()
+    assert child.exit_status == -FORCED_TERMINATION_SIGNAL
+    with pytest.raises(OSError):
+        os.kill(pid, 0)
+
+
+@_LINUX_ONLY
+def test_a_close_that_may_not_signal_claims_no_exit_it_did_not_observe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A signal we are not allowed to send is not an exit we can claim."""
+    child = _spawn("import time; time.sleep(300)")
+    pid = child.pid
+    try:
+
+        def refused(pgid: int, signal_number: int) -> None:
+            raise PermissionError(errno.EPERM, "not permitted")
+
+        monkeypatch.setattr(os, "killpg", refused)
+        monkeypatch.setattr(
+            PosixPtyChild,
+            "_capture_exit_status_after_close",
+            lambda self, process: None,
+        )
+        child.close(force=True)
+        assert child.exit_status is None
+    finally:
+        # The close was refused the signal, so the child is still running:
+        # this test owns ending it.
+        monkeypatch.undo()
+        with contextlib.suppress(OSError):
+            os.killpg(pid, FORCED_TERMINATION_SIGNAL)  # type: ignore[attr-defined,unused-ignore]
