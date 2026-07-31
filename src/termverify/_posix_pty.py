@@ -22,7 +22,8 @@ faithful terminal than the one a person drives. The usual route is
 presence of threads: it runs Python code between ``fork`` and ``exec``, and
 this product runs a watchdog timer thread. So the binding spawns a
 **trampoline** instead — a fresh, single-threaded interpreter that calls
-``setsid``, ``TIOCSCTTY``, and then ``execv``. The fork is followed
+``TIOCSCTTY`` and then ``execv`` (``setsid`` is done by CPython's own
+fork-exec helper; see :data:`_TRAMPOLINE`). The fork is followed
 immediately by an exec, which CPython performs in C, so no Python code ever
 runs in a forked-but-not-exec'd child. ``execv`` replaces the process
 image, so the subject keeps the pid, the exit status, and the argv the
@@ -107,8 +108,25 @@ _READ_CHUNK_BYTES: Final = 65536
 
 #: The trampoline. It runs in a fresh interpreter that has just been
 #: ``exec``'d, so it is single-threaded by construction and none of the
-#: fork-safety hazards of ``preexec_fn`` apply. It does the three things
-#: only the child itself can do, then becomes the subject.
+#: fork-safety hazards of ``preexec_fn`` apply. It does the one thing only
+#: the child itself can do — acquire the controlling terminal — and then
+#: becomes the subject.
+#:
+#: ``setsid`` is deliberately **not** here: ``Popen(start_new_session=True)``
+#: performs it in CPython's C fork-exec helper, before this interpreter
+#: starts. That matters for teardown, not for style. A forced close
+#: identifies the child's process group by its pid, and until something
+#: calls ``setsid`` no such group exists — so a close racing a just-spawned
+#: child would signal a group that is not there yet. Moving ``setsid`` into
+#: the helper shrinks that window to the fork itself; the ``ESRCH``
+#: fallback in :meth:`PosixPtyChild._terminate_session` closes what
+#: remains. This is a repair, not a precaution: with ``setsid`` in the
+#: trampoline and the ``ESRCH`` suppressed, the Ubuntu legs for
+#: ``test_a_forced_close_kills_the_session_and_records_the_real_exit``
+#: reported ``exit_status`` ``None`` — the close signalled a group that
+#: did not exist yet, killed nothing, and the bounded wait timed out.
+#: Which of the two changes alone would suffice was not measured; both
+#: are kept because they close different halves of the window.
 #:
 #: It reports a failed ``execv`` only as a non-zero interpreter exit, which
 #: is why the command is resolved by ``shutil.which`` in the parent: a
@@ -116,7 +134,6 @@ _READ_CHUNK_BYTES: Final = 65536
 #: arriving here as an opaque exit code.
 _TRAMPOLINE: Final = (
     "import fcntl,os,sys,termios\n"
-    "os.setsid()\n"
     "fcntl.ioctl(0, termios.TIOCSCTTY, 0)\n"
     "os.execv(sys.argv[1], sys.argv[1:])\n"
 )
@@ -158,7 +175,9 @@ def is_supported() -> bool:
     """
     if not sys.platform.startswith("linux"):
         return False
-    return hasattr(os, "openpty") and hasattr(os, "killpg")
+    return hasattr(os, "openpty") and hasattr(  # coverage: exclude-windows
+        os, "killpg"
+    )
 
 
 def terminal_flags(fd: int) -> tuple[int, int, int]:  # coverage: exclude-windows
@@ -246,7 +265,7 @@ def _wait_until_ready(  # coverage: exclude-windows - POSIX-only helper
     return any(ready == wake for ready, _events in poller.poll())
 
 
-class _suppress_os_errors:
+class _suppress_os_errors:  # coverage: exclude-windows - POSIX paths only
     """Context manager: teardown ignores already-gone descriptors."""
 
     def __enter__(self) -> None:
@@ -267,7 +286,9 @@ class PosixPtyChild:
     end-of-stream would ever arrive when the child exits.
     """
 
-    def __init__(self, process: subprocess.Popen[bytes], master_fd: int) -> None:
+    def __init__(  # coverage: exclude-windows - reachable only via spawn
+        self, process: subprocess.Popen[bytes], master_fd: int
+    ) -> None:
         self._process: subprocess.Popen[bytes] | None = process
         self._pid = process.pid
         self._master_fd = master_fd
@@ -319,7 +340,7 @@ class PosixPtyChild:
                 "the POSIX PTY binding is claimed on Linux only; this host is"
                 f" {sys.platform}"
             )
-        return cls._spawn_posix(
+        return cls._spawn_posix(  # coverage: exclude-windows - POSIX-only leg
             argv, rows=rows, columns=columns, env_overlay=env_overlay, cwd=cwd
         )
 
@@ -366,6 +387,9 @@ class PosixPtyChild:
                 env=merged,
                 cwd=cwd,
                 close_fds=True,
+                # The session is created here, in CPython's C fork-exec
+                # helper, rather than by the trampoline — see _TRAMPOLINE.
+                start_new_session=True,
             )
         except BaseException:
             os.close(master_fd)
@@ -394,11 +418,11 @@ class PosixPtyChild:
             ) from error
 
     @property
-    def pid(self) -> int:
+    def pid(self) -> int:  # coverage: exclude-windows - needs an instance
         return self._pid
 
     @property
-    def exit_status(self) -> int | None:
+    def exit_status(self) -> int | None:  # coverage: exclude-windows
         """Return the OS-observed exit status, else ``None``.
 
         A signal termination is the negative signal number, per ``waitpid``
@@ -419,7 +443,7 @@ class PosixPtyChild:
             self._exit_status = int(status)
             return self._exit_status
 
-    def is_alive(self) -> bool:
+    def is_alive(self) -> bool:  # coverage: exclude-windows
         with self._lock:
             process = self._process
         return process is not None and process.poll() is None
@@ -482,7 +506,7 @@ class PosixPtyChild:
                 raise self._end_of_stream()
             return chunk
 
-    def _end_of_stream(self) -> PosixPtyEndOfStreamError:
+    def _end_of_stream(self) -> PosixPtyEndOfStreamError:  # coverage: exclude-windows
         self._capture_exit_status_after_eos()
         return PosixPtyEndOfStreamError("the pseudoterminal reported end-of-stream")
 
@@ -592,8 +616,23 @@ class PosixPtyChild:
         """
         if sys.platform == "win32":  # coverage: exclude-posix - POSIX-only
             raise AssertionError("the POSIX PTY path is POSIX-only")
-        with _suppress_os_errors():
+        try:
             os.killpg(process.pid, FORCED_TERMINATION_SIGNAL)
+            return
+        except ProcessLookupError:
+            # No group with that id — the child was forked but has not yet
+            # reached its ``setsid``, so there is nothing but the process
+            # itself to end. Silently suppressing this is what made a
+            # forced close kill nothing and report no exit record at all:
+            # the child outlived the close and the bounded wait below
+            # timed out. Fall through to the pid.
+            pass
+        except OSError:
+            # Already gone, or not ours to signal. The bounded wait below
+            # reports what was actually observed either way.
+            return
+        with _suppress_os_errors():
+            process.kill()
 
     def _capture_exit_status_after_close(  # coverage: exclude-windows
         self, process: subprocess.Popen[bytes]
