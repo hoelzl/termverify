@@ -17,7 +17,11 @@ source of truth for volatile work state.
 
 ## Draft
 
-None.
+- [POSIX PTY adapter and examples vertical handover](posix-pty-adapter-and-examples-vertical-handover.md)
+  — **draft**; proposed context for the vertical tracked by issue #204. It
+  becomes active only when the owner accepts the
+  [vertical boundary decision](../design/posix-pty-adapter-and-examples-vertical-boundary.md)
+  and answers its five decision requests; no slice is authorized before then.
 
 ## Archive
 
