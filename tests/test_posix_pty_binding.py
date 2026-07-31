@@ -562,7 +562,15 @@ def test_an_empty_read_is_end_of_stream(monkeypatch: pytest.MonkeyPatch) -> None
 def test_a_read_that_fails_for_another_reason_is_not_end_of_stream(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    child = _spawn("import time; time.sleep(300)")
+    """The child must *produce* something, or this test waits on ``poll``.
+
+    Patching ``os.read`` does not shorten the wait that precedes it: a read
+    blocks in ``poll`` until the pty is readable, so against a silent
+    300-second child the injected fault only fires when that child finally
+    exits. Measured on CI at 300.03s before the child was given something
+    to say.
+    """
+    child = _spawn("print('READY')")
     try:
         real_read = os.read
 
