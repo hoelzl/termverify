@@ -2,15 +2,15 @@
 
 ## Handover metadata
 
-- **Status:** draft — proposed context for the initiative tracked by
-  [issue #204](https://github.com/hoelzl/termverify/issues/204). It becomes
-  **active** when the owner accepts the
+- **Status:** active — the working handover for the initiative tracked by
+  [issue #204](https://github.com/hoelzl/termverify/issues/204). The
   [vertical boundary design](../design/posix-pty-adapter-and-examples-vertical-boundary.md)
-  and answers its five decision requests; until then no slice is authorized
-  and nothing here is a work plan.
+  was accepted 2026-07-31 with all five decisions taken, which authorizes the
+  slices below in order.
 - **Owner:** project maintainer
 - **Created:** 2026-07-31
-- **Updated:** 2026-07-31 (drafted alongside the boundary design)
+- **Updated:** 2026-07-31 (boundary accepted; decisions recorded; Phase 0
+  closed except issue filing)
 - **Review required:** yes. Every slice that changes runtime behavior, the
   public API, or a platform claim needs TDD evidence, the full validation
   gate, and an independent fresh-context adversarial review. **The review
@@ -49,7 +49,7 @@ Two facts set the shape of the work:
   `ConptyAdapter`'s epoch machinery, marker protocol, watchdog, geometry gate,
   and classification matrix are cross-platform, fake-drivable, and ratcheted
   today. The POSIX work is a binding plus a rename, not a second adapter —
-  subject to decision 1 of the boundary design.
+  which is what decision 1 chose — under the stop-and-return trigger in §2.
 - **Most of the POSIX machinery is already shipped**, in `_jsonl_pipe.py`:
   session-leader spawn, `poll` plus self-pipe for interruptible I/O with
   in-flight tracking in both directions, `killpg` teardown, and the disclosed
@@ -64,12 +64,25 @@ pure; no new protocol; wall-clock silence is never evidence; the line
 discipline is an explicit determinism input; the example is executable and is
 not a golden master; the platform claim fails closed.
 
-Open — **these are Phase 0 and block everything**: adapter structure
-(generalize versus duplicate), platform claim scope (Linux only versus adding
-macOS to CI), marker contract (one contract versus a relaxed POSIX variant),
-normalizer vocabulary policy when a real TUI emits a rejected sequence, and
-the example subject (synthetic versus real third-party TUI). Each has a
-recommendation in the design; none is decided.
+Taken by the owner 2026-07-31, all five as recommended (full text and
+rationale in the design's "Decisions taken"):
+
+1. **Generalize `ConptyAdapter`** into one platform-neutral terminal adapter
+   — **with a re-evaluation trigger.** `conpty.py` holds zero platform
+   conditionals today (`_conpty.py` has 3, `_jsonl_pipe.py` 14). That zero is
+   the threshold: if the generalization cannot be written without platform
+   branches above the binding port, Phase 2 **stops and returns to the owner**
+   with the specific list and what each conditional absorbs, and a separate
+   `PosixPtyAdapter` becomes live again. Do not accumulate conditionals and
+   report success.
+2. **Linux only.** The probe reports unsupported everywhere CI does not
+   verify, macOS included. Do not shape the binding around a macOS claim
+   that is not being made.
+3. **One marker contract on both platforms.** Subjects implement it once.
+4. **Grow `vt.py` one measured sequence at a time**, each with the evidence
+   that a real subject emits it. A rejection is a finding to disposition, not
+   an obstacle to route around. The VT normalizer decision is not reopened.
+5. **A synthetic in-repo TUI** as the example subject.
 
 Inherited and not reopened here: the prototyping-stage freeze suspension (no
 compatibility owed to any shipped name, so renames are cheap); the
@@ -80,15 +93,13 @@ per-OS coverage overlays.
 
 ## 3. Phase breakdown
 
-### Phase 0 — Owner decisions and issue filing [TODO]
+### Phase 0 — Owner decisions and issue filing [DONE 2026-07-31]
 
-Blocks every other phase. Take the five decisions in the boundary design's
-"Decisions requested", record them in the design document's status (moving it
-to `accepted`), and file one issue per slice below under a
-`vertical-204` label. Nothing else in this handover is authorized until this
-phase completes.
+All five decisions taken and recorded in §2 and in the design's "Decisions
+taken"; the design is `accepted`. Slice issues are filed under the
+`vertical-204` label and listed in §4.
 
-### Phase 1 — The POSIX PTY binding [TODO]
+### Phase 1 — The POSIX PTY binding [TODO — #267]
 
 `openpty`, child as session leader with the slave as controlling terminal,
 master retained as a raw descriptor, explicit line discipline, geometry via
@@ -103,28 +114,30 @@ session and reports a real exit record; a blocked read wakes on close; the
 support probe answers before any spawn. Measure and record the actual
 end-of-stream behavior rather than assuming it.
 
-### Phase 2 — Adapter generalization [TODO]
+### Phase 2 — Adapter generalization [TODO — #268]
 
-Whatever decision 1 selects, executed as a **pure refactor with no behavior
-change**. The existing ConPTY suite must stay green without edits to its
-assertions; a test that needs editing to pass is evidence the refactor
-changed behavior, and is a stop-and-investigate, not a fix-the-test.
+One platform-neutral terminal adapter over the binding port, executed as a
+**pure refactor with no behavior change**. The existing ConPTY suite must stay
+green without edits to its assertions; a test that needs editing to pass is
+evidence the refactor changed behavior, and is a stop-and-investigate, not a
+fix-the-test. Decision 1's zero-platform-conditional threshold is an
+acceptance criterion here, and crossing it is a stop-and-return.
 
-### Phase 3 — POSIX integration evidence [TODO]
+### Phase 3 — POSIX integration evidence [TODO — #269]
 
 The real path end to end on the CI matrix, mirroring what the ConPTY adapter
 already proves: start to readiness, a text epoch, a resize epoch with observed
 dimensions and `SIGWINCH`, subject exit, forced stop, and a deadline abort
 with recovery. Every public claim the adapter makes needs a leg here.
 
-### Phase 4 — The example subject and walkthrough [TODO]
+### Phase 4 — The example subject and walkthrough [TODO — #270]
 
-A minimal synthetic TUI in the repository (subject to decision 5) and an
+A minimal synthetic TUI in the repository (decision 5) and an
 `examples/` walkthrough that runs it under the adapter, records, replays,
 compares, and renders the report — executed in CI, asserting verdicts rather
 than stored bytes. Update the README to point at it instead of describing it.
 
-### Phase 5 — Recorded reassessment [TODO]
+### Phase 5 — Recorded reassessment [TODO — #271]
 
 Not an implementation phase. What did the vertical contradict? What did it
 never touch? Which deferred horizontal item does a real subject now demand?
@@ -134,9 +147,20 @@ moratorium, recorded under `docs/agent/design/`.
 ## 4. Current status
 
 - **Nothing is implemented.** `main` is at the merge of PR #265
-  (`0.2.0.dev0`), suite green, no open PRs, no worktrees. This handover and
-  the boundary design are the initiative's only artifacts.
-- **Phase 0 is the only actionable work**, and it is the owner's.
+  (`0.2.0.dev0`), suite green. This handover and the boundary design are the
+  initiative's only artifacts.
+- **Phase 0 is complete.** Boundary accepted 2026-07-31 with all five
+  decisions; issues filed under the `vertical-204` label:
+
+  | Phase | Issue | Scope |
+  | --- | --- | --- |
+  | 1 | #267 | POSIX PTY binding |
+  | 2 | #268 | Adapter generalization (carries the stop-and-return trigger) |
+  | 3 | #269 | POSIX integration evidence |
+  | 4 | #270 | Synthetic TUI and `examples/` walkthrough |
+  | 5 | #271 | Recorded reassessment (decision request, not a slice) |
+
+- **Next actionable work is Phase 1 (#267).**
 - **Adjacent open issues, none of them this initiative's:** #261 (concurrent-
   I/O disposition — decided re-raise on 2026-07-31, needs a POSIX red, so it
   becomes cheap once Phase 1 exists and may be sequenced against it); the
@@ -145,11 +169,14 @@ moratorium, recorded under `docs/agent/design/`.
 
 ## 5. Next steps
 
-1. **Owner: take the five decisions** in the boundary design and accept or
-   amend it. Everything else waits.
-2. File the Phase 1–5 issues once the decisions are recorded.
-3. Start Phase 1 in a fresh sibling worktree. Write the first failing test
-   before the binding exists, push it, and read the red off the Ubuntu legs.
+1. ~~Owner decisions and issue filing~~ **done 2026-07-31** — see §4.
+2. **Start Phase 1 (#267)** in a fresh sibling worktree. Write the first
+   failing test before the binding exists, push it, and read the red off the
+   Ubuntu legs. Begin with the measurements the design deliberately refused to
+   assume: the inherited line discipline, and what a master reports once its
+   last slave closes.
+3. Then #268, #269, #270 in order — each consumes its predecessor — and
+   prepare #271 once they have landed.
 
 ## 6. Key files & architecture
 

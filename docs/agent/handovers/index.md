@@ -7,6 +7,11 @@ source of truth for volatile work state.
 
 ## Active
 
+- [POSIX PTY adapter and examples vertical handover](posix-pty-adapter-and-examples-vertical-handover.md)
+  — **active**; the vertical tracked by issue #204, authorized by the accepted
+  [vertical boundary decision](../design/posix-pty-adapter-and-examples-vertical-boundary.md)
+  (2026-07-31, five decisions taken). A POSIX PTY binding, one platform-neutral
+  terminal adapter above it, and the first `examples/` walkthrough.
 - [Pre-release boundary hardening handover](pre-release-boundary-hardening-handover.md)
   — **active**; accepts the transferred vocabulary, correlation, containment,
   schema-distribution, terminal-production, and release-governance boundaries.
@@ -17,11 +22,7 @@ source of truth for volatile work state.
 
 ## Draft
 
-- [POSIX PTY adapter and examples vertical handover](posix-pty-adapter-and-examples-vertical-handover.md)
-  — **draft**; proposed context for the vertical tracked by issue #204. It
-  becomes active only when the owner accepts the
-  [vertical boundary decision](../design/posix-pty-adapter-and-examples-vertical-boundary.md)
-  and answers its five decision requests; no slice is authorized before then.
+None.
 
 ## Archive
 

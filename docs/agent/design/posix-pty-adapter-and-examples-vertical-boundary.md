@@ -1,15 +1,15 @@
 # Vertical Boundary: A POSIX PTY Adapter and the First End-to-End Example
 
-- **Status:** proposed — drafted 2026-07-31 at owner request as the boundary
+- **Status:** accepted — drafted 2026-07-31 at owner request as the boundary
   decision for [issue #204](https://github.com/hoelzl/termverify/issues/204),
   whose direction (vertical before horizontal) was accepted 2026-07-24 and is
   recorded as decision 9.1 of the archived
   [2026-07-24 remediation handover](../handovers/archive/adversarial-review-2026-07-24-remediation-handover.md).
-  Acceptance activates this initiative for exactly the scope below and
-  authorizes its slices in order; it resolves the five owner decisions in
-  "Decisions requested" and no others. No adapter, example, or platform claim
-  exists until its slice lands with evidence and an adversarial-review
-  verdict.
+  Accepted the same day with all five decisions taken as recommended, one of
+  them conditionally — see "Decisions taken". Acceptance activates this
+  initiative for exactly the scope below and authorizes its slices in order.
+  No adapter, example, or platform claim exists until its slice lands with
+  evidence and an adversarial-review verdict.
 - **Issue:** [#204](https://github.com/hoelzl/termverify/issues/204);
   prioritization input is
   [#114](https://github.com/hoelzl/termverify/issues/114)
@@ -181,36 +181,48 @@ One directory, one subject, one walkthrough.
 The same walkthrough is what #114 ask 4 asked for and what the README can
 point at instead of describing.
 
-## Decisions requested
+## Decisions taken
 
-Five, each of which forks the work. Recommendations are stated; the owner
-decides.
+Owner, 2026-07-31. All five as recommended; decision 1 carries an explicit
+re-evaluation trigger the owner added.
 
-1. **Adapter structure.** Generalize `ConptyAdapter` into one
-   platform-neutral terminal adapter over a binding port (**recommended** —
-   design rule 1, and prototyping-stage governance owes no compatibility for
-   the rename), or ship a separate `PosixPtyAdapter` that duplicates the
-   epoch machinery.
-2. **Platform claim scope.** Verify and claim Linux only, with the probe
-   reporting unsupported elsewhere (**recommended** as the cheapest truthful
-   start), or add `macos-latest` to the CI matrix and claim both. The repo is
-   public, so GitHub-hosted macOS runners cost no money; they cost matrix
-   time and a maintenance surface.
-3. **Marker contract.** Keep one readiness-marker contract on both platforms
-   (**recommended** — one contract to document, one for subjects to
-   implement, and GlyphWright already emits it), or let the POSIX binding
-   accept a relaxed marker now that the ConPTY constraints that forced the
-   current shape do not apply.
-4. **Normalizer vocabulary policy** when the real TUI emits a sequence the
-   normalizer rejects. Grow the vocabulary one measured sequence at a time,
-   each with evidence (**recommended** — it is what the fail-closed design is
-   for), or treat a real TUI's vocabulary as grounds to reopen the
-   [VT normalizer decision](vt-normalizer-decision.md) in favour of a
-   third-party screen model.
-5. **Example subject.** A synthetic in-repo TUI (**recommended** —
-   deterministic, no dependency, and the walkthrough stays about TermVerify),
-   or drive a real third-party TUI, which is more convincing and imports that
-   project's behavior into this repository's CI.
+1. **Adapter structure: generalize `ConptyAdapter`** into one
+   platform-neutral terminal adapter over a binding port. Prototyping-stage
+   governance owes no compatibility for the rename.
+
+   **Re-evaluation trigger, and it is measurable.** The generalization is
+   authorized on the premise that platform differences are absorbed by the
+   binding port — design rule 1. `src/termverify/conpty.py` today contains
+   **zero** platform conditionals (`sys.platform`, `os.name`); the native
+   modules hold them all (`_conpty.py`: 3, `_jsonl_pipe.py`: 14). That zero
+   is the threshold. If the generalized adapter cannot be written without
+   introducing platform branches above the binding port, the slice **stops
+   and returns to the owner** with the specific list of conditionals and what
+   each one is absorbing, rather than accumulating them — at which point a
+   separate `PosixPtyAdapter` becomes the live alternative again. Holding the
+   count at zero is an acceptance criterion of the slice and of its review; a
+   ratchet on it is the natural mechanism but the slice chooses.
+
+2. **Platform claim scope: Linux only, for now.** The support probe reports
+   unsupported on every platform the CI matrix does not verify, including
+   macOS — no unverified running. Adding `macos-latest` stays available as a
+   later, separate change if a subject asks for it; nothing in the binding is
+   to be shaped around a macOS claim that is not being made.
+3. **Marker contract: one contract on both platforms.** Subjects implement
+   the readiness marker once — printable, per-emission token — and it works
+   on either adapter. The POSIX path does not need the constraints that
+   forced this shape on ConPTY, and inherits them anyway rather than
+   splitting the contract subjects must satisfy.
+4. **Normalizer vocabulary: grow `vt.py` one measured sequence at a time**,
+   each addition carrying the evidence that a real subject emits it. The
+   fail-closed design is doing its job when it rejects; a rejection is a
+   finding to be dispositioned, not an obstacle to route around. This
+   deliberately does **not** reopen the
+   [VT normalizer decision](vt-normalizer-decision.md); reopening it would
+   need its own reuse assessment.
+5. **Example subject: a synthetic in-repo TUI.** Deterministic, no
+   dependency, and the walkthrough stays about TermVerify rather than about
+   somebody else's application.
 
 ## Non-goals
 
@@ -243,9 +255,10 @@ Explicitly outside; each needs its own decision:
   emits — issue #200 had to add secondary-DA and DEL tolerance because a
   conhost preamble failed every run on one host. A real POSIX TUI is a much
   wider emitter. This is the likeliest place the vertical stalls, and the
-  likeliest place it pays for itself. Mitigation: decision 4 settles the
-  policy before the slice starts, and the example subject's vocabulary is a
-  scope dial the owner controls.
+  likeliest place it pays for itself. Mitigation: decision 4 settled the
+  policy before the slice starts — grow the vocabulary one measured sequence
+  at a time — and the synthetic subject's vocabulary is a scope dial the
+  owner controls.
 - **The generalization touches shipped, working code.** Slice 2 refactors an
   adapter that took six review rounds to get right. Mitigation: it is a
   pure-refactor slice with no behavior change, gated on the existing suite
@@ -269,7 +282,9 @@ accepted, since each consumes its predecessor:
    end-of-stream normalization, support probe. Linux CI evidence with a
    cooperative fixture child.
 2. **Adapter generalization** — the structural decision from item 1 of
-   "Decisions requested", as a pure refactor with no behavior change.
+   "Decisions taken" — one platform-neutral adapter — as a pure refactor with
+   no behavior change, holding the zero-platform-conditional threshold that
+   decision states.
 3. **Integration evidence** — the real POSIX path end to end on the CI
    matrix: start to readiness, text epoch, resize epoch with observed
    dimensions and `SIGWINCH`, subject exit, forced stop, deadline abort with
