@@ -466,15 +466,28 @@ def test_a_failed_construction_kills_the_child_it_cannot_adopt(
     """
     reached: list[int] = []
 
-    def refuse() -> tuple[int, int]:
+    def refuse(self: PosixPtyChild) -> None:
         reached.append(1)
         raise OSError("EMFILE")
 
-    monkeypatch.setattr(os, "pipe", refuse)
-    with pytest.raises(OSError, match="failed to adopt the pty descriptors"):
+    # Patched at the binding's own step rather than at ``os.pipe``:
+    # ``subprocess.Popen`` opens a pipe of its own for the exec handshake,
+    # so a global patch fails the *spawn* and never reaches the
+    # construction path this test is about. It did exactly that on CI.
+    monkeypatch.setattr(PosixPtyChild, "_adopt_wake_pipe", refuse)
+    with pytest.raises(OSError, match="failed to adopt the pty descriptors") as caught:
         _spawn("import time; time.sleep(300)")
     monkeypatch.undo()
     assert reached, "the fault was never reached"
+    # The contract, not just the message: no child outlives a failed spawn.
+    orphan = int(str(caught.value).rsplit(maxsplit=1)[-1])
+    deadline = time.monotonic() + _TIMEOUT_S
+    while True:
+        try:
+            os.kill(orphan, 0)
+        except OSError:
+            break
+        assert time.monotonic() < deadline, f"child {orphan} outlived a failed spawn"
 
 
 @_LINUX_ONLY
@@ -521,8 +534,14 @@ def test_a_read_retries_when_readability_is_lost_after_the_poll(
 
 @_LINUX_ONLY
 def test_an_empty_read_is_end_of_stream(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Defensive leg: Linux answers EIO, but an empty read means the same."""
-    child = _spawn("import time; time.sleep(300)")
+    """Defensive leg: Linux answers EIO, but an empty read means the same.
+
+    The child is short-lived on purpose. End-of-stream captures the exit
+    record, and against a long-running child that capture would wait out
+    its full bounded window for an exit that is not coming — thirty
+    seconds of test time to observe a branch that takes none.
+    """
+    child = _spawn("pass")
     try:
         real_read = os.read
 
