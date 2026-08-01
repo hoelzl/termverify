@@ -92,10 +92,12 @@ underscore path.
 
 ## What the surface deliberately excludes
 
-- `termverify.conpty` (Windows-only real-terminal runtime) and
-  `termverify.cooperation` (opt-in delivered-tier ports) stay at their module
-  paths; importing them from the top level would make the portable core's
-  import surface platform- and opt-in-dependent.
+- `termverify.terminal` (real-terminal runtime, and the platform-specific
+  bindings it ships) and `termverify.cooperation` (opt-in delivered-tier ports)
+  stay at their module paths; importing them from the top level would make the
+  portable core's import surface platform- and opt-in-dependent. The adapter in
+  that module is itself platform-neutral, but the bindings beside it are not,
+  and the exclusion is about the module as a whole.
 - The verification core (`termverify.recorder`, `termverify.comparator`,
   `termverify.replay`) is consumer-side, not adapter-author-side; it stays at
   its module paths until a consumer-surface decision curates it separately.

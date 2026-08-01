@@ -59,8 +59,12 @@ process state.
 
 The direct adapter is the default for fast unit tests, and is the path
 property testing will use when it exists (`[planned]` above). The Windows
-production path is `termverify.conpty.ConptyAdapter`, layered over the reviewed
-ConPTY binding and fail-closed `termverify.vt.VtScreenNormalizer`. It verifies
+production path is `termverify.terminal.TerminalAdapter` with `ConptyBinding`
+injected, layered over the reviewed ConPTY binding and fail-closed
+`termverify.vt.VtScreenNormalizer`. That adapter is platform-neutral and also
+ships `PosixPtyBinding`, whose evidence today stops at the binding — the
+adapter-level POSIX legs are issue #269, so there is no POSIX production path
+to claim yet. It verifies
 real terminal input, rendering, resize, EOF/exit evidence, forced teardown, and
 process-tree handling through explicit readiness-marker epochs. A successful
 Windows integration run has exercised the real binding, cooperation-tier

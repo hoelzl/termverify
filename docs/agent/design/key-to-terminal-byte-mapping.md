@@ -6,6 +6,15 @@
   encoding contract and authorizes the implementation slices listed at the
   end. It adds no code itself; until slice 1 merges, the ConPTY adapter
   continues to reject every `KeyInput` as a structured runtime failure.
+- **Renamed 2026-08-01 (#268):** this document uses the pre-generalization
+  names. The public adapter module is now `termverify.terminal`;
+  `ConptyAdapter` is `TerminalAdapter`, and `ConptyBindingPort` /
+  `ConptyChildPort` / `ConptyWatchdogPort` are `TerminalBindingPort` /
+  `TerminalChildPort` / `TerminalWatchdogPort`. `ConptyBinding` deliberately
+  keeps its name: it is one of two implementations of the neutral port,
+  beside `PosixPtyBinding`. The decisions recorded below are unchanged, and
+  every ConPTY-specific *behavior* described here is still a property of that
+  binding — only the names above the port moved.
 - **Issue:** [#139](https://github.com/hoelzl/termverify/issues/139)
 - **Date:** 2026-07-19
 - **Inputs:** the closed `termverify.key/v1` registry and chord grammar

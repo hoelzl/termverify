@@ -15,8 +15,9 @@ cross-platform, language-agnostic path. The alternatives:
 
 - `DirectAdapter` — in-process Python subjects, highest determinism, no OS
   process boundary.
-- `termverify.conpty` — real-terminal subjects on Windows that need a genuine
-  console, not pipes.
+- `termverify.terminal` — real-terminal subjects that need a genuine terminal,
+  not pipes: `ConptyBinding` for a Windows pseudoconsole, `PosixPtyBinding` for
+  a Linux pseudoterminal.
 
 ## Spawning a subject
 

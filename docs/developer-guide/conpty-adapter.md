@@ -1,11 +1,21 @@
-# ConPTY Adapter and Cooperation Ports
+# The ConPTY Binding, the Terminal Adapter, and Cooperation Ports
 
-`termverify.conpty.ConptyAdapter` drives one Windows terminal subject through
-an injected ConPTY binding port. The adapter enforces only the terminal
-constraint (dimensions are an OS-level pseudoconsole parameter; its receipt
-states the `os` enforcement tier). The six non-terminal constraints belong to
-injected `ConstraintPorts`, whose receipts may state only the `delivered`
-tier under the `termverify.enforcement-tier/v1` authorization matrix.
+`termverify.terminal.TerminalAdapter` drives one terminal subject through an
+injected binding port. The adapter itself names no platform
+([issue #268](https://github.com/hoelzl/termverify/issues/268)); this guide is
+about running it with `ConptyBinding`, the Windows pseudoconsole
+implementation, and nearly everything below — the geometry wrap, the DA-stall
+floor, console input echo, the C runtime's console reader — is a property of
+*that binding* rather than of the adapter. `PosixPtyBinding` is the second
+shipped implementation; its own guidance arrives with the adapter-level POSIX
+evidence in [issue #269](https://github.com/hoelzl/termverify/issues/269), and
+until then do not assume a statement here transfers to it.
+
+The adapter enforces only the terminal constraint (dimensions are an OS-level
+pseudoterminal parameter; its receipt states the `os` enforcement tier). The
+six non-terminal constraints belong to injected `ConstraintPorts`, whose
+receipts may state only the `delivered` tier under the
+`termverify.enforcement-tier/v1` authorization matrix.
 
 ## Wiring
 
@@ -16,10 +26,10 @@ runs require an explicit host decision to inject
 `termverify.cooperation.CooperationConstraintPorts`:
 
 ```python
-from termverify.conpty import ConptyAdapter, ConptyBinding
 from termverify.cooperation import CooperationConstraintPorts
+from termverify.terminal import ConptyBinding, TerminalAdapter
 
-adapter = ConptyAdapter(
+adapter = TerminalAdapter(
     ["my-subject.exe"],
     binding=ConptyBinding(),
     constraint_ports=CooperationConstraintPorts(
