@@ -346,9 +346,11 @@ def test_unsupported_probe_fails_terminal_negotiation() -> None:
     Until #268 this message said "no ConPTY pseudoconsole support", which was
     a statement the adapter had no evidence for even before the POSIX binding
     existed: what it holds is a ``TerminalBindingPort``, and the only thing it
-    learned is that the port's own probe answered no. The message reached
-    transcripts as an ``adapter-start-failed`` reason, so on a Linux host with
-    a POSIX binding injected it would have blamed a pseudoconsole that was
+    learned is that the port's own probe answered no. It is a
+    ``StartUnsupported`` message, which the recorder writes into the transcript
+    twice — as a ``capability.result`` reason and as the ``run.unsupported``
+    message (``recorder.py``) — so on a Linux host with a POSIX binding
+    injected the recorded evidence would have blamed a pseudoconsole that was
     never involved.
     """
     ports = _EnforcingPorts()

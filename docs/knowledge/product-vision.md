@@ -41,7 +41,7 @@ application under test
   └── reports and CI artifacts                     [planned]
 ```
 
-The PTY adapter row is built for Windows (ConPTY) only; POSIX is planned.
+The PTY adapter row is platform-neutral above its binding port, and only its Windows (ConPTY) binding is proven end to end; the POSIX path is planned.
 
 # Planned scope
 
@@ -49,7 +49,9 @@ Stated once, here. Each entry says plainly what does not exist and what it waits
 
 ## A POSIX PTY adapter
 
-There is no POSIX pseudoterminal adapter, so the Ubuntu CI legs cannot exercise a real terminal and most TUIs run on a platform TermVerify has never driven. This is the **first** planned item, not one among equals: the accepted direction is a vertical slice — a POSIX adapter plus one end-to-end `examples/` walkthrough that verifies a real, even trivial, TUI — before any further horizontal specification. Recorded as finding P6 and strategic recommendation 10 of the 2026-07-24 review, and tracked as the initiative in issue #204.
+The Ubuntu CI legs cannot yet exercise a real terminal end to end, so most TUIs run on a platform TermVerify has never driven through its own pipeline. This is the **first** planned item, not one among equals: the accepted direction is a vertical slice — a POSIX adapter plus one end-to-end `examples/` walkthrough that verifies a real, even trivial, TUI — before any further horizontal specification. Recorded as finding P6 and strategic recommendation 10 of the 2026-07-24 review, and tracked as the initiative in issue #204.
+
+Two of that initiative's five slices have landed, which changes what remains rather than whether it remains. A real POSIX pseudoterminal binding exists (`termverify._posix_pty`, issue #267) and the adapter above the binding port is platform-neutral with `PosixPtyBinding` shipped beside `ConptyBinding` (issue #268). What does not exist is the evidence that the two work together: no leg anywhere drives a real subject through the adapter on a pty — readiness, a text epoch, a resize with observed dimensions, exit, forced stop, deadline abort. Until issue #269 lands that, the POSIX capability is planned scope and belongs here, not in the README, however much of its machinery is already in the package.
 
 ## Property and state-machine testing
 

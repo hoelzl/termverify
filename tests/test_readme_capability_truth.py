@@ -90,7 +90,10 @@ _PINNED_INTRO = (
 #: does not trip the guard. ``test_every_planned_capability_is_guarded``
 #: asserts these keys still match the vision document's headings.
 _DEFERRED_GUARDS: dict[str, tuple[str, ...]] = {
-    "A POSIX PTY adapter": (r"posix",),
+    # ``posix\w*`` and not ``posix``: the bare word could not see
+    # ``PosixPtyBinding``, and #268 shipped exactly that name -- a POSIX claim
+    # reached the capability section and this guard stayed green.
+    "A POSIX PTY adapter": (r"posix\w*",),
     "Property and state-machine testing": (
         r"property test\w*",
         r"property-based",

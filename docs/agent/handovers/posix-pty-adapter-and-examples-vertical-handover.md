@@ -179,9 +179,11 @@ moratorium, recorded under `docs/agent/design/`.
 
 ## 4. Current status
 
-- **Phases 1 and 2 are implemented.** `main` carries the POSIX PTY binding
-  (#267, PR #272, squash `ceb7bb3`) and the platform-neutral terminal adapter
-  (#268). Suite green; still `0.2.0.dev0`.
+- **Phases 1 and 2 are implemented.** Phase 1 is the POSIX PTY binding (#267,
+  PR #272, squash `ceb7bb3`), merged 2026-08-01. Phase 2 is the
+  platform-neutral terminal adapter (#268, PR #275) — the change this paragraph
+  arrives in, so a reader who has it is reading it from a merge commit and not
+  from `main` before one. Suite green; still `0.2.0.dev0`.
 - **Phase 0 is complete.** Boundary accepted 2026-07-31 with all five
   decisions; issues filed under the `vertical-204` label:
 
@@ -234,9 +236,12 @@ Existing files this initiative reads or changes:
   `TerminalWatchdogPort`) a binding must satisfy, and the two shipped
   bindings `ConptyBinding` and `PosixPtyBinding`. Named `conpty.py` with
   `Conpty*` ports until #268.
-- `src/termverify/_terminal_binding.py` — the five platform-neutral failure
-  kinds both native bindings subclass, so the adapter classifies a kind and
-  never a family. Added by #268.
+- `src/termverify/_terminal_binding.py` — the platform-neutral failure kinds,
+  so the adapter classifies a kind and never a family. Added by #268. Five
+  kinds, of which the adapter classifies four; `_posix_pty` subclasses four,
+  having no geometry mismatch to raise. Neither number is a round one and both
+  are explained in the module docstring — do not restate them as "five kinds
+  both bindings subclass", which is what the first draft of this row said.
 - `src/termverify/_conpty.py` — the native precedent: incremental decode,
   marker scanning, spawn ownership, ratchet exclusion.
 - `src/termverify/_jsonl_pipe.py` — the POSIX mechanisms to reuse:

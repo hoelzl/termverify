@@ -27,9 +27,9 @@ module is where it lives.
 - **A terminal adapter with a VT normalizer** — `termverify.terminal` drives a
   subject through a pseudoterminal binding port (spawn, drain, resize,
   process-tree teardown, cancellation) and `termverify.vt` turns its byte
-  stream into comparable screen state. Two bindings are shipped:
-  `ConptyBinding` owns a real Windows pseudoconsole end to end, and
-  `PosixPtyBinding` owns a Linux pseudoterminal.
+  stream into comparable screen state. The adapter names no platform; the
+  binding with end-to-end evidence behind it is `ConptyBinding`, which owns a
+  real Windows pseudoconsole.
 - **Opt-in cooperation-tier constraint ports** — `termverify.cooperation`
   delivers the six non-terminal constraints to the subject's environment,
   within documented per-constraint limits (only `UTC` for timezone, only
@@ -51,8 +51,8 @@ module is where it lives.
 
 The capabilities above are the foundation, not the destination — property and
 state-machine testing, reviewed golden snapshots, differential testing,
-failure minimization, CI artifacts, and a POSIX PTY adapter are all intended
-and none of them exist yet. They are described once, with their sequencing, in
+failure minimization, CI artifacts, and a verified POSIX terminal path are all
+intended and none of them exist yet as capabilities you can rely on. They are described once, with their sequencing, in
 [the product vision](docs/knowledge/product-vision.md); this README
 deliberately does not restate them.
 
@@ -95,8 +95,10 @@ ConPTY binding has end-to-end evidence on the Windows CI matrix, while the
 POSIX binding's evidence today is at the binding itself — spawning a real
 pseudoterminal, geometry, teardown — and **not yet** the adapter driving a
 real subject through it end to end (issue #269). Treat the POSIX path as
-unproven until that lands. And
-constraint enforcement is tiered and honestly reported: the shipped
+unproven until that lands.
+
+The second boundary is that constraint enforcement is tiered and honestly
+reported: the shipped
 cooperation ports deliver the six non-terminal constraints to the subject's
 environment at the `delivered` tier, honored by subject cooperation rather
 than OS enforcement. **OS-level containment is an explicit non-goal** by

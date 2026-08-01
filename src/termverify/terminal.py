@@ -22,7 +22,8 @@ authorized on the premise it measures.
 
 All logic is testable against fake bindings, normalizers and watchdog triggers.
 The native boundaries are ``termverify._conpty`` and ``termverify._posix_pty``;
-of those, ``_conpty`` is the repository's only coverage-ratchet exclusion.
+of those two, only ``_conpty`` is omitted from the coverage ratchet, and
+``_posix_pty`` joined it under per-platform pragmas (issue #267).
 
 Integration evidence for the real paths is per binding, and is not equal:
 ``tests/test_conpty_integration.py`` proves end-to-end start/text/resize/exit,

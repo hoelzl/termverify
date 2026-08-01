@@ -388,7 +388,7 @@ Membership in the
 vocabulary is not evidence that an emitter exists: which tier a negotiation
 path may state is fixed by the accepted cooperation-tier design and validated
 fail-closed at runtime during receipt binding (an adapter's own terminal
-negotiation may state `os`; ports injected into the ConPTY adapter may state
+negotiation may state `os`; ports injected into the terminal adapter may state
 only `delivered`; ports negotiated by the direct adapter may state only
 `constructive`). The same posture applies to channels: `wire-message` is
 admitted before any emitter exists. A transcript records the stated tier but

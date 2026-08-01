@@ -11,11 +11,20 @@ name both geometries rather than collapse into a generic spawn failure (issue
 Those four classifications are the adapter's, and the adapter cannot name a
 platform: the binding port hides which binding it holds. So the failure kinds
 live here, above no platform and below the adapter, and each shipped binding
-raises its own subclass:
+subclasses them as ``Conpty*`` (``termverify._conpty``) and ``PosixPty*``
+(``termverify._posix_pty``).
 
-Each kind below is subclassed by ``termverify._conpty`` as ``Conpty*`` and by
-``termverify._posix_pty`` as ``PosixPty*``, with the one documented exception
-that ``_posix_pty`` raises no geometry mismatch.
+Five kinds, four classifications, and the arithmetic is deliberate. The fifth,
+:class:`TerminalUnsupportedError`, is **not** classified by the adapter and is
+not meant to be: reaching it means a spawn was attempted without the port's
+explicit probe having been honoured, which is a caller or binding defect with
+nothing to say about the subject, so it lands in the generic spawn-failure
+branch like any other unexpected exception. It lives here because both bindings
+raise it and a binding author needs a base to derive from — not because the
+adapter does anything with it.
+
+``_posix_pty`` subclasses four of the five: there is no
+``PosixPtyGeometryMismatchError``, for the reason given below.
 
 **Why subclasses and not one shared set of concrete types.** A diagnostic that
 says only "the binding was closed" loses which binding closed, and every one of
@@ -32,20 +41,24 @@ about the subject, produced by a correctly working binding. The port's error
 contract has to be neutral for the port to absorb the platform at all.
 
 A binding is *not* required to raise every kind. ``_posix_pty`` raises no
-geometry mismatch because ``TIOCSWINSZ`` adopts what it is given, where
-``CreatePseudoConsole`` wraps a request into signed 16-bit ``COORD`` members
-and can silently adopt something else (issue #228). The adapter's handling of
-an unraised kind is unreachable through that binding and reachable through the
-other, which is the ordinary shape of a port with two implementations — not a
+geometry mismatch because ``TIOCSWINSZ`` adopts what it is given: a dimension
+that does not fit the ``unsigned short`` the ``winsize`` struct packs is
+refused by ``struct.pack`` before the ioctl, rather than silently wrapping, so
+the binding never runs a child at a geometry other than the requested one.
+``CreatePseudoConsole`` does wrap — a request goes into signed 16-bit ``COORD``
+members unchecked and can be silently adopted as something smaller (issue
+#228) — which is why that kind exists at all. The adapter's handling of an
+unraised kind is unreachable through one binding and reachable through the
+other, which is the ordinary shape of a port with two implementations, not a
 gap to be filled with a conditional.
 
 These names are private on purpose. They are the *binding author's* contract,
 not the harness caller's: nothing a host writes against
 ``termverify.terminal`` needs them, so exporting them would widen the public
-surface for an audience of two modules. A third binding lives in this package
-and imports them the same way; if one ever needs to live outside it, that is
-the change that should make them public, with the compatibility question asked
-then rather than pre-answered now.
+surface for an audience of two modules. A third binding written inside this
+package would import them the same way; if one ever needs to live outside it,
+that is the change that should make them public, with the compatibility
+question asked then rather than pre-answered now.
 """
 
 from __future__ import annotations
