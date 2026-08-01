@@ -125,6 +125,21 @@ for name, flag, value in (
     print(name, bool({"iflag": iflag, "oflag": oflag, "lflag": lflag}[flag] & value))
 print("CTTY", os.ttyname(0))
 print("SID", os.getsid(0) == os.getpid())
+# The two that actually require a *controlling* terminal. Opening
+# /dev/tty fails ENXIO for a session leader that has none, and
+# tcgetpgrp fails ENOTTY on a terminal that is not the caller's
+# controlling one. Neither getsid nor ttyname can tell the difference,
+# which is why they alone left the trampoline's ioctl unpinned.
+try:
+    tty_fd = os.open("/dev/tty", os.O_RDWR)
+    os.close(tty_fd)
+    print("DEVTTY True")
+except OSError as error:
+    print("DEVTTY False", error.errno)
+try:
+    print("FGPGRP", os.tcgetpgrp(0) == os.getpgrp())
+except OSError as error:
+    print("FGPGRP False", error.errno)
 print("READY")
 sys.stdin.readline()
 """
@@ -210,14 +225,30 @@ def test_the_child_is_a_session_leader_with_a_controlling_terminal() -> None:
 
     Without a controlling terminal there is no foreground process group,
     so the kernel delivers no ``SIGWINCH`` and the subject cannot open
-    ``/dev/tty``. This is the assertion that would fail if the trampoline
-    were replaced by a plain spawn.
+    ``/dev/tty``.
+
+    **The first two assertions cannot detect that, and used to be the
+    whole test.** ``getsid`` reports the session ``start_new_session``
+    already created, and ``ttyname(0)`` only resolves the descriptor's
+    path — both are true of a child with no controlling terminal at all,
+    so deleting the trampoline's ``TIOCSCTTY`` left the entire suite
+    green. They are kept because they pin the *session*, which is what
+    the teardown's ``killpg`` depends on; the two below are what pin the
+    controlling terminal, and removing that ioctl must now fail here.
     """
     child = _spawn(_TERMIOS_CHILD)
     try:
         output = _read_until(child, "READY")
         assert "SID True" in output, f"child is not a session leader: {output!r}"
         assert "CTTY /dev/pts/" in output, f"child has no pty on fd 0: {output!r}"
+        assert "DEVTTY True" in output, (
+            f"the child cannot open /dev/tty, so it has no controlling"
+            f" terminal: {output!r}"
+        )
+        assert "FGPGRP True" in output, (
+            f"the child is not the foreground process group of its terminal,"
+            f" so no SIGWINCH will reach it: {output!r}"
+        )
     finally:
         child.close(force=True)
 
@@ -741,10 +772,18 @@ def test_a_second_close_waits_for_the_first_to_capture_the_exit_record() -> None
     def slow_capture(self: PosixPtyChild, process: object) -> None:
         started.set()
         time.sleep(0.5)  # arrangement, not evidence: widen the window
-        self._exit_status = -FORCED_TERMINATION_SIGNAL
+        with self._lock:
+            self._exit_status = -FORCED_TERMINATION_SIGNAL
 
-    original = PosixPtyChild._capture_exit_status_after_close
+    original_capture = PosixPtyChild._capture_exit_status_after_close
+    original_terminate = PosixPtyChild._terminate_session
+    # The kill is stubbed out too. With the real one running, the child is
+    # SIGKILLed before the follower is scheduled, so `process.poll()` can
+    # supply -9 on its own and the test passes even with the fix reverted —
+    # it would turn on the kernel's reap timing rather than on whether the
+    # follower waited. Round 2 caught that; this is the deterministic form.
     PosixPtyChild._capture_exit_status_after_close = slow_capture  # type: ignore[method-assign]
+    PosixPtyChild._terminate_session = lambda self, process: None  # type: ignore[method-assign]
     try:
         first = threading.Thread(target=lambda: child.close(force=True), daemon=True)
         first.start()
@@ -753,10 +792,65 @@ def test_a_second_close_waits_for_the_first_to_capture_the_exit_record() -> None
         observed.append(child.exit_status)
         first.join(_TIMEOUT_S)
     finally:
-        PosixPtyChild._capture_exit_status_after_close = original  # type: ignore[method-assign]
+        PosixPtyChild._capture_exit_status_after_close = original_capture  # type: ignore[method-assign]
+        PosixPtyChild._terminate_session = original_terminate  # type: ignore[method-assign]
+        with contextlib.suppress(OSError):
+            os.killpg(child.pid, FORCED_TERMINATION_SIGNAL)  # type: ignore[attr-defined,unused-ignore]
     assert observed == [-FORCED_TERMINATION_SIGNAL], (
         f"the second close returned before the exit record existed: {observed}"
     )
+
+
+@_LINUX_ONLY
+def test_a_second_close_learns_that_the_first_could_not_kill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed teardown must not read as success to whoever arrives second.
+
+    The thread that raises is typically the watchdog timer, whose
+    exception reaches ``threading.excepthook`` and no caller at all — so
+    if the follower returned normally, *nobody* would learn the child
+    survived, and ``exit_status`` would be ``None``, which is also what a
+    slow reap looks like.
+    """
+    child = _spawn("import time; time.sleep(300)")
+    pid = child.pid
+
+    def refused(*args: object) -> None:
+        raise PermissionError(errno.EPERM, "not permitted")
+
+    monkeypatch.setattr(os, "killpg", refused)
+    monkeypatch.setattr(subprocess.Popen, "kill", refused)
+    try:
+        with pytest.raises(PermissionError):
+            child.close(force=True)
+        # The follower arrives after the leader has finished and failed.
+        with pytest.raises(PermissionError):
+            child.close(force=True)
+    finally:
+        monkeypatch.undo()
+        with contextlib.suppress(OSError):
+            os.killpg(pid, FORCED_TERMINATION_SIGNAL)  # type: ignore[attr-defined,unused-ignore]
+        with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+            child._process.wait(timeout=_TIMEOUT_S)  # type: ignore[union-attr]
+
+
+@_LINUX_ONLY
+def test_the_status_pipe_write_end_is_kept_clear_of_the_stdio_range() -> None:
+    """A write end on 0, 1 or 2 would be replaced by the pty slave.
+
+    ``pass_fds`` entries keep their numbers, and the child's
+    ``dup2(slave, 0/1/2)`` runs first — so a low write end means the
+    trampoline's failure text goes into the subject's transcript while the
+    parent reads success. Reachable whenever the parent runs with a closed
+    stdin.
+    """
+    read_fd, write_fd = _posix_pty._status_pipe()
+    try:
+        assert write_fd > 2, f"status write end landed at {write_fd}"
+    finally:
+        os.close(read_fd)
+        os.close(write_fd)
 
 
 @_LINUX_ONLY

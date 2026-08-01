@@ -159,14 +159,20 @@ _READ_CHUNK_BYTES: Final = 65536
 #: reads end-of-file; a failure writes the error first. Same shape as the
 #: exec-status pipe CPython's own ``subprocess`` uses, and the same reason.
 _TRAMPOLINE: Final = (
-    "import fcntl,os,sys,termios\n"
-    "status = int(sys.argv[1])\n"
-    "fcntl.fcntl(status, fcntl.F_SETFD, fcntl.FD_CLOEXEC)\n"
+    "import os,sys\n"
+    "status = -1\n"
     "try:\n"
+    "    import fcntl, termios\n"
+    "    status = int(sys.argv[1])\n"
+    "    fcntl.fcntl(status, fcntl.F_SETFD, fcntl.FD_CLOEXEC)\n"
     "    fcntl.ioctl(0, termios.TIOCSCTTY, 0)\n"
     "    os.execv(sys.argv[2], sys.argv[2:])\n"
     "except BaseException as error:\n"
-    "    os.write(status, repr(error).encode('utf-8', 'replace')[:512])\n"
+    "    try:\n"
+    "        if status >= 0:\n"
+    "            os.write(status, repr(error).encode('utf-8', 'replace')[:512])\n"
+    "    except BaseException:\n"
+    "        pass\n"
     "    os._exit(127)\n"
 )
 
@@ -330,6 +336,36 @@ def _set_window_size(  # coverage: exclude-windows - POSIX-only leg
     fcntl.ioctl(fd, termios.TIOCSWINSZ, packed)
 
 
+def _status_pipe() -> tuple[int, int]:  # coverage: exclude-windows - POSIX-only
+    """Return ``(read, write)`` with the write end above the stdio range.
+
+    The relocation is not hygiene. ``subprocess`` passes ``pass_fds``
+    entries through at their original numbers, and the child's
+    ``dup2(slave, 0/1/2)`` runs before its descriptor cleanup — so a write
+    end that landed on 0, 1 or 2 (which it can, whenever the parent runs
+    with a closed stdin, as an embedded or daemonised harness does) is
+    silently replaced by the pty slave in the child. The trampoline would
+    then write its failure text *into the subject's transcript*, while the
+    parent saw its own end closed and read the whole thing as success.
+    CPython relocates its own exec-status pipe for exactly this reason.
+    """
+    read_fd, write_fd = os.pipe()
+    spares: list[int] = []
+    try:
+        while write_fd < 3:
+            spares.append(write_fd)
+            write_fd = os.dup(write_fd)
+    except BaseException:
+        os.close(read_fd)
+        for fd in (*spares, write_fd):
+            with _suppress_os_errors():
+                os.close(fd)
+        raise
+    for fd in spares:
+        os.close(fd)
+    return read_fd, write_fd
+
+
 def _read_exec_status(  # coverage: exclude-windows - POSIX-only helper
     status_read: int,
 ) -> str | None:
@@ -403,15 +439,16 @@ class PosixPtyChild:
         self._master_fd = master_fd
         self._lock = threading.Lock()
         self._closed = False
-        # A teardown in flight, and the event that ends the wait for it.
-        # Without these a second close returns the instant it sees
+        # The event a second close waits on, and the failure it must learn
+        # about. Without them a second close returns the instant it sees
         # `_closed`, while the first is still inside its bounded wait for
         # the exit record — so the caller reads `exit_status` and gets
-        # `None` for a child that is about to report -9. The adapter above
-        # consults `exit_status` immediately after closing, and its
-        # watchdog closes from a timer thread, so both callers are real.
-        self._closing = False
+        # `None` for a child that is about to report -9, or worse, for one
+        # the leader failed to kill at all. The adapter above consults
+        # `exit_status` immediately after closing and its watchdog closes
+        # from a timer thread, so both callers are real.
         self._close_done = threading.Event()
+        self._close_failure: BaseException | None = None
         self._exit_status: int | None = None
         self._read_in_flight = False
         self._write_in_flight = False
@@ -490,7 +527,16 @@ class PosixPtyChild:
         if env_overlay is not None:
             merged.update(env_overlay)
         master_fd, slave_fd = os.openpty()
-        status_read, status_write = os.pipe()
+        # Inside its own guard: this is a fallible call, and before the
+        # round-2 review it sat between `openpty` and the `try` below, so
+        # descriptor exhaustion here leaked the pty pair — and made the
+        # exhaustion it reports monotonically worse on every retry.
+        try:
+            status_read, status_write = _status_pipe()
+        except BaseException:
+            os.close(master_fd)
+            os.close(slave_fd)
+            raise
         process: subprocess.Popen[bytes] | None = None
         try:
             _configure_line_discipline(slave_fd)
@@ -529,6 +575,18 @@ class PosixPtyChild:
             os.close(status_write)
         try:
             failure = _read_exec_status(status_read)
+        except BaseException:
+            # Reachable by a KeyboardInterrupt inside the blocking read.
+            # Every other failure point on this path has a handler; before
+            # the round-2 review this one did not, so a Ctrl-C during a
+            # spawn orphaned the subject on a pty with no binding left to
+            # close it.
+            with _suppress_os_errors():
+                process.kill()
+            with suppress(OSError, subprocess.TimeoutExpired):
+                process.wait(timeout=_CHILD_EXIT_WAIT_S)
+            os.close(master_fd)
+            raise
         finally:
             os.close(status_read)
         if failure is not None:
@@ -633,16 +691,7 @@ class PosixPtyChild:
                 # wait again rather than reporting a spurious end-of-stream.
                 continue
             except OSError as error:
-                with self._lock:
-                    closed = self._closed
-                if closed:
-                    # Checked before end-of-stream, not after: a close may
-                    # have abandoned output the child had already written,
-                    # so reporting a clean end of the subject's stream here
-                    # would describe a teardown as the subject finishing.
-                    # The sibling pays for this check too; omitting it on
-                    # the end-of-stream legs alone is how the promise in
-                    # PosixPtyEndOfStreamError's own docstring gets broken.
+                if self._interrupted_by_close():
                     raise PosixPtyClosedError(
                         "the POSIX PTY binding was closed during a read"
                     ) from error
@@ -654,14 +703,38 @@ class PosixPtyChild:
                     raise self._end_of_stream() from error
                 raise
             if not chunk:
-                with self._lock:
-                    closed = self._closed
-                if closed:
+                if self._interrupted_by_close():
                     raise PosixPtyClosedError(
                         "the POSIX PTY binding was closed during a read"
                     )
                 raise self._end_of_stream()
             return chunk
+
+    def _interrupted_by_close(self) -> bool:  # coverage: exclude-windows
+        """Report whether a close interrupted *this* read.
+
+        The distinction matters and the obvious test gets it wrong. Asking
+        whether the binding ``_closed`` is strictly broader than the
+        contract :class:`PosixPtyEndOfStreamError` states: a child that
+        exited cleanly leaves ``EIO`` pending on the master, and a close
+        arriving between the poll and the read would then turn a genuine
+        end-of-stream into a closed-binding error — losing the exit record
+        for a run that terminated normally. That is the mirror image of
+        the defect the state check was added to fix, and it was found by
+        the round-2 review of this module.
+
+        What is asked instead is whether the *wake pipe fired*, which is
+        the only thing that means "a close reached this read". A close
+        writes it before touching any descriptor, so a read that was
+        genuinely interrupted always observes it.
+        """
+        if self._wake_read < 0:
+            return True
+        try:
+            return bool(select.select([self._wake_read], (), (), 0)[0])
+        except OSError:
+            # The descriptor is already gone, which only a close does.
+            return True
 
     def _end_of_stream(self) -> PosixPtyEndOfStreamError:  # coverage: exclude-windows
         self._capture_exit_status_after_eos()
@@ -767,16 +840,25 @@ class PosixPtyChild:
                         " it; use force=True"
                     )
                 self._closed = True
-                self._closing = True
                 wake = self._wake_write
         if already_closed:
-            # Either another thread owns this teardown or one already
-            # finished. Wait for it rather than returning into a
-            # half-closed binding whose exit record has not been captured
-            # yet; a completed teardown has the event set and returns at
-            # once.
-            self._close_done.wait(_CHILD_EXIT_WAIT_S)
+            # Another thread owns this teardown, or one already finished.
+            # Wait for it rather than returning into a half-closed binding
+            # whose exit record has not been captured yet; a completed
+            # teardown has the event set and returns at once.
+            #
+            # The budget covers the leader's *worst* case — both delivery
+            # waits plus the reap — because a follower that gave up early
+            # would return exactly the half-closed result this branch
+            # exists to prevent, only 30 seconds later and just as
+            # silently.
+            if not self._close_done.wait(_IO_DELIVERY_WAIT_S * 2 + _CHILD_EXIT_WAIT_S):
+                raise RuntimeError(
+                    "another thread's close of the pty binding did not finish"
+                )
+            self._reraise_close_failure()
             return
+        failure: BaseException | None = None
         try:
             if wake >= 0:
                 with _suppress_os_errors():
@@ -787,6 +869,14 @@ class PosixPtyChild:
                 if force:
                     self._terminate_session(process)
                 self._capture_exit_status_after_close(process)
+        except BaseException as error:
+            # Recorded so the *other* callers of close learn it too. A
+            # teardown that failed to kill anything must not read as a
+            # success to whoever arrives second — and the thread that
+            # raises is often the watchdog timer, whose exception reaches
+            # `threading.excepthook` and no caller at all.
+            failure = error
+            raise
         finally:
             # The release belongs here, not in the try: a termination that
             # fails now *propagates* rather than being swallowed, and a
@@ -796,8 +886,15 @@ class PosixPtyChild:
             # that the kill failed.
             self._release_descriptors()
             with self._lock:
-                self._closing = False
+                self._close_failure = failure
             self._close_done.set()
+
+    def _reraise_close_failure(self) -> None:  # coverage: exclude-windows
+        """Re-raise, on a follower, whatever the leader's teardown hit."""
+        with self._lock:
+            failure = self._close_failure
+        if failure is not None:
+            raise failure
 
     def _terminate_session(  # coverage: exclude-windows - POSIX-only leg
         self, process: subprocess.Popen[bytes]
