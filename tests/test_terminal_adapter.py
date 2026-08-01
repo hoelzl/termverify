@@ -341,6 +341,16 @@ def test_negotiation_stops_at_first_unsupported_port_constraint(
 
 
 def test_unsupported_probe_fails_terminal_negotiation() -> None:
+    """The refusal cites the probe, and does not name a platform.
+
+    Until #268 this message said "no ConPTY pseudoconsole support", which was
+    a statement the adapter had no evidence for even before the POSIX binding
+    existed: what it holds is a ``TerminalBindingPort``, and the only thing it
+    learned is that the port's own probe answered no. The message reached
+    transcripts as an ``adapter-start-failed`` reason, so on a Linux host with
+    a POSIX binding injected it would have blamed a pseudoconsole that was
+    never involved.
+    """
     ports = _EnforcingPorts()
     adapter, binding = _adapter(binding=_Binding(supported=False), ports=ports)
 
@@ -350,7 +360,13 @@ def test_unsupported_probe_fails_terminal_negotiation() -> None:
     assert result.constraint == "terminal"
     assert result.code == "constraint-unsupported"
     assert len(result.applied) == 4
-    assert "ConPTY" in result.message
+    assert "binding" in result.message
+    assert "unsupported" in result.message
+    # No platform, because the adapter cannot see one. Checked as an explicit
+    # absence: an assertion on the wording alone would still pass a message
+    # that named a platform in the same sentence.
+    for platform in ("ConPTY", "pseudoconsole", "Windows", "POSIX", "pty"):
+        assert platform not in result.message, platform
     assert ports.calls == ["seed", "clock", "locale", "timezone"]
     assert binding.probe_calls == 1
     assert binding.spawn_calls == 0

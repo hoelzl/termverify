@@ -12,6 +12,7 @@ authoritative transcript codec and the closed ``termverify.key/v1`` and
 ``termverify.key-encoding/v1`` registries.
 """
 
+import importlib
 from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
@@ -218,6 +219,99 @@ def test_the_enforcement_tier_axis_keeps_its_name() -> None:
     for name in _RETAINED_ENFORCEMENT_NAMES:
         assert name in termverify.__all__, name
     assert "delivered" in termverify.ENFORCEMENT_TIERS
+
+
+# --- #268: the terminal adapter's rename -----------------------------------
+#
+# Issue #268 generalized the ConPTY adapter into one platform-neutral terminal
+# adapter over a binding port. Three kinds of thing moved, and each can only
+# survive somewhere different, so each is checked where it could survive and
+# nowhere it could not — a check pointed at a namespace the name never lived in
+# passes vacuously, which is how two successive versions of the #218 pin came
+# out weaker than they read.
+
+#: Retired *module*. Only a leftover file or a shim can resurrect this, and
+#: neither is visible in a namespace — so this one is checked by import.
+_RETIRED_MODULE_NAME = "termverify.conpty"
+
+#: Retired *names*, checked on the module that now exists. They were never
+#: re-exported at the top level (``termverify.terminal`` is module-path-only,
+#: which the exact-set test above pins), so a top-level check would pass
+#: whatever happened here.
+_RETIRED_TERMINAL_NAMES = (
+    "ConptyAdapter",
+    "ConptyBindingPort",
+    "ConptyChildPort",
+    "ConptyWatchdogPort",
+)
+
+#: The names #268 introduced, in place of those four.
+_RENAMED_TERMINAL_NAMES = (
+    "TerminalAdapter",
+    "TerminalBindingPort",
+    "TerminalChildPort",
+    "TerminalWatchdogPort",
+)
+
+#: The name a blanket ``Conpty`` → ``Terminal`` rename would have taken, and
+#: must not: ``ConptyBinding`` *is* the ConPTY binding — one of the two
+#: implementations of the neutral port — so renaming it would make the
+#: platform-neutral module claim the Windows pseudoconsole is platform-neutral.
+#: ``PosixPtyBinding`` is its sibling, and is pinned alongside because the
+#: slice's claim is "one adapter, two bindings"; one binding would satisfy
+#: every other check in this file.
+_RETAINED_BINDING_NAMES = ("ConptyBinding", "PosixPtyBinding")
+
+
+def test_the_retired_terminal_adapter_module_is_gone() -> None:
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module(_RETIRED_MODULE_NAME)
+
+
+def test_no_retired_conpty_adapter_name_survives_on_the_terminal_module() -> None:
+    for name in _RETIRED_TERMINAL_NAMES:
+        assert name not in termverify.terminal.__all__, name
+        assert not hasattr(termverify.terminal, name), name
+
+
+def test_the_renamed_terminal_names_are_exported_and_resolvable() -> None:
+    """The other half: absence proves nothing without presence.
+
+    Deleting the four old names satisfies the test above on its own. What
+    makes the pair a rename rather than a removal is that four new names
+    resolve to the objects the old ones named — and that they are *the* port
+    protocols and *the* adapter, not same-named placeholders, which is what
+    the structural assertions below check.
+    """
+    for name in _RENAMED_TERMINAL_NAMES:
+        assert name in termverify.terminal.__all__, name
+        assert hasattr(termverify.terminal, name), name
+
+    assert isinstance(termverify.terminal.TerminalAdapter, type)
+    # Each port is still a ``runtime_checkable`` Protocol, which is what lets
+    # a host substitute a fake. Reaching for ``isinstance`` at all is the
+    # check: against a Protocol that lost ``@runtime_checkable`` it raises
+    # TypeError rather than returning False, and a plain class renamed into
+    # its place would satisfy the ``hasattr`` above without satisfying this.
+    for port in (
+        termverify.terminal.TerminalBindingPort,
+        termverify.terminal.TerminalChildPort,
+        termverify.terminal.TerminalWatchdogPort,
+    ):
+        assert not isinstance(object(), port), port
+
+
+def test_both_shipped_bindings_keep_their_platform_names() -> None:
+    """The rename is a generalization, not a search-and-replace.
+
+    Each is checked for the port's *shape*, not just its name: a
+    ``ConptyBinding`` that no longer satisfies ``TerminalBindingPort`` would
+    keep the name while losing the reason the name is worth keeping.
+    """
+    for name in _RETAINED_BINDING_NAMES:
+        assert name in termverify.terminal.__all__, name
+        binding = getattr(termverify.terminal, name)
+        assert isinstance(binding(), termverify.terminal.TerminalBindingPort), name
 
 
 #: The modules this file pins the ordering of: the top-level surface, the two

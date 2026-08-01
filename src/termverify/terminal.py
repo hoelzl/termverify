@@ -1,24 +1,44 @@
-"""Public Windows terminal adapter over the ConPTY binding port.
+"""Public platform-neutral terminal adapter over the terminal binding port.
 
 This module implements slices 2 and 3 of the accepted ConPTY adapter design
 (`docs/agent/design/conpty-adapter-design.md`): the ``TerminalBindingPort``/
 ``TerminalChildPort`` protocols, truthful constraint negotiation, and the epoch
 machinery — readiness-marker protocol, epoch loop, failure classification,
-watchdog-driven abort deadline, and forced stop teardown. All logic is
-cross-platform and testable against fake bindings, normalizers, and watchdog
-triggers; ``termverify._conpty`` remains the only native, ratchet-excluded
-boundary. Windows integration evidence for the real path (slice 4) lives in
-``tests/test_conpty_integration.py``: end-to-end start/text/resize/exit,
-forced stop, and deadline abort against a cooperative fixture subject on the
-Windows CI matrix.
+watchdog-driven abort deadline, and forced stop teardown.
+
+**The adapter names no platform, and that is a checked property** (issue #268).
+It was already true when this was ``termverify.conpty``: every platform
+difference is absorbed by the binding port, so the epoch machinery here is
+driven identically by the Windows pseudoconsole, by a POSIX pseudoterminal, and
+by a fake. What #268 changed is that the names, the messages and the failure
+taxonomy say so — a message naming a platform is a claim this layer has no
+evidence for, because the port hides which binding it holds. The two shipped
+bindings are :class:`ConptyBinding` and :class:`PosixPtyBinding`; hosts inject
+one, and the adapter never asks which. ``tests/test_terminal_platform_neutrality.py``
+ratchets the property: zero ``sys.platform``/``os.name`` reads, no import that
+could make one, and no emitted message naming a platform. Crossing that zero is
+a stop-and-return to the owner, not a waiver — the generalization was
+authorized on the premise it measures.
+
+All logic is testable against fake bindings, normalizers and watchdog triggers.
+The native boundaries are ``termverify._conpty`` and ``termverify._posix_pty``;
+of those, ``_conpty`` is the repository's only coverage-ratchet exclusion.
+
+Integration evidence for the real paths is per binding, and is not equal:
+``tests/test_conpty_integration.py`` proves end-to-end start/text/resize/exit,
+forced stop and deadline abort against a cooperative fixture subject on the
+Windows CI matrix. The POSIX binding's evidence today stops at the binding
+(``tests/test_posix_pty_binding.py``); the matching adapter-level legs are
+issue #269, and until they land nothing here should be read as a proven POSIX
+end-to-end path.
 
 Negotiation is truthful by construction:
 
 - The adapter owns the ``terminal`` constraint and never delegates it:
-  dimensions are an OS-level parameter of pseudoconsole creation, platform
-  support is decided by the binding port's explicit probe before any spawn,
-  and requested terminal capabilities are rejected fail-closed because the
-  capability registry is not activated.
+  dimensions are an OS-level parameter of pseudoterminal creation on both
+  bindings, platform support is decided by the binding port's explicit probe
+  before any spawn, and requested terminal capabilities are rejected
+  fail-closed because the capability registry is not activated.
 - The six non-terminal constraints belong to injected ``ConstraintPorts``.
   The shipped default, :class:`ApplyNothingConstraintPorts`, reports every one
   of them ``constraint-not-enforced`` — no OS mechanism at this boundary
@@ -26,8 +46,11 @@ Negotiation is truthful by construction:
   ``StartUnsupported(constraint="seed")`` before any child exists.
 - Every receipt states its `termverify.enforcement-tier/v1` tier, validated
   against the fail-closed authorization matrix: the adapter's own terminal
-  negotiation states ``os`` (an OS-level pseudoconsole parameter, proven on
-  the Windows matrix), and injected ports may state only ``delivered`` —
+  negotiation states ``os`` — geometry is an OS-level creation and resize
+  parameter of the pseudoterminal in both bindings, proven by child
+  observation on the Windows matrix at the adapter level and, for the POSIX
+  binding, at the binding's own ``TIOCSWINSZ`` legs pending #269 — and
+  injected ports may state only ``delivered`` —
   exact recorded values placed in the subject's spawn environment, honored
   only by subject cooperation. The opt-in ports that emit that tier live in
   ``termverify.cooperation``; the spawn is evidence-driven, with the child's
@@ -47,7 +70,11 @@ Readiness and quiescence are defined only by observable evidence:
   evidence reproduces the frames.
 - **The marker is printable on purpose, and carries a token on purpose.**
   Both follow from how ConPTY delivers output, and neither is negotiable
-  (issue #232):
+  (issue #232). The POSIX binding does not need either constraint and
+  inherits both anyway: one marker contract on both platforms, so a subject
+  implements readiness once and runs under either binding (issue #204,
+  boundary decision 3). The reasons below are therefore the *origin* of the
+  shape, not a claim that a pty imposes it:
 
   1. ConPTY emits pass-through OSC on a different path from rendered text,
      and the OSC path is *ahead*. A marker written as a private-use OSC —
@@ -98,12 +125,15 @@ Readiness and quiescence are defined only by observable evidence:
   at 261,121 *total cells* or above makes the per-record string sum bind
   first.
   Chunk *count* is not a separate axis: coalescing means no number of reads
-  can reach the protocol's collection ceiling. Hosts must budget the deadline
-  above the disclosed
-  DA-stall floor: conhost defers client output while its unanswered
-  ``CSI c`` device-attributes query waits (measured ~3.1 s; see the
-  DA-stall disclosure in the adapter design document), so a deadline at or
-  below that floor plus spawn overhead fails every real start by policy.
+  can reach the protocol's collection ceiling.
+- The deadline a host may safely configure is a property of the *binding*, not
+  of this module, and the ConPTY binding has a disclosed floor: conhost defers
+  client output while its unanswered ``CSI c`` device-attributes query waits
+  (measured ~3.1 s; see the DA-stall disclosure in the adapter design
+  document), so under that binding a deadline at or below that floor plus
+  spawn overhead fails every real start by policy. Whether the POSIX binding
+  has a floor of its own is unmeasured, and #269 is where it would be found;
+  no floor has been assumed for it here.
 """
 
 from __future__ import annotations
@@ -240,9 +270,9 @@ _MAX_UTF8_BYTES_PER_CELL: Final = 4
 _FIXED_RECORD_STRING_BYTES: Final = 4 * 1024
 
 #: The `termverify.enforcement-tier/v1` authorization matrix row for the
-#: ConPTY architecture, in constraint order: the adapter's own terminal
-#: negotiation emits ``os`` (dimensions are a pseudoconsole creation/resize
-#: parameter, proven by child observation on the Windows matrix) and injected
+#: terminal-adapter architecture, in constraint order: the adapter's own
+#: terminal negotiation emits ``os`` (geometry is a pseudoterminal
+#: creation/resize parameter in both shipped bindings) and injected
 #: constraint ports may state only ``delivered``. Any other tier is a
 #: contract breach rejected as a structured ``StartFailed``.
 _AUTHORIZED_TIERS: AuthorizedTiers = (
@@ -423,7 +453,7 @@ class PosixPtyBinding:
 
 
 class ApplyNothingConstraintPorts:
-    """Truthful default ports: nothing is enforced at the ConPTY boundary."""
+    """Truthful default ports: nothing is enforced at the terminal boundary."""
 
     def apply_seed(
         self, run_id: str, requested: int
@@ -432,7 +462,7 @@ class ApplyNothingConstraintPorts:
         return ConstraintUnsupported(
             "seed",
             "constraint-not-enforced",
-            "no OS mechanism binds a subject's RNG through a pseudoconsole;"
+            "no OS mechanism binds a subject's RNG through a pseudoterminal;"
             " environment injection is subject cooperation, not enforcement",
         )
 
@@ -476,7 +506,7 @@ class ApplyNothingConstraintPorts:
         return ConstraintUnsupported(
             "terminal",
             "constraint-unsupported",
-            "terminal enforcement is owned by the ConPTY adapter and cannot"
+            "terminal enforcement is owned by the terminal adapter and cannot"
             " be delegated to injected ports",
         )
 
@@ -577,12 +607,21 @@ def _assemble_spawn_overlay(
 
     Evidence-driven spawn: what the receipts record is exactly what the
     child is given, with no side channel between ports and spawn. The
-    delivery records must be mutually disjoint — compared case-folded,
-    because Windows environment lookup is case-insensitive and two
-    case-variant entries would let one recorded delivery silently shadow
-    another — and may name at most one working directory; a violation
-    raises :class:`_DeliveryInvariantError` for the caller to report as an
-    invariant breach.
+    delivery records must be mutually disjoint and may name at most one
+    working directory; a violation raises :class:`_DeliveryInvariantError`
+    for the caller to report as an invariant breach.
+
+    Disjointness is compared **case-folded, on both platforms**, and that is
+    the stricter of the two semantics rather than a Windows special case.
+    Windows environment lookup is case-insensitive, so two case-variant
+    entries would let one recorded delivery silently shadow another; POSIX
+    lookup is case-sensitive, so there they are two distinct variables and
+    folding refuses a pair that would have worked. Refusing the wider set
+    unconditionally is what keeps this function free of a platform branch,
+    and it fails in the safe direction: the cost is a refusal a host can fix
+    by renaming, against a transcript that silently misreports which value
+    the subject received. No shipped port delivers case-variant names, so
+    nothing reaches it through them.
     """
     overlay: dict[str, str] = {}
     seen: set[str] = set()
@@ -594,7 +633,8 @@ def _assemble_spawn_overlay(
                 raise _DeliveryInvariantError(
                     "delivery-disjoint",
                     "delivery records must be mutually disjoint under"
-                    " case-insensitive Windows environment semantics;"
+                    " case-insensitive environment semantics, which is the"
+                    " stricter of the two platforms' and is applied on both;"
                     f" variable {name!r} was delivered twice",
                 )
             seen.add(folded)
@@ -619,7 +659,7 @@ class _EpochFailure(Exception):
 
 
 class TerminalAdapter:
-    """Drive one terminal subject through the injected ConPTY binding port.
+    """Drive one terminal subject through the injected terminal binding port.
 
     The subject command line is bound at construction, exactly as the direct
     adapter binds its application. The abort deadline is mandatory host
@@ -700,7 +740,7 @@ class TerminalAdapter:
             return ConstraintUnsupported(
                 "terminal",
                 "constraint-unsupported",
-                "this host provides no ConPTY pseudoconsole support",
+                "the injected terminal binding reports this host unsupported",
             )
         return TerminalReceipt(run_id, requested, tier="os")
 
@@ -789,7 +829,7 @@ class TerminalAdapter:
             raise
         except TerminalClosedError as error:
             raise _EpochFailure(
-                "the ConPTY binding was closed outside the abort deadline",
+                "the terminal binding was closed outside the abort deadline",
                 {"during": "read"},
             ) from error
         except TerminalConcurrentIOError as error:
@@ -800,7 +840,7 @@ class TerminalAdapter:
             ) from error
         except Exception as error:
             raise _EpochFailure(
-                "a native ConPTY read failed", {"during": "read"}
+                "a native terminal read failed", {"during": "read"}
             ) from error
         finally:
             disarm()
@@ -1127,7 +1167,7 @@ class TerminalAdapter:
         if not self._close_child():
             return self._fail_runtime(
                 at_ms,
-                "the ConPTY binding could not be closed after the child exited",
+                "the terminal binding could not be closed after the child exited",
                 {"during": "close"},
             )
         self._set_time_and_state(at_ms, "terminal")
@@ -1187,7 +1227,7 @@ class TerminalAdapter:
         _validate_run_id(run_id)
         with self._state_lock:
             if self._state != "created":
-                raise RuntimeError("ConPTY adapter has already started")
+                raise RuntimeError("terminal adapter has already started")
             self._state = "negotiating"
         negotiated = negotiate(
             run_id,
@@ -1276,12 +1316,12 @@ class TerminalAdapter:
                 geometry_details["adopted-rows"] = mismatch.adopted[0]
                 geometry_details["adopted-columns"] = mismatch.adopted[1]
             return start_failed(
-                "the pseudoconsole did not adopt the requested terminal geometry",
+                "the terminal binding did not adopt the requested terminal geometry",
                 geometry_details,
             )
         except Exception as error:
             return start_failed(
-                "the ConPTY child could not be spawned",
+                "the terminal child could not be spawned",
                 {"during": "spawn", "reason": str(error)},
             )
         self._columns = terminal.columns
@@ -1319,7 +1359,7 @@ class TerminalAdapter:
             raise TypeError("dispatch input must be KeyInput, TextInput, or Resize")
         with self._state_lock:
             if self._state != "idle":
-                raise RuntimeError("ConPTY adapter is not idle")
+                raise RuntimeError("terminal adapter is not idle")
             if input_event.at_ms != self._manual_time:
                 raise ValueError("input must use the current manual time")
             self._state = "active"
@@ -1382,7 +1422,7 @@ class TerminalAdapter:
                     details["adopted-rows"] = mismatch.adopted[0]
                     details["adopted-columns"] = mismatch.adopted[1]
                 raise _EpochFailure(
-                    "the pseudoconsole did not adopt the requested resize geometry",
+                    "the terminal binding did not adopt the requested resize geometry",
                     details,
                 ) from mismatch
             cast(TerminalOutputNormalizer, self._normalizer).notify_resize(
@@ -1400,7 +1440,7 @@ class TerminalAdapter:
             raise TypeError("clock input must be ClockAdvance")
         with self._state_lock:
             if self._state != "idle":
-                raise RuntimeError("ConPTY adapter is not idle")
+                raise RuntimeError("terminal adapter is not idle")
             if (
                 self._manual_time is None
                 or input_event.at_ms != self._manual_time + input_event.delta_ms
@@ -1414,7 +1454,7 @@ class TerminalAdapter:
             raise TypeError("stop input must be Stop")
         with self._state_lock:
             if self._state != "idle":
-                raise RuntimeError("ConPTY adapter is not idle")
+                raise RuntimeError("terminal adapter is not idle")
             if input_event.at_ms != self._manual_time:
                 raise ValueError("stop must use the current manual time")
             self._state = "stopping"
@@ -1423,7 +1463,7 @@ class TerminalAdapter:
         if not self._close_child():
             return self._fail_runtime(
                 at_ms,
-                "the ConPTY binding could not be closed on forced stop",
+                "the terminal binding could not be closed on forced stop",
                 {"during": "close"},
             )
         status = child.exit_status
@@ -1455,7 +1495,7 @@ class TerminalAdapter:
                 Diagnostic(
                     at_ms,
                     "forced-termination",
-                    "the run was ended by forced ConPTY teardown; output"
+                    "the run was ended by forced terminal teardown; output"
                     " produced after the last observed readiness marker may"
                     " be lost",
                 ),
