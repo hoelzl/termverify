@@ -353,8 +353,16 @@ def _status_pipe() -> tuple[int, int]:  # coverage: exclude-windows - POSIX-only
     spares: list[int] = []
     try:
         while write_fd < 3:
+            # The dup comes *before* the append, so a failing dup does not
+            # leave the same number in both `spares` and `write_fd` — the
+            # handler below would then close it twice, and between the two
+            # closes another thread's `open` can be handed that number and
+            # have it closed underneath it. Narrow, but it needs exactly
+            # the two conditions this function and its caller exist for: a
+            # free low descriptor, and dup failing on exhaustion.
+            relocated = os.dup(write_fd)
             spares.append(write_fd)
-            write_fd = os.dup(write_fd)
+            write_fd = relocated
     except BaseException:
         os.close(read_fd)
         for fd in (*spares, write_fd):
@@ -728,10 +736,24 @@ class PosixPtyChild:
         writes it before touching any descriptor, so a read that was
         genuinely interrupted always observes it.
         """
+        if sys.platform == "win32":  # coverage: exclude-posix - POSIX-only path
+            raise AssertionError("the POSIX PTY path is POSIX-only")
         if self._wake_read < 0:
             return True
         try:
-            return bool(select.select([self._wake_read], (), (), 0)[0])
+            # ``poll`` rather than ``select``, for the reason this module
+            # already records at :func:`_wait_until_ready` and the sibling
+            # binding records with its consequence: ``select`` cannot
+            # express a descriptor at or above ``FD_SETSIZE`` and raises
+            # ``ValueError`` on one — which is not an ``OSError``, so the
+            # handler below would not catch it, and a routine end-of-stream
+            # would surface as an unclassifiable exception out of ``read``.
+            # A harness with a raised ``RLIMIT_NOFILE`` driving many
+            # subjects reaches that descriptor range, which is the same
+            # descriptor-pressure case the rest of this path guards.
+            poller = select.poll()
+            poller.register(self._wake_read, select.POLLIN)
+            return bool(poller.poll(0))
         except OSError:
             # The descriptor is already gone, which only a close does.
             return True

@@ -796,6 +796,10 @@ def test_a_second_close_waits_for_the_first_to_capture_the_exit_record() -> None
         PosixPtyChild._terminate_session = original_terminate  # type: ignore[method-assign]
         with contextlib.suppress(OSError):
             os.killpg(child.pid, FORCED_TERMINATION_SIGNAL)  # type: ignore[attr-defined,unused-ignore]
+        # Reap it: _terminate_session was stubbed, so nothing else does,
+        # and an unreaped child is a zombie for the rest of the session.
+        with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+            child._process.wait(timeout=_TIMEOUT_S)  # type: ignore[union-attr]
     assert observed == [-FORCED_TERMINATION_SIGNAL], (
         f"the second close returned before the exit record existed: {observed}"
     )
@@ -835,6 +839,75 @@ def test_a_second_close_learns_that_the_first_could_not_kill(
             child._process.wait(timeout=_TIMEOUT_S)  # type: ignore[union-attr]
 
 
+def _fail_read_with(
+    monkeypatch: pytest.MonkeyPatch, child: PosixPtyChild, error_number: int
+) -> None:
+    """Make the next read reach the discriminator with a failing os.read.
+
+    ``_wait_until_ready`` is forced to report "ready, not woken", so the
+    read proceeds to ``os.read`` and the injected error is what the
+    discriminator is asked about. Without this the wake pipe short-circuits
+    at the poll and the branch under test is never entered — which is why
+    it had no coverage at all.
+    """
+    real_read = os.read
+
+    def failing(fd: int, size: int) -> bytes:
+        if fd == child._master_fd:
+            raise OSError(error_number, "injected")
+        return real_read(fd, size)
+
+    monkeypatch.setattr(
+        _posix_pty, "_wait_until_ready", lambda fd, wake, *, write: False
+    )
+    monkeypatch.setattr(os, "read", failing)
+
+
+@_LINUX_ONLY
+def test_an_end_of_stream_that_a_close_caused_reports_the_closed_binding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The positive branch of the close-versus-end-of-stream discriminator.
+
+    Nothing reached it before: every test that exercises a close wakes the
+    reader inside ``poll``, which raises earlier, and every test that
+    reaches the discriminator gets ``False``. Both guards could be deleted
+    with the suite still green — the same defect this slice fixed for the
+    controlling terminal, applied to the fix for the other Critical.
+
+    The wake byte is written directly, which is exactly what ``close``
+    does first and is what "a close reached this read" means.
+    """
+    child = _spawn("import time; time.sleep(300)")
+    try:
+        os.write(child._wake_write, b"\x00")
+        _fail_read_with(monkeypatch, child, errno.EIO)
+        with pytest.raises(PosixPtyClosedError, match="closed during a read"):
+            child.read()
+    finally:
+        monkeypatch.undo()
+        child.close(force=True)
+
+
+@_LINUX_ONLY
+def test_an_end_of_stream_with_no_close_behind_it_is_end_of_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The negative branch, against the identical injection.
+
+    The pair is what makes either assertion meaningful: same fault, same
+    path, opposite verdicts, decided only by whether the wake pipe fired.
+    """
+    child = _spawn("import time; time.sleep(300)")
+    try:
+        _fail_read_with(monkeypatch, child, errno.EIO)
+        with pytest.raises(PosixPtyEndOfStreamError):
+            child.read()
+    finally:
+        monkeypatch.undo()
+        child.close(force=True)
+
+
 @_LINUX_ONLY
 def test_the_status_pipe_write_end_is_kept_clear_of_the_stdio_range() -> None:
     """A write end on 0, 1 or 2 would be replaced by the pty slave.
@@ -845,12 +918,23 @@ def test_the_status_pipe_write_end_is_kept_clear_of_the_stdio_range() -> None:
     parent reads success. Reachable whenever the parent runs with a closed
     stdin.
     """
-    read_fd, write_fd = _posix_pty._status_pipe()
+    # Freeing fd 0 is what makes this able to fail. Under pytest, fds 0-2
+    # are always open, so `os.pipe()` can never return a low number and
+    # the assertion below was satisfied by the *unrelocated* code — a test
+    # for a fix that passed without the fix. With fd 0 closed, a bare
+    # `os.pipe()` returns (0, 1) here and the assertion trips.
+    spare = os.dup(0)
     try:
-        assert write_fd > 2, f"status write end landed at {write_fd}"
+        os.close(0)
+        read_fd, write_fd = _posix_pty._status_pipe()
+        try:
+            assert write_fd > 2, f"status write end landed at {write_fd}"
+        finally:
+            os.close(read_fd)
+            os.close(write_fd)
     finally:
-        os.close(read_fd)
-        os.close(write_fd)
+        os.dup2(spare, 0)
+        os.close(spare)
 
 
 @_LINUX_ONLY
