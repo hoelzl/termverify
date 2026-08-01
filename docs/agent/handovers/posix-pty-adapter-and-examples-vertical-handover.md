@@ -9,8 +9,8 @@
   slices below in order.
 - **Owner:** project maintainer
 - **Created:** 2026-07-31
-- **Updated:** 2026-07-31 (boundary accepted; decisions recorded; Phase 0
-  closed except issue filing)
+- **Updated:** 2026-08-01 (Phase 1 merged; Phase 2 written and reviewed;
+  §4 and §6 rewritten)
 - **Review required:** yes. Every slice that changes runtime behavior, the
   public API, or a platform claim needs TDD evidence, the full validation
   gate, and an independent fresh-context adversarial review. **The review
@@ -45,11 +45,13 @@ session needs and the state that changes as slices land.
 
 Two facts set the shape of the work:
 
-- **The adapter above the binding port is already platform-neutral.**
-  `ConptyAdapter`'s epoch machinery, marker protocol, watchdog, geometry gate,
-  and classification matrix are cross-platform, fake-drivable, and ratcheted
-  today. The POSIX work is a binding plus a rename, not a second adapter —
-  which is what decision 1 chose — under the stop-and-return trigger in §2.
+- **The adapter above the binding port is already platform-neutral.** The
+  epoch machinery, marker protocol, watchdog, geometry gate and classification
+  matrix are cross-platform, fake-drivable, and ratcheted today. The POSIX work
+  is a binding plus a rename, not a second adapter — which is what decision 1
+  chose — under the stop-and-return trigger in §2. (Written before #268, when
+  the adapter was `ConptyAdapter` in `termverify.conpty`; it is now
+  `TerminalAdapter` in `termverify.terminal`.)
 - **Most of the POSIX machinery is already shipped**, in `_jsonl_pipe.py`:
   session-leader spawn, `poll` plus self-pipe for interruptible I/O with
   in-flight tracking in both directions, `killpg` teardown, and the disclosed
@@ -99,14 +101,14 @@ All five decisions taken and recorded in §2 and in the design's "Decisions
 taken"; the design is `accepted`. Slice issues are filed under the
 `vertical-204` label and listed in §4.
 
-### Phase 1 — The POSIX PTY binding [TODO — #267]
+### Phase 1 — The POSIX PTY binding [DONE — #267]
 
 `openpty`, child as session leader with the slave as controlling terminal,
 master retained as a raw descriptor, explicit line discipline, geometry via
 `TIOCSWINSZ`, interruptible reads and writes, one incremental UTF-8 decoder
 for the child's life, `killpg` teardown, end-of-stream normalization, and an
 explicit support probe. Shaped to satisfy the same child surface
-`ConptyChildPort` declares.
+`TerminalChildPort` declares (named `ConptyChildPort` when this was written).
 
 **Acceptance:** a cooperative fixture child on the Linux CI legs observes the
 creation geometry and a resized geometry; a forced close terminates the
@@ -114,14 +116,49 @@ session and reports a real exit record; a blocked read wakes on close; the
 support probe answers before any spawn. Measure and record the actual
 end-of-stream behavior rather than assuming it.
 
-### Phase 2 — Adapter generalization [TODO — #268]
+### Phase 2 — Adapter generalization [DONE — #268]
 
-One platform-neutral terminal adapter over the binding port, executed as a
-**pure refactor with no behavior change**. The existing ConPTY suite must stay
-green without edits to its assertions; a test that needs editing to pass is
-evidence the refactor changed behavior, and is a stop-and-investigate, not a
-fix-the-test. Decision 1's zero-platform-conditional threshold is an
-acceptance criterion here, and crossing it is a stop-and-return.
+One platform-neutral terminal adapter over the binding port. Planned as a
+**pure refactor with no behavior change**, gated on the existing ConPTY suite
+staying green without edits to its assertions, with the
+zero-platform-conditional threshold as an acceptance criterion and crossing it
+a stop-and-return.
+
+**Outcome, and it was not purely a refactor.** The threshold held — the count
+above the binding port is still zero, and the trigger did not fire — but the
+plan's premise that a rename was sufficient turned out to be wrong in two
+places, both found by looking rather than by a failing test:
+
+1. **The adapter caught the concrete `Conpty*Error` types.** Not a
+   conditional, and invisible to a conditional count, but a platform
+   dependency all the same: a POSIX end-of-stream would have fallen through to
+   the generic read-failure branch, reporting a clean subject exit as a runtime
+   failure. Fixed with a shared failure taxonomy in `_terminal_binding.py` that
+   both native families subclass, driven by a red test parametrised over both
+   families *and* the bare neutral kinds — the third row being what
+   distinguishes "neutral" from "knows the two bindings that exist today".
+2. **Seventeen emitted string literals named a platform** — fifteen distinct
+   texts, three sites sharing one; eleven reach a transcript and six are raised
+   to the host and recorded nowhere — including a
+   `forced-termination` diagnostic that would have told a Linux run its pty
+   session ended by "forced ConPTY teardown". These are transcript evidence,
+   not log lines, so leaving them would have shipped false statements about
+   the subject. Neutralized, at the cost of the **one** test assertion this
+   slice edited (`assert "ConPTY" in result.message`), which is disclosed
+   rather than absorbed: the rule that an edited assertion means changed
+   behavior held exactly, because message text *is* behavior when the message
+   is evidence.
+
+Both are recorded because the phase prose above promised no behavior change
+and that promise was not kept. The pure-refactor half was proven separately
+and first: the rename commit is green at 1955 tests with no assertion's
+expectation changed.
+
+Three properties are now ratcheted rather than argued, in
+`tests/test_terminal_platform_neutrality.py`: zero `sys.platform`/`os.name`
+reads above the port, no import that could make one at any nesting depth, and
+no emitted message naming a platform. The last of those found the final two
+offenders on its own.
 
 ### Phase 3 — POSIX integration evidence [TODO — #269]
 
@@ -146,9 +183,13 @@ moratorium, recorded under `docs/agent/design/`.
 
 ## 4. Current status
 
-- **Nothing is implemented.** `main` is at the merge of PR #265
-  (`0.2.0.dev0`), suite green. This handover and the boundary design are the
-  initiative's only artifacts.
+- **Phase 1 is on `main`:** the POSIX PTY binding (#267, PR #272, squash
+  `ceb7bb3`), merged 2026-08-01.
+- **Phase 2 is the platform-neutral terminal adapter** (#268, PR #275). This
+  paragraph is part of that PR, so it cannot state its own merge status; `git
+  log --oneline origin/main` settles it, and `src/termverify/terminal.py`
+  existing on `main` is the one-file version of the same question. Suite green;
+  still `0.2.0.dev0`.
 - **Phase 0 is complete.** Boundary accepted 2026-07-31 with all five
   decisions; issues filed under the `vertical-204` label:
 
@@ -160,7 +201,21 @@ moratorium, recorded under `docs/agent/design/`.
   | 4 | #270 | Synthetic TUI and `examples/` walkthrough |
   | 5 | #271 | Recorded reassessment (decision request, not a slice) |
 
-- **Next actionable work is Phase 1 (#267).**
+- **Next actionable work is Phase 3 (#269)** — the adapter-level POSIX
+  evidence. It is now the *only* thing standing between a shipped
+  `PosixPtyBinding` and a POSIX path anyone may rely on, and until it lands
+  the README, the architecture page and the adapter's own docstring all say so
+  explicitly.
+- **Two issues were deferred out of Phase 1 and are Phase 3's context, not
+  its blockers:** #274 (POSIX binding residue — prose accuracy, test hygiene,
+  the release-only refusal's over-broad `RuntimeError`) and #273 (pty `ECHO`
+  puts harness input in the subject's output stream, where the marker scanner
+  reads). #273 was closed by accident on 2026-08-01 — PR #272's squash message
+  contains the words "rather than fixed: #273", which GitHub's linker read as
+  a closing keyword — and has been reopened. Phase 2 did not touch either: a
+  pure-refactor slice is the wrong place to change what the scanner honours,
+  and #273's question only becomes answerable with a real subject on the pty,
+  which is #269.
 - **Adjacent open issues, none of them this initiative's:** #261 (concurrent-
   I/O disposition — decided re-raise on 2026-07-31, needs a POSIX red, so it
   becomes cheap once Phase 1 exists and may be sequenced against it); the
@@ -182,9 +237,17 @@ moratorium, recorded under `docs/agent/design/`.
 
 Existing files this initiative reads or changes:
 
-- `src/termverify/conpty.py` — the epoch engine to generalize; the ports
-  (`ConptyBindingPort`, `ConptyChildPort`, `NormalizerFactory`,
-  `ConptyWatchdogPort`) the POSIX binding must satisfy.
+- `src/termverify/terminal.py` — the epoch engine, generalized by Phase 2;
+  the ports (`TerminalBindingPort`, `TerminalChildPort`, `NormalizerFactory`,
+  `TerminalWatchdogPort`) a binding must satisfy, and the two shipped
+  bindings `ConptyBinding` and `PosixPtyBinding`. Named `conpty.py` with
+  `Conpty*` ports until #268.
+- `src/termverify/_terminal_binding.py` — the platform-neutral failure kinds,
+  so the adapter classifies a kind and never a family. Added by #268. Five
+  kinds, of which the adapter classifies four; `_posix_pty` subclasses four,
+  having no geometry mismatch to raise. Neither number is a round one and both
+  are explained in the module docstring — do not restate them as "five kinds
+  both bindings subclass", which is what the first draft of this row said.
 - `src/termverify/_conpty.py` — the native precedent: incremental decode,
   marker scanning, spawn ownership, ratchet exclusion.
 - `src/termverify/_jsonl_pipe.py` — the POSIX mechanisms to reuse:

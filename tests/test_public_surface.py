@@ -12,6 +12,7 @@ authoritative transcript codec and the closed ``termverify.key/v1`` and
 ``termverify.key-encoding/v1`` registries.
 """
 
+import importlib
 from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
@@ -22,9 +23,9 @@ import termverify
 import termverify._key_encoding_v1
 import termverify._key_v1
 import termverify.adapter
-import termverify.conpty
 import termverify.cooperation
 import termverify.direct
+import termverify.terminal
 import termverify.transcript
 from termverify._protocol_v1 import CONSTRAINT_NAMES
 
@@ -164,9 +165,10 @@ _CONSTRAINTS = CONSTRAINT_NAMES
 _RETIRED_PORT_METHODS = tuple(f"enforce_{constraint}" for constraint in _CONSTRAINTS)
 
 #: Retired by #218, and module-level names. ``UnenforcedConstraintPorts``
-#: lived in ``termverify.conpty``, never on ``termverify``, so a check
-#: confined to the top level passes vacuously for it — both modules are
-#: inspected below.
+#: lived in the terminal-adapter module — named ``termverify.conpty`` until
+#: #268 generalized it to ``termverify.terminal`` — and never on
+#: ``termverify``, so a check confined to the top level passes vacuously for
+#: it; both modules are inspected below.
 _RETIRED_TYPE_NAMES = ("EnforcedConstraints", "UnenforcedConstraintPorts")
 
 #: The vocabulary that deliberately keeps saying "enforcement": it names the
@@ -185,7 +187,7 @@ _RETAINED_ENFORCEMENT_NAMES = (
 #: half-renamed class still satisfies ``hasattr`` on the protocol itself.
 _PORT_CARRIERS = (
     termverify.ConstraintPorts,
-    termverify.conpty.ApplyNothingConstraintPorts,
+    termverify.terminal.ApplyNothingConstraintPorts,
     termverify.cooperation.CooperationConstraintPorts,
 )
 
@@ -193,7 +195,7 @@ _PORT_CARRIERS = (
 def test_the_applied_vocabulary_replaced_the_enforced_one() -> None:
     assert "AppliedConstraints" in termverify.__all__
     assert termverify.AppliedConstraints is termverify.adapter.AppliedConstraints
-    assert "ApplyNothingConstraintPorts" in termverify.conpty.__all__
+    assert "ApplyNothingConstraintPorts" in termverify.terminal.__all__
     for constraint in _CONSTRAINTS:
         method = f"apply_{constraint}"
         for ports in _PORT_CARRIERS:
@@ -203,7 +205,7 @@ def test_the_applied_vocabulary_replaced_the_enforced_one() -> None:
 def test_no_retired_enforced_name_survives_on_the_surface() -> None:
     """Both retired kinds, each checked where it could actually survive."""
     for name in _RETIRED_TYPE_NAMES:
-        for module in (termverify, termverify.conpty):
+        for module in (termverify, termverify.terminal):
             assert name not in module.__all__, f"{module.__name__}.{name}"
             assert not hasattr(module, name), f"{module.__name__}.{name}"
 
@@ -219,17 +221,111 @@ def test_the_enforcement_tier_axis_keeps_its_name() -> None:
     assert "delivered" in termverify.ENFORCEMENT_TIERS
 
 
+# --- #268: the terminal adapter's rename -----------------------------------
+#
+# Issue #268 generalized the ConPTY adapter into one platform-neutral terminal
+# adapter over a binding port. Three kinds of thing moved, and each can only
+# survive somewhere different, so each is checked where it could survive and
+# nowhere it could not — a check pointed at a namespace the name never lived in
+# passes vacuously, which is how two successive versions of the #218 pin came
+# out weaker than they read.
+
+#: Retired *module*. Only a leftover file or a shim can resurrect this, and
+#: neither is visible in a namespace — so this one is checked by import.
+_RETIRED_MODULE_NAME = "termverify.conpty"
+
+#: Retired *names*, checked on the module that now exists. They were never
+#: re-exported at the top level (``termverify.terminal`` is module-path-only,
+#: which the exact-set test above pins), so a top-level check would pass
+#: whatever happened here.
+_RETIRED_TERMINAL_NAMES = (
+    "ConptyAdapter",
+    "ConptyBindingPort",
+    "ConptyChildPort",
+    "ConptyWatchdogPort",
+)
+
+#: The names #268 introduced, in place of those four.
+_RENAMED_TERMINAL_NAMES = (
+    "TerminalAdapter",
+    "TerminalBindingPort",
+    "TerminalChildPort",
+    "TerminalWatchdogPort",
+)
+
+#: The name a blanket ``Conpty`` → ``Terminal`` rename would have taken, and
+#: must not: ``ConptyBinding`` *is* the ConPTY binding — one of the two
+#: implementations of the neutral port — so renaming it would make the
+#: platform-neutral module claim the Windows pseudoconsole is platform-neutral.
+#: ``PosixPtyBinding`` is its sibling, and is pinned alongside because the
+#: slice's claim is "one adapter, two bindings"; one binding would satisfy
+#: every other check in this file.
+_RETAINED_BINDING_NAMES = ("ConptyBinding", "PosixPtyBinding")
+
+
+def test_the_retired_terminal_adapter_module_is_gone() -> None:
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module(_RETIRED_MODULE_NAME)
+
+
+def test_no_retired_conpty_adapter_name_survives_on_the_terminal_module() -> None:
+    for name in _RETIRED_TERMINAL_NAMES:
+        assert name not in termverify.terminal.__all__, name
+        assert not hasattr(termverify.terminal, name), name
+
+
+def test_the_renamed_terminal_names_are_exported_and_resolvable() -> None:
+    """The other half: absence proves nothing without presence.
+
+    Deleting the four old names satisfies the test above on its own. What
+    makes the pair a rename rather than a removal is that four new names
+    resolve to the objects the old ones named — and that they are *the* port
+    protocols and *the* adapter, not same-named placeholders, which is what
+    the structural assertions below check.
+    """
+    for name in _RENAMED_TERMINAL_NAMES:
+        assert name in termverify.terminal.__all__, name
+        assert hasattr(termverify.terminal, name), name
+
+    assert isinstance(termverify.terminal.TerminalAdapter, type)
+    # Each port is still a ``runtime_checkable`` Protocol, which is what lets
+    # a host substitute a fake. Reaching for ``isinstance`` at all is the
+    # check: against a Protocol that lost ``@runtime_checkable`` it raises
+    # TypeError rather than returning False, and a plain class renamed into
+    # its place would satisfy the ``hasattr`` above without satisfying this.
+    for port in (
+        termverify.terminal.TerminalBindingPort,
+        termverify.terminal.TerminalChildPort,
+        termverify.terminal.TerminalWatchdogPort,
+    ):
+        assert not isinstance(object(), port), port
+
+
+def test_both_shipped_bindings_keep_their_platform_names() -> None:
+    """The rename is a generalization, not a search-and-replace.
+
+    Each is checked for the port's *shape*, not just its name: a
+    ``ConptyBinding`` that no longer satisfies ``TerminalBindingPort`` would
+    keep the name while losing the reason the name is worth keeping.
+    """
+    for name in _RETAINED_BINDING_NAMES:
+        assert name in termverify.terminal.__all__, name
+        binding = getattr(termverify.terminal, name)
+        assert isinstance(binding(), termverify.terminal.TerminalBindingPort), name
+
+
 #: The modules this file pins the ordering of: the top-level surface, the two
-#: it is assembled from, and ``conpty`` because #218 renamed a name in its
-#: ``__all__``. Deliberately **not** every module with an ``__all__`` — the
-#: repo has no single convention yet (``termverify.control.__all__`` is in
-#: ``RUF022``'s isort order, not this plain one), and settling that is a
-#: lint-configuration decision, not this test's job.
+#: it is assembled from, and ``terminal`` because #218 renamed a name in its
+#: ``__all__`` and #268 renamed four more. Deliberately **not** every module
+#: with an ``__all__`` — the repo has no single convention yet
+#: (``termverify.control.__all__`` is in ``RUF022``'s isort order, not this
+#: plain one), and settling that is a lint-configuration decision, not this
+#: test's job.
 _ORDERED_SURFACE_MODULES = (
     termverify,
     termverify.adapter,
-    termverify.conpty,
     termverify.direct,
+    termverify.terminal,
 )
 
 

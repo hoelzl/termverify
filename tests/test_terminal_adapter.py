@@ -1,10 +1,10 @@
-"""Negotiation evidence for the public ConPTY adapter.
+"""Negotiation evidence for the public terminal adapter.
 
 Everything here runs cross-platform against fake bindings and fake constraint
 ports: the adapter owns terminal negotiation, delegates the six non-terminal
 constraints, and every negotiation failure ends the start before any child is
 spawned. Epoch behavior after a complete negotiation is covered in
-``test_conpty_epochs``.
+``test_terminal_epochs``.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from typing import cast
 
 import pytest
 
-from termverify import _conpty
+from termverify import _conpty, _posix_pty
 from termverify._conpty import ConptyChild, ConptyGeometryMismatchError
 from termverify.adapter import (
     Adapter,
@@ -43,12 +43,13 @@ from termverify.adapter import (
     TextInput,
     TimezoneReceipt,
 )
-from termverify.conpty import (
+from termverify.terminal import (
     ApplyNothingConstraintPorts,
-    ConptyAdapter,
     ConptyBinding,
-    ConptyBindingPort,
-    ConptyChildPort,
+    PosixPtyBinding,
+    TerminalAdapter,
+    TerminalBindingPort,
+    TerminalChildPort,
 )
 
 _NON_TERMINAL_CONSTRAINTS = (
@@ -93,7 +94,7 @@ class _Binding:
         columns: int,
         env_overlay: Mapping[str, str] | None = None,
         cwd: str | None = None,
-    ) -> ConptyChildPort:
+    ) -> TerminalChildPort:
         self.spawn_calls += 1
         raise OSError("this negotiation fake refuses to spawn a child")
 
@@ -161,12 +162,12 @@ class _EnforcingPorts:
 def _adapter(
     binding: _Binding | None = None,
     ports: ConstraintPorts | None = None,
-) -> tuple[ConptyAdapter, _Binding]:
+) -> tuple[TerminalAdapter, _Binding]:
     bound = binding if binding is not None else _Binding()
     if ports is None:
-        adapter = ConptyAdapter(("subject",), binding=bound, abort_deadline_ms=60_000)
+        adapter = TerminalAdapter(("subject",), binding=bound, abort_deadline_ms=60_000)
     else:
-        adapter = ConptyAdapter(
+        adapter = TerminalAdapter(
             ("subject",),
             binding=bound,
             constraint_ports=ports,
@@ -175,20 +176,20 @@ def _adapter(
     return adapter, bound
 
 
-def test_conpty_adapter_satisfies_the_adapter_protocol() -> None:
+def test_terminal_adapter_satisfies_the_adapter_protocol() -> None:
     adapter, _ = _adapter()
     checked: Adapter = adapter
     assert checked is adapter
 
 
 def test_conpty_child_satisfies_the_child_port() -> None:
-    child: ConptyChildPort = ConptyChild(object(), 1, 0, 0)
-    assert isinstance(child, ConptyChildPort)
+    child: TerminalChildPort = ConptyChild(object(), 1, 0, 0)
+    assert isinstance(child, TerminalChildPort)
 
 
 def test_native_binding_satisfies_the_binding_port() -> None:
-    binding: ConptyBindingPort = ConptyBinding()
-    assert isinstance(binding, ConptyBindingPort)
+    binding: TerminalBindingPort = ConptyBinding()
+    assert isinstance(binding, TerminalBindingPort)
 
 
 def test_probe_reports_the_spawn_precondition() -> None:
@@ -253,6 +254,75 @@ def test_native_binding_delegates_spawn(monkeypatch: pytest.MonkeyPatch) -> None
     assert child is sentinel
     assert recorded == [
         (("subject", "--flag"), 24, 80, {"TERMVERIFY_SEED": "42"}, "C:/sandbox")
+    ]
+
+
+# --- the POSIX binding's delegation ----------------------------------------
+#
+# The mirror of the two tests above, and it exists because it did not. The
+# round-2 review transposed `rows=columns, columns=rows` in `PosixPtyBinding`
+# and the whole suite stayed green: nothing anywhere called either of its
+# methods, so the second of the slice's two bindings had its geometry plumbing
+# — the very thing the receipt's ``tier="os"`` claim is made about — verified
+# by nothing at all. Neither test needs a pty, so neither is waiting on #269.
+
+
+def test_posix_binding_satisfies_the_binding_port() -> None:
+    binding: TerminalBindingPort = PosixPtyBinding()
+    assert isinstance(binding, TerminalBindingPort)
+
+
+def test_posix_binding_delegates_the_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Delegation, not a hardcoded answer.
+
+    ``PosixPtyBinding().is_supported()`` is ``False`` on this Windows host and
+    ``True`` on Linux, so asserting either constant would make the test pass
+    for the wrong reason on one leg. Patching the native probe is what
+    distinguishes delegation from a coincidence.
+    """
+    monkeypatch.setattr(_posix_pty, "is_supported", lambda: True)
+    assert PosixPtyBinding().is_supported() is True
+    monkeypatch.setattr(_posix_pty, "is_supported", lambda: False)
+    assert PosixPtyBinding().is_supported() is False
+
+
+def test_posix_binding_delegates_spawn(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every argument forwarded, and ``rows``/``columns`` not transposed.
+
+    ``rows`` and ``columns`` are both ``int`` and adjacent in the signature, so
+    a swap type-checks, lints clean, and is invisible to every other test in
+    the repository. Asymmetric values (24 vs 80) are what make the swap
+    observable; equal ones would not be.
+    """
+    sentinel = object()
+    recorded: list[
+        tuple[tuple[str, ...], int, int, Mapping[str, str] | None, str | None]
+    ] = []
+
+    def fake_spawn(
+        argv: Sequence[str],
+        *,
+        rows: int,
+        columns: int,
+        env_overlay: Mapping[str, str] | None = None,
+        cwd: str | None = None,
+    ) -> object:
+        recorded.append((tuple(argv), rows, columns, env_overlay, cwd))
+        return sentinel
+
+    monkeypatch.setattr(_posix_pty.PosixPtyChild, "spawn", staticmethod(fake_spawn))
+
+    child = PosixPtyBinding().spawn(
+        ["subject", "--flag"],
+        rows=24,
+        columns=80,
+        env_overlay={"TERMVERIFY_SEED": "42"},
+        cwd="/sandbox",
+    )
+
+    assert child is sentinel
+    assert recorded == [
+        (("subject", "--flag"), 24, 80, {"TERMVERIFY_SEED": "42"}, "/sandbox")
     ]
 
 
@@ -341,6 +411,18 @@ def test_negotiation_stops_at_first_unsupported_port_constraint(
 
 
 def test_unsupported_probe_fails_terminal_negotiation() -> None:
+    """The refusal cites the probe, and does not name a platform.
+
+    Until #268 this message said "no ConPTY pseudoconsole support", which was
+    a statement the adapter had no evidence for even before the POSIX binding
+    existed: what it holds is a ``TerminalBindingPort``, and the only thing it
+    learned is that the port's own probe answered no. It is a
+    ``StartUnsupported`` message, which the recorder writes into the transcript
+    twice — as a ``capability.result`` reason and as the ``run.unsupported``
+    message (``recorder.py``) — so on a Linux host with a POSIX binding
+    injected the recorded evidence would have blamed a pseudoconsole that was
+    never involved.
+    """
     ports = _EnforcingPorts()
     adapter, binding = _adapter(binding=_Binding(supported=False), ports=ports)
 
@@ -350,7 +432,15 @@ def test_unsupported_probe_fails_terminal_negotiation() -> None:
     assert result.constraint == "terminal"
     assert result.code == "constraint-unsupported"
     assert len(result.applied) == 4
-    assert "ConPTY" in result.message
+    assert "binding" in result.message
+    assert "unsupported" in result.message
+    # No platform, because the adapter cannot see one. Checked as an explicit
+    # absence: an assertion on the wording alone would still pass a message
+    # that named a platform in the same sentence. Case-folded, because
+    # ``"ConPTY" not in message`` is satisfied by ``CONPTY``.
+    folded = result.message.casefold()
+    for platform in ("conpty", "pseudoconsole", "console", "windows", "posix", "pty"):
+        assert platform not in folded, platform
     assert ports.calls == ["seed", "clock", "locale", "timezone"]
     assert binding.probe_calls == 1
     assert binding.spawn_calls == 0
@@ -471,17 +561,17 @@ def test_constructor_validates_argv() -> None:
     binding = _Binding()
 
     with pytest.raises(ValueError):
-        ConptyAdapter((), binding=binding, abort_deadline_ms=60_000)
+        TerminalAdapter((), binding=binding, abort_deadline_ms=60_000)
     with pytest.raises(TypeError):
-        ConptyAdapter(
+        TerminalAdapter(
             cast("tuple[str, ...]", ("subject", 3)),
             binding=binding,
             abort_deadline_ms=60_000,
         )
     with pytest.raises(ValueError):
-        ConptyAdapter(("",), binding=binding, abort_deadline_ms=60_000)
+        TerminalAdapter(("",), binding=binding, abort_deadline_ms=60_000)
     with pytest.raises(TypeError):
-        ConptyAdapter(
+        TerminalAdapter(
             cast("tuple[str, ...]", "subject"),
             binding=binding,
             abort_deadline_ms=60_000,
@@ -532,7 +622,7 @@ def test_a_geometry_mismatch_yields_a_structured_start_failed() -> None:
             columns: int,
             env_overlay: Mapping[str, str] | None = None,
             cwd: str | None = None,
-        ) -> ConptyChildPort:
+        ) -> TerminalChildPort:
             raise ConptyGeometryMismatchError(
                 "requested terminal geometry 100000x10 but the pseudoconsole"
                 " adopted 120x30",
@@ -574,7 +664,7 @@ def test_a_predicted_geometry_refusal_yields_start_failed_without_adopted() -> N
             columns: int,
             env_overlay: Mapping[str, str] | None = None,
             cwd: str | None = None,
-        ) -> ConptyChildPort:
+        ) -> TerminalChildPort:
             raise ConptyGeometryMismatchError(
                 "the requested terminal geometry 100000x10 cannot be adopted:"
                 " columns=100000 wraps to -31072 in the console's signed"

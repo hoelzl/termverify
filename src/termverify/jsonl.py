@@ -9,7 +9,7 @@ forced teardown — all cross-platform and testable against fake bindings.
 The real pipe/process binding is slice 2; no process is spawned here.
 
 The adapter implements the same ``Adapter`` contract as the direct and
-ConPTY adapters, so the recorder, replay engine, and conformance suites
+terminal adapters, so the recorder, replay engine, and conformance suites
 consume its runs unchanged. Everything on the wire is validated by the
 strict `termverify.control/v1` codec (`termverify.control`): a malformed
 or out-of-lifecycle peer message is a structured failure, never a guess.

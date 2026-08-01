@@ -122,8 +122,12 @@ allowing integer rounding to absorb a regression.
   (e.g. `tests/test_transcript_lifecycle.py`). No state-machine or model-based
   runner exists; TermVerify-shipped property harnesses are `[planned]`.
 - **Integration:** adapters running an application in process or subprocess mode.
-- **PTY/end-to-end (Windows only today):** actual terminal input/output and
-  normalized rendered-screen evidence through the ConPTY adapter; a POSIX PTY
-  adapter is `[planned]`.
+- **PTY/end-to-end (proven on Windows today):** actual terminal input/output
+  and normalized rendered-screen evidence through the terminal adapter with
+  `ConptyBinding` injected. The adapter is platform-neutral and a
+  `PosixPtyBinding` ships beside it, but its evidence stops at the binding's
+  own tests; the adapter-level POSIX legs are
+  [issue #269](https://github.com/hoelzl/termverify/issues/269), so treat the
+  POSIX end-to-end path as `[planned]` until they land.
 
-PTY tests must tolerate Windows and CI differences deliberately. A direct adapter remains the fast default; PTY support is required for production-fidelity scenarios, not for every unit test — and it exists only on Windows today.
+PTY tests must tolerate platform and CI differences deliberately. A direct adapter remains the fast default; PTY support is required for production-fidelity scenarios, not for every unit test — and the only end-to-end-proven PTY path today is the Windows one.

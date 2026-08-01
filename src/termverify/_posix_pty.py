@@ -88,6 +88,13 @@ from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from typing import Final
 
+from termverify._terminal_binding import (
+    TerminalClosedError,
+    TerminalConcurrentIOError,
+    TerminalEndOfStreamError,
+    TerminalUnsupportedError,
+)
+
 # ``fcntl`` and ``termios`` are Unix-only and are imported *inside* the
 # functions that need them, below their platform guard. This module must
 # still import on Windows — the adapter's support probe is answered by
@@ -177,15 +184,15 @@ _TRAMPOLINE: Final = (
 )
 
 
-class PosixPtyUnsupportedError(RuntimeError):
+class PosixPtyUnsupportedError(TerminalUnsupportedError):
     """Raised when the binding is used on a host it does not claim."""
 
 
-class PosixPtyClosedError(RuntimeError):
+class PosixPtyClosedError(TerminalClosedError):
     """Raised when an operation is attempted after the binding was closed."""
 
 
-class PosixPtyConcurrentIOError(RuntimeError):
+class PosixPtyConcurrentIOError(TerminalConcurrentIOError):
     """Raised when a read or write is attempted while another is in flight.
 
     Single-flight is a port contract the adapter honors; this is defense in
@@ -195,7 +202,7 @@ class PosixPtyConcurrentIOError(RuntimeError):
     """
 
 
-class PosixPtyEndOfStreamError(Exception):
+class PosixPtyEndOfStreamError(TerminalEndOfStreamError):
     """Raised by ``read`` when the pseudoterminal reports end-of-stream.
 
     Only raised while the binding is open: a read interrupted by ``close``

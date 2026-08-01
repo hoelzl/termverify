@@ -10,6 +10,14 @@
   initiative for exactly the scope below and authorizes its slices in order.
   No adapter, example, or platform claim exists until its slice lands with
   evidence and an adversarial-review verdict.
+- **Renamed 2026-08-01 (#268):** decision 1 below was executed, so the module
+  it names by its pre-generalization name is now `src/termverify/terminal.py`,
+  and `ConptyAdapter` / `ConptyBindingPort` are `TerminalAdapter` /
+  `TerminalBindingPort`. The measured conditional counts recorded below are the
+  counts *at acceptance time* and are deliberately left as measured; the
+  post-slice measurement lives in
+  `tests/test_terminal_platform_neutrality.py`, which holds the threshold at
+  zero. The trigger did not fire.
 - **Issue:** [#204](https://github.com/hoelzl/termverify/issues/204);
   prioritization input is
   [#114](https://github.com/hoelzl/termverify/issues/114)

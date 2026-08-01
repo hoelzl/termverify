@@ -101,6 +101,14 @@ import uuid
 from collections.abc import Mapping, Sequence
 from typing import Any, Final, cast
 
+from termverify._terminal_binding import (
+    TerminalClosedError,
+    TerminalConcurrentIOError,
+    TerminalEndOfStreamError,
+    TerminalGeometryMismatchError,
+    TerminalUnsupportedError,
+)
+
 _CHILD_EXIT_WAIT_MS = 30_000
 _READ_CANCEL_TIMEOUT_SECONDS = 30.0
 _READ_CANCEL_RETRY_SECONDS = 0.01
@@ -123,7 +131,7 @@ class _NativeReadCancelled(OSError):
 FORCED_TERMINATION_EXIT_CODE: Final = 15
 
 
-class ConptyUnsupportedError(RuntimeError):
+class ConptyUnsupportedError(TerminalUnsupportedError):
     """Raised when the ConPTY binding is used on a host without ConPTY."""
 
 
@@ -141,11 +149,11 @@ def is_supported() -> bool:
     return os.name == "nt" and _HAS_PSEUDOCONSOLE
 
 
-class ConptyClosedError(RuntimeError):
+class ConptyClosedError(TerminalClosedError):
     """Raised when an operation is attempted after the binding was closed."""
 
 
-class ConptyConcurrentIOError(RuntimeError):
+class ConptyConcurrentIOError(TerminalConcurrentIOError):
     """Raised when a read or write is attempted while another is in flight.
 
     The native layer is not thread-safe for overlapped calls on one
@@ -158,7 +166,7 @@ class ConptyConcurrentIOError(RuntimeError):
     """
 
 
-class ConptyEndOfStreamError(Exception):
+class ConptyEndOfStreamError(TerminalEndOfStreamError):
     """Raised by ``read`` when the native output pipe reports end-of-stream.
 
     Only raised while the binding is open: a read interrupted by ``close``
@@ -170,30 +178,20 @@ class ConptyEndOfStreamError(Exception):
     """
 
 
-class ConptyGeometryMismatchError(OSError):
+class ConptyGeometryMismatchError(TerminalGeometryMismatchError):
     """The pseudoconsole cannot, or provably did not, adopt the geometry.
 
     Raised by :meth:`ConptyChild.spawn` before a session is handed out when
     the requested terminal geometry cannot survive the console's signed
     16-bit ``COORD`` members, or when the adopted size measured by the
-    geometry probe differs from the request. Subclasses ``OSError`` so
-    existing spawn-failure handling applies; the structured members carry
-    the geometry facts for the adapter's failure record (issue #228).
-    """
+    geometry probe differs from the request.
 
-    def __init__(
-        self,
-        message: str,
-        *,
-        requested: tuple[int, int],
-        adopted: tuple[int, int] | None,
-    ) -> None:
-        super().__init__(message)
-        #: The requested ``(rows, columns)``.
-        self.requested = requested
-        #: The adopted ``(rows, columns)`` measured by the probe, or ``None``
-        #: when the refusal is predictive (nothing was spawned or measured).
-        self.adopted = adopted
+    The ``requested``/``adopted`` members and the ``OSError`` base come from
+    the neutral kind. This binding is the only shipped one that raises the
+    kind at all: ``TIOCSWINSZ`` adopts what it is given, while
+    ``CreatePseudoConsole`` range-checks nothing and wraps the request into
+    those ``COORD`` members (issue #228).
+    """
 
 
 #: One ``COORD`` member is a signed 16-bit value; a request is wrapped into

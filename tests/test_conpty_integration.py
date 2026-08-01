@@ -93,14 +93,14 @@ from termverify.adapter import (
     TextInput,
 )
 from termverify.comparator import compare_transcripts
-from termverify.conpty import (
-    READINESS_MARKER_PREFIX_DEFAULT,
-    READINESS_MARKER_TERMINATOR,
-    ConptyAdapter,
-    ConptyBinding,
-)
 from termverify.cooperation import CooperationConstraintPorts, RealDirectoryProbe
 from termverify.recorder import run_scripted
+from termverify.terminal import (
+    READINESS_MARKER_PREFIX_DEFAULT,
+    READINESS_MARKER_TERMINATOR,
+    ConptyBinding,
+    TerminalAdapter,
+)
 from termverify.vt import VtScreenNormalizer
 
 # Shared Windows evidence fixtures: the OS process-handle helpers prove
@@ -113,7 +113,7 @@ from tests.test_conpty_binding import (
     _terminate_process,
     _wait_for_os_exit_code,
 )
-from tests.test_conpty_epochs import _configuration, _EnforcingPorts
+from tests.test_terminal_epochs import _configuration, _EnforcingPorts
 
 _INITIAL_ROWS: Final = 24
 _INITIAL_COLUMNS: Final = 80
@@ -163,7 +163,7 @@ def emit(text):
         answered[0] += 1
         token = str(answered[0])
         # Newline-closed so the marker stands on its own line: see the
-        # marker-protocol notes in termverify.conpty.
+        # marker-protocol notes in termverify.terminal.
         sys.stdout.write(
             text + MARKER_PREFIX + token + MARKER_TERMINATOR + "\\r\\n"
         )
@@ -248,8 +248,8 @@ def _adapter(
     *,
     abort_deadline_ms: int = _SAFE_DEADLINE_MS,
     readiness_marker_prefix: str = READINESS_MARKER_PREFIX_DEFAULT,
-) -> ConptyAdapter:
-    return ConptyAdapter(
+) -> TerminalAdapter:
+    return TerminalAdapter(
         argv,
         binding=ConptyBinding(),
         abort_deadline_ms=abort_deadline_ms,
@@ -259,7 +259,7 @@ def _adapter(
 
 
 @contextmanager
-def _reaped(adapter: ConptyAdapter) -> Iterator[ConptyAdapter]:
+def _reaped(adapter: TerminalAdapter) -> Iterator[TerminalAdapter]:
     """Cleanup arrangement, not evidence: never leak a child past a failure.
 
     A failed assertion mid-run would otherwise leave the fixture child
@@ -359,7 +359,7 @@ def test_conpty_emits_passthrough_osc_ahead_of_the_text_before_it() -> None:
     # settling. The OSC nevertheless arrives first.
     assert osc < rendered, (
         "the OSC no longer overtakes rendered text; if ConPTY has changed,"
-        " revisit the printable-marker rationale in termverify.conpty"
+        " revisit the printable-marker rationale in termverify.terminal"
     )
     assert child.exit_status == 0
 
@@ -705,8 +705,8 @@ def _cooperation_configuration() -> RunConfiguration:
 
 def _cooperation_adapter(
     sandbox: Path, *, abort_deadline_ms: int = _SAFE_DEADLINE_MS
-) -> ConptyAdapter:
-    return ConptyAdapter(
+) -> TerminalAdapter:
+    return TerminalAdapter(
         _delivery_echo_argv(),
         binding=ConptyBinding(),
         abort_deadline_ms=abort_deadline_ms,
@@ -847,7 +847,7 @@ _REPEAT_SUBJECT: Final[dict[str, JsonInput]] = {
     "format": "termverify.replay-subject/v1",
     "application": {"id": "repeat-echo-fixture", "version": "1", "build": "b1"},
     "fixture": {"id": "repeat-echo", "version": "1"},
-    "adapter": {"id": "termverify.conpty", "version": "1"},
+    "adapter": {"id": "termverify.terminal", "version": "1"},
     "normalizer": {"id": "termverify.vt", "version": "1"},
     "state_schema": {"id": "terminal-dimensions", "version": "1"},
 }
@@ -876,7 +876,7 @@ def test_repeat_runs_reach_an_equivalent_comparator_verdict(tmp_path: Path) -> N
     def one_run() -> bytes:
         sandbox = tmp_path / "sandbox"
         sandbox.mkdir(exist_ok=True)
-        adapter = ConptyAdapter(
+        adapter = TerminalAdapter(
             _argv(
                 _REPEAT_ECHO_CHILD_TEMPLATE.format(
                     prefix=READINESS_MARKER_PREFIX_DEFAULT,
@@ -976,7 +976,7 @@ def test_unresolvable_sandbox_fails_unsupported_before_any_child(
     tmp_path: Path,
 ) -> None:
     """A missing host sandbox ends the start honestly, before any spawn."""
-    adapter = ConptyAdapter(
+    adapter = TerminalAdapter(
         _delivery_echo_argv(),
         binding=ConptyBinding(),
         abort_deadline_ms=_SAFE_DEADLINE_MS,

@@ -10,6 +10,15 @@
   (2026-07-19, issue #146) — for exactly that design's scope and nothing else;
   this handover's transferred criteria, retirements, and deferrals are
   unchanged by that activation.
+- **Renamed 2026-08-01 (#268):** this document uses the pre-generalization
+  names. The public adapter module is now `termverify.terminal`;
+  `ConptyAdapter` is `TerminalAdapter`, and `ConptyBindingPort` /
+  `ConptyChildPort` / `ConptyWatchdogPort` are `TerminalBindingPort` /
+  `TerminalChildPort` / `TerminalWatchdogPort`. `ConptyBinding` deliberately
+  keeps its name: it is one of two implementations of the neutral port,
+  beside `PosixPtyBinding`. The decisions recorded below are unchanged, and
+  every ConPTY-specific *behavior* described here is still a property of that
+  binding — only the names above the port moved.
 - **Owner:** project maintainer
 - **Created:** 2026-07-17
 - **Updated:** 2026-07-29

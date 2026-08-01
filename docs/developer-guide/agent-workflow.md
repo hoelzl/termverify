@@ -8,7 +8,7 @@ TermVerify is developed so that human developers and autonomous coding agents ca
 2. **Specify:** express one observable behavior as a unit test, property, or transcript expectation; semantic snapshot expectations are `[planned]` (see the evidence hierarchy below).
 3. **Red:** run it and observe the expected failure.
 4. **Green:** make the minimum implementation change.
-5. **Exercise:** drive the application through the appropriate adapter; use the ConPTY adapter (Windows-only today) when the user-facing terminal path is relevant — no POSIX PTY adapter exists yet.
+5. **Exercise:** drive the application through the appropriate adapter; use the terminal adapter when the user-facing terminal path is relevant, injecting `ConptyBinding` or `PosixPtyBinding` — only the Windows path is proven end to end today, so a POSIX result is evidence about the binding rather than about the pipeline until [issue #269](https://github.com/hoelzl/termverify/issues/269) lands.
 6. **Review:** inspect diffs and reports, then run the wider quality gate.
 7. **Preserve:** turn every discovered bug into durable, replayable evidence.
 

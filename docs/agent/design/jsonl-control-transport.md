@@ -196,7 +196,7 @@ caller (recorder, replay, conformance suite)
 ```
 
 The adapter is deliberately the *third* implementation of one contract:
-`DirectAdapter` (in-process), `ConptyAdapter` (terminal), `JsonlAdapter`
+`DirectAdapter` (in-process), `TerminalAdapter` (terminal), `JsonlAdapter`
 (structured pipe). Everything above the contract — recorder, comparator,
 replay — works unchanged.
 

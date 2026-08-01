@@ -11,7 +11,7 @@ subject complied, and OS containment remains an explicit non-goal by
 recorded owner decision.
 
 Using these ports is an explicit host decision:
-``ApplyNothingConstraintPorts`` remains the ConPTY adapter's default, so
+``ApplyNothingConstraintPorts`` remains the terminal adapter's default, so
 nothing is implicitly claimed.
 
 Per-constraint delivery contracts (conventional platform variables are

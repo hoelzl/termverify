@@ -1,4 +1,4 @@
-"""Epoch-machinery evidence for the public ConPTY adapter (slice 3).
+"""Epoch-machinery evidence for the public terminal adapter (slice 3).
 
 Everything here runs cross-platform against fake bindings, fake normalizers,
 and a fake watchdog trigger: the readiness-marker protocol, the epoch loop,
@@ -25,6 +25,20 @@ from termverify._conpty import (
     ConptyConcurrentIOError,
     ConptyEndOfStreamError,
     ConptyGeometryMismatchError,
+    ConptyUnsupportedError,
+)
+from termverify._posix_pty import (
+    PosixPtyClosedError,
+    PosixPtyConcurrentIOError,
+    PosixPtyEndOfStreamError,
+    PosixPtyUnsupportedError,
+)
+from termverify._terminal_binding import (
+    TerminalClosedError,
+    TerminalConcurrentIOError,
+    TerminalEndOfStreamError,
+    TerminalGeometryMismatchError,
+    TerminalUnsupportedError,
 )
 from termverify.adapter import (
     AdapterFailure,
@@ -60,17 +74,17 @@ from termverify.adapter import (
     TextInput,
     TimezoneReceipt,
 )
-from termverify.conpty import (
+from termverify.recorder import TranscriptRecorder
+from termverify.terminal import (
     _FIXED_RECORD_STRING_BYTES,
     _MAX_MARKER_TOKEN,
     _MAX_UTF8_BYTES_PER_CELL,
     READINESS_MARKER_PREFIX_DEFAULT,
     READINESS_MARKER_TERMINATOR,
-    ConptyAdapter,
-    ConptyChildPort,
+    TerminalAdapter,
+    TerminalChildPort,
     TimerWatchdog,
 )
-from termverify.recorder import TranscriptRecorder
 from termverify.transcript import (
     _MAX_COLLECTION_ITEMS,
     _MAX_RECORD_STRING_BYTES,
@@ -108,7 +122,7 @@ _REPLAY_SUBJECT: dict[str, JsonInput] = {
     "format": "termverify.replay-subject/v1",
     "application": {"id": "fixture-app", "version": "1", "build": "b1"},
     "fixture": {"id": "basic", "version": "1"},
-    "adapter": {"id": "termverify.conpty", "version": "1"},
+    "adapter": {"id": "termverify.terminal", "version": "1"},
     "normalizer": {"id": "termverify.identity", "version": "1"},
     "state_schema": {"id": "fixture-state", "version": "1"},
 }
@@ -269,7 +283,7 @@ class _FakeBinding:
         columns: int,
         env_overlay: Mapping[str, str] | None = None,
         cwd: str | None = None,
-    ) -> ConptyChildPort:
+    ) -> TerminalChildPort:
         self.spawns.append((tuple(argv), rows, columns))
         if self._spawn_error is not None:
             raise self._spawn_error
@@ -383,8 +397,8 @@ def _adapter(
     readiness_marker_prefix: str = READINESS_MARKER_PREFIX_DEFAULT,
     abort_deadline_ms: int = _DEADLINE_MS,
     monotonic: Callable[[], float] | None = None,
-) -> ConptyAdapter:
-    return ConptyAdapter(
+) -> TerminalAdapter:
+    return TerminalAdapter(
         ("subject", "--flag"),
         binding=binding,
         monotonic=monotonic,
@@ -407,7 +421,7 @@ def _started(
     write_error: Exception | None = None,
     resize_error: Exception | None = None,
     close_error: Exception | None = None,
-) -> tuple[ConptyAdapter, _FakeBinding, _NormalizerFactory, _FakeWatchdog]:
+) -> tuple[TerminalAdapter, _FakeBinding, _NormalizerFactory, _FakeWatchdog]:
     binding = _FakeBinding(
         _FakeChild(
             reads,
@@ -430,7 +444,7 @@ def _started(
 
 def test_constructor_requires_an_explicit_abort_deadline() -> None:
     with pytest.raises(TypeError):
-        ConptyAdapter(("subject",), binding=_FakeBinding())  # type: ignore[call-arg]
+        TerminalAdapter(("subject",), binding=_FakeBinding())  # type: ignore[call-arg]
     with pytest.raises(TypeError):
         _adapter(_FakeBinding(), abort_deadline_ms=cast("int", "soon"))
     with pytest.raises(ValueError):
@@ -694,7 +708,7 @@ def test_start_with_the_default_vt_normalizer_renders_the_marker() -> None:
     """
     marker = _marker()
     binding = _FakeBinding(_FakeChild(["hi" + marker]))
-    adapter = ConptyAdapter(
+    adapter = TerminalAdapter(
         ("subject",),
         binding=binding,
         constraint_ports=_EnforcingPorts(),
@@ -1859,3 +1873,167 @@ def test_timer_watchdog_disarm_cancels_the_trigger() -> None:
     disarm()
 
     assert not fired.wait(0.05)
+
+
+# --- binding-neutral error contract ----------------------------------------
+#
+# The adapter classifies binding failures by the platform-neutral base types
+# in ``termverify._terminal_binding``, never by a concrete family's names, so
+# that a binding it has never heard of is classified correctly. Parametrising
+# over both shipped families *and* the bare base types is what makes that
+# claim falsifiable: a catch written against one family's concrete type passes
+# every ConPTY case and fails every POSIX one, and a catch written against
+# both concrete families passes both and fails the base.
+
+
+_CLOSED_ERRORS = (
+    pytest.param(ConptyClosedError, id="conpty"),
+    pytest.param(PosixPtyClosedError, id="posix-pty"),
+    pytest.param(TerminalClosedError, id="neutral-base"),
+)
+
+_CONCURRENT_ERRORS = (
+    pytest.param(ConptyConcurrentIOError, id="conpty"),
+    pytest.param(PosixPtyConcurrentIOError, id="posix-pty"),
+    pytest.param(TerminalConcurrentIOError, id="neutral-base"),
+)
+
+_END_OF_STREAM_ERRORS = (
+    pytest.param(ConptyEndOfStreamError, id="conpty"),
+    pytest.param(PosixPtyEndOfStreamError, id="posix-pty"),
+    pytest.param(TerminalEndOfStreamError, id="neutral-base"),
+)
+
+_GEOMETRY_ERRORS = (
+    pytest.param(ConptyGeometryMismatchError, id="conpty"),
+    pytest.param(TerminalGeometryMismatchError, id="neutral-base"),
+)
+
+
+def test_every_shipped_binding_error_derives_from_the_neutral_base() -> None:
+    """The taxonomy itself, pinned per family rather than per adapter path.
+
+    Without this, a family could satisfy the classification tests below by
+    coincidence — an ``except Exception`` fallback reaching the same outcome —
+    and a new binding's author would have nothing to derive from.
+    """
+    assert issubclass(ConptyClosedError, TerminalClosedError)
+    assert issubclass(PosixPtyClosedError, TerminalClosedError)
+    assert issubclass(ConptyConcurrentIOError, TerminalConcurrentIOError)
+    assert issubclass(PosixPtyConcurrentIOError, TerminalConcurrentIOError)
+    assert issubclass(ConptyEndOfStreamError, TerminalEndOfStreamError)
+    assert issubclass(PosixPtyEndOfStreamError, TerminalEndOfStreamError)
+    assert issubclass(ConptyGeometryMismatchError, TerminalGeometryMismatchError)
+    assert issubclass(ConptyUnsupportedError, TerminalUnsupportedError)
+    assert issubclass(PosixPtyUnsupportedError, TerminalUnsupportedError)
+
+    # The neutral kinds stay distinct from each other: three of them share
+    # ``RuntimeError`` as a supertype, and collapsing any two would make the
+    # adapter's three classifications one (the mistake #274 records at the
+    # POSIX binding's release-only refusal).
+    assert not issubclass(TerminalClosedError, TerminalConcurrentIOError)
+    assert not issubclass(TerminalConcurrentIOError, TerminalClosedError)
+    assert not issubclass(TerminalEndOfStreamError, TerminalClosedError)
+
+
+@pytest.mark.parametrize("error", _END_OF_STREAM_ERRORS)
+def test_end_of_stream_finishes_the_run_for_any_binding(
+    error: type[Exception],
+) -> None:
+    binding = _FakeBinding(
+        _FakeChild(["partial", error("end of stream")], exit_status=3)
+    )
+    adapter = _adapter(binding)
+
+    result = adapter.start("run-terminal", _configuration())
+
+    assert type(result) is StartTerminated
+    assert result.result.outcome == RunFinished.code(3)
+    observation = result.result.observation
+    assert observation is not None
+    assert [event.data for event in observation.events] == [{"chunk": "partial"}]
+    assert binding.child.closes == [True]
+
+
+@pytest.mark.parametrize("error", _CLOSED_ERRORS)
+def test_a_closed_binding_is_classified_the_same_for_any_binding(
+    error: type[Exception],
+) -> None:
+    binding = _FakeBinding(_FakeChild([error("closed")]))
+    adapter = _adapter(binding)
+
+    result = adapter.start("run-terminal", _configuration())
+
+    assert type(result) is StartFailed
+    assert result.failure.details == {"during": "read"}
+    assert "outside the abort deadline" in result.failure.message
+
+
+@pytest.mark.parametrize("error", _CONCURRENT_ERRORS)
+def test_concurrent_io_names_the_single_flight_invariant_for_any_binding(
+    error: type[Exception],
+) -> None:
+    binding = _FakeBinding(_FakeChild([error("overlap")]))
+    adapter = _adapter(binding)
+
+    result = adapter.start("run-terminal", _configuration())
+
+    assert type(result) is StartFailed
+    assert result.failure.details == {"during": "read", "invariant": "single-flight"}
+
+
+@pytest.mark.parametrize("error", _GEOMETRY_ERRORS)
+def test_a_spawn_geometry_mismatch_names_both_geometries_for_any_binding(
+    error: type[TerminalGeometryMismatchError],
+) -> None:
+    binding = _FakeBinding(
+        spawn_error=error(
+            "the binding adopted 30x100 instead of the requested 31x100",
+            requested=(31, 100),
+            adopted=(30, 100),
+        )
+    )
+    adapter = _adapter(binding)
+    configuration = replace(
+        _configuration(),
+        terminal=TerminalConfiguration(columns=100, rows=31, capabilities=()),
+    )
+
+    result = adapter.start("run-terminal", configuration)
+
+    assert type(result) is StartFailed
+    assert result.failure.details == {
+        "during": "spawn",
+        "terminal-rows": 31,
+        "terminal-columns": 100,
+        "reason": "the binding adopted 30x100 instead of the requested 31x100",
+        "adopted-rows": 30,
+        "adopted-columns": 100,
+    }
+
+
+@pytest.mark.parametrize("error", _GEOMETRY_ERRORS)
+def test_a_resize_geometry_mismatch_names_both_geometries_for_any_binding(
+    error: type[TerminalGeometryMismatchError],
+) -> None:
+    mismatch = error(
+        "the binding adopted 30x100 instead of the requested 31x100",
+        requested=(31, 100),
+        adopted=(30, 100),
+    )
+    adapter, binding, factory, _ = _started([_marker()], resize_error=mismatch)
+
+    result = adapter.dispatch(Resize(ManualTime(0), columns=100, rows=31))
+
+    assert type(result) is TerminalResult
+    assert type(result.outcome) is RunFailed
+    assert result.outcome.failure.details == {
+        "during": "resize",
+        "terminal-rows": 31,
+        "terminal-columns": 100,
+        "reason": "the binding adopted 30x100 instead of the requested 31x100",
+        "adopted-rows": 30,
+        "adopted-columns": 100,
+    }
+    # The normalizer is never told about a geometry the child does not have.
+    assert factory.created[0].resizes == []

@@ -24,10 +24,12 @@ module is where it lives.
 - **A deterministic in-process runtime** — `termverify.direct` drives a
   subject through input and clock epochs with no terminal, clock, or
   filesystem ambient state.
-- **A Windows ConPTY adapter with a VT normalizer** — `termverify.conpty`
-  owns a real pseudoconsole end to end (spawn, drain, resize, process-tree
-  teardown, cancellation) and `termverify.vt` turns its byte stream into
-  comparable screen state.
+- **A terminal adapter with a VT normalizer** — `termverify.terminal` drives a
+  subject through a pseudoterminal binding port (spawn, drain, resize,
+  process-tree teardown, cancellation) and `termverify.vt` turns its byte
+  stream into comparable screen state. The adapter names no platform; the
+  binding with end-to-end evidence behind it is `ConptyBinding`, which owns a
+  real Windows pseudoconsole.
 - **Opt-in cooperation-tier constraint ports** — `termverify.cooperation`
   delivers the six non-terminal constraints to the subject's environment,
   within documented per-constraint limits (only `UTC` for timezone, only
@@ -48,9 +50,9 @@ module is where it lives.
 ## Where TermVerify is going
 
 The capabilities above are the foundation, not the destination — property and
-state-machine testing, reviewed golden snapshots, differential testing,
-failure minimization, CI artifacts, and a POSIX PTY adapter are all intended
-and none of them exist yet. They are described once, with their sequencing, in
+state-machine testing, reviewed golden snapshots, differential testing, failure
+minimization, CI artifacts, and a verified POSIX terminal path are all intended,
+and none of them exists yet. They are described once, with their sequencing, in
 [the product vision](docs/knowledge/product-vision.md); this README
 deliberately does not restate them.
 
@@ -87,9 +89,16 @@ and the key registries' entry points are all importable from it directly. The
 module paths named above remain public and equivalent — see the
 [adapter-author surface](docs/developer-guide/adapter-authors.md).
 
-Two boundaries are worth stating before you rely on a run. The ConPTY adapter
-is **Windows-only**; there is no POSIX pseudoterminal adapter yet. And
-constraint enforcement is tiered and honestly reported: the shipped
+Two boundaries are worth stating before you rely on a run. The terminal
+adapter is platform-neutral, but its two bindings are not equally proven: the
+ConPTY binding has end-to-end evidence on the Windows CI matrix, while the
+POSIX binding's evidence today is at the binding itself — spawning a real
+pseudoterminal, geometry, teardown — and **not yet** the adapter driving a
+real subject through it end to end (issue #269). Treat the POSIX path as
+unproven until that lands.
+
+The second boundary is that constraint enforcement is tiered and honestly
+reported: the shipped
 cooperation ports deliver the six non-terminal constraints to the subject's
 environment at the `delivered` tier, honored by subject cooperation rather
 than OS enforcement. **OS-level containment is an explicit non-goal** by

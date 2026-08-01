@@ -38,9 +38,9 @@ from termverify.adapter import (
     TerminalReceipt,
     TimezoneReceipt,
 )
-from termverify.conpty import ConptyAdapter, ConptyChildPort
 from termverify.direct import DirectAdapter
 from termverify.evidence import persist_transcript_evidence
+from termverify.terminal import TerminalAdapter, TerminalChildPort
 from termverify.transcript import (
     JsonValue,
     TranscriptValidationError,
@@ -430,7 +430,7 @@ class _Binding:
         columns: int,
         env_overlay: Mapping[str, str] | None = None,
         cwd: str | None = None,
-    ) -> ConptyChildPort:
+    ) -> TerminalChildPort:
         self.spawn_calls += 1
         raise OSError("this negotiation fake refuses to spawn a child")
 
@@ -476,9 +476,9 @@ class _InjectedPorts:
         return self._stamped("network", run_id)
 
 
-def _conpty_adapter(ports: _InjectedPorts) -> tuple[ConptyAdapter, _Binding]:
+def _conpty_adapter(ports: _InjectedPorts) -> tuple[TerminalAdapter, _Binding]:
     binding = _Binding()
-    adapter = ConptyAdapter(
+    adapter = TerminalAdapter(
         ("subject",),
         binding=binding,
         constraint_ports=cast("object", ports),  # type: ignore[arg-type]
@@ -488,7 +488,7 @@ def _conpty_adapter(ports: _InjectedPorts) -> tuple[ConptyAdapter, _Binding]:
 
 
 @pytest.mark.parametrize("tier", ["constructive", "os"])
-def test_conpty_adapter_rejects_non_delivered_injected_tiers_as_start_failed(
+def test_terminal_adapter_rejects_non_delivered_injected_tiers_as_start_failed(
     tier: str,
 ) -> None:
     adapter, binding = _conpty_adapter(_InjectedPorts(tier))
@@ -503,7 +503,7 @@ def test_conpty_adapter_rejects_non_delivered_injected_tiers_as_start_failed(
     assert binding.spawn_calls == 0
 
 
-def test_conpty_adapter_accepts_delivered_injected_receipts() -> None:
+def test_terminal_adapter_accepts_delivered_injected_receipts() -> None:
     adapter, binding = _conpty_adapter(_InjectedPorts("delivered", delivery=True))
 
     result = adapter.start(RUN_ID, _configuration())

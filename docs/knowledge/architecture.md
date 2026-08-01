@@ -59,13 +59,16 @@ process state.
 
 The direct adapter is the default for fast unit tests, and is the path
 property testing will use when it exists (`[planned]` above). The Windows
-production path is `termverify.conpty.ConptyAdapter`, layered over the reviewed
-ConPTY binding and fail-closed `termverify.vt.VtScreenNormalizer`. It verifies
-real terminal input, rendering, resize, EOF/exit evidence, forced teardown, and
-process-tree handling through explicit readiness-marker epochs. A successful
-Windows integration run has exercised the real binding, cooperation-tier
-constraint delivery, text input, normalized/replayable frames, resize, and
-observed exit. `termverify.key-encoding/v1` dispatch is implemented; real-child
+production path is `termverify.terminal.TerminalAdapter` over the reviewed
+`ConptyBinding`, with the fail-closed `termverify.vt.VtScreenNormalizer` above
+it. That adapter is platform-neutral and also ships `PosixPtyBinding`, whose
+evidence today stops at the binding, so there is no POSIX production path to
+claim yet (issue #269). On Windows the path verifies real terminal input,
+rendering, resize, EOF/exit evidence, forced teardown, and process-tree
+handling through explicit readiness-marker epochs. A successful Windows
+integration run has exercised the real binding, cooperation-tier constraint
+delivery, text input, normalized/replayable frames, resize, and observed
+exit. `termverify.key-encoding/v1` dispatch is implemented; real-child
 Windows-matrix evidence proves exact byte delivery to a cooperative raw-mode
 subject for one representative of every encodable family class, replay identity,
 native exit through an in-band key, and fail-closed unencodable input with
@@ -76,8 +79,11 @@ The production adapter does not claim OS filesystem/network containment. Its
 terminal dimensions receipt is OS-level; the other constraints require explicit
 subject-cooperation ports whose `delivered` receipts disclose delivery rather
 than subject compliance. Non-empty terminal capabilities remain unsupported.
-There is no POSIX PTY adapter yet. Browser bridging remains deferred until the
-direct and terminal vertical slices prove that a shared abstraction is needed.
+The terminal adapter is platform-neutral and ships a POSIX binding, but no leg
+anywhere yet drives a real subject through it on a pseudoterminal, so there is
+no POSIX terminal path to rely on (issue #269). Browser bridging remains
+deferred until the direct and terminal vertical slices prove that a shared
+abstraction is needed.
 
 ## Process containment is bounded, and the boundary is disclosed
 

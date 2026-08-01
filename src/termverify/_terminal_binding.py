@@ -1,0 +1,157 @@
+"""Platform-neutral failure taxonomy for the terminal binding port.
+
+The terminal adapter (``termverify.terminal``) classifies a binding failure
+into evidence: an end-of-stream ends the run truthfully from the observed exit
+record, a close outside the abort deadline is a structured runtime failure, a
+single-flight violation is a *harness* defect that must never be dressed as
+subject evidence (issue #261), and a geometry the binding did not adopt must
+name both geometries rather than collapse into a generic spawn failure (issue
+#228).
+
+Those four classifications are the adapter's, and the adapter cannot name a
+platform: the binding port hides which binding it holds. So the failure kinds
+live here, above no platform and below the adapter, and each shipped binding
+subclasses them as ``Conpty*`` (``termverify._conpty``) and ``PosixPty*``
+(``termverify._posix_pty``).
+
+Five kinds, four classifications, and the arithmetic is deliberate. The fifth,
+:class:`TerminalUnsupportedError`, is **not** classified by the adapter and is
+not meant to be: reaching it means a spawn was attempted without the port's
+explicit probe having been honoured, which is a caller or binding defect with
+nothing to say about the subject, so it lands in the generic spawn-failure
+branch like any other unexpected exception. It lives here because both bindings
+raise it and a binding author needs a base to derive from — not because the
+adapter does anything with it.
+
+``_posix_pty`` subclasses four of the five: there is no
+``PosixPtyGeometryMismatchError``, for the reason given below.
+
+**Why subclasses and not one shared set of concrete types.** A diagnostic that
+says only "the binding was closed" loses which binding closed, and every one of
+these types already appears in a message a human reads while debugging a real
+subject. The kind is what the adapter needs; the family is what the reader
+needs. Subclassing gives both without a platform conditional anywhere.
+
+**Why this is what makes the adapter platform-neutral, and not merely
+platform-unaware.** Before this module the adapter caught ``Conpty*``
+concretely, so a POSIX end-of-stream fell through to the generic
+"a native read failed" branch: the run would be reported as a runtime failure
+instead of finishing from the child's real exit record — a false statement
+about the subject, produced by a correctly working binding. The port's error
+contract has to be neutral for the port to absorb the platform at all.
+
+A binding is *not* required to raise every kind. ``_posix_pty`` raises no
+geometry mismatch because ``TIOCSWINSZ`` adopts what it is given: a dimension
+that does not fit the ``unsigned short`` the ``winsize`` struct packs is
+refused by ``struct.pack`` before the ioctl, rather than silently wrapping, so
+the binding never runs a child at a geometry other than the requested one.
+``CreatePseudoConsole`` does wrap — a request goes into signed 16-bit ``COORD``
+members unchecked and can be silently adopted as something smaller (issue
+#228) — which is why that kind exists at all. The adapter's handling of an
+unraised kind is unreachable through one binding and reachable through the
+other, which is the ordinary shape of a port with two implementations, not a
+gap to be filled with a conditional.
+
+**What the two bindings do not give equally, stated rather than implied.** The
+guarantee above is that no *subject* ever runs at an unrequested geometry, and
+it holds on both. Not "no child": ConPTY learns what a geometry was adopted as
+by spawning a throwaway probe child into the console and reading the size back,
+so a child does run there — just never the subject, which is what a
+``tier="os"`` receipt is a claim about.
+
+The *evidence* on the refusal path does not match: an
+out-of-range POSIX request surfaces as the ``struct.error`` from packing the
+``winsize``, which the adapter classifies as a plain failed resize with no
+``terminal-rows``/``adopted-*`` details, where ConPTY produces the structured
+#228 record. Same host error, unequal transcript. Nothing false is recorded
+either way, and geometries that large are not what a real subject asks for —
+but a POSIX binding that raised this kind for its own out-of-range refusals
+would close the gap, and that is a binding-side change belonging with the
+adapter-level POSIX evidence in #269, not to this refactor.
+
+These names are private on purpose. They are the *binding author's* contract,
+not the harness caller's: nothing a host writes against
+``termverify.terminal`` needs them, so exporting them would widen the public
+surface for an audience of two modules. A third binding written inside this
+package would import them the same way; if one ever needs to live outside it,
+that is the change that should make them public, with the compatibility
+question asked then rather than pre-answered now.
+"""
+
+from __future__ import annotations
+
+__all__ = [
+    "TerminalClosedError",
+    "TerminalConcurrentIOError",
+    "TerminalEndOfStreamError",
+    "TerminalGeometryMismatchError",
+    "TerminalUnsupportedError",
+]
+
+
+class TerminalUnsupportedError(RuntimeError):
+    """Raised when a binding is used on a host it does not claim.
+
+    Reaching the adapter at all means a spawn was attempted without the
+    port's explicit probe having been honoured, so this is a caller or
+    binding defect rather than evidence about the subject.
+    """
+
+
+class TerminalClosedError(RuntimeError):
+    """Raised when an operation is attempted after the binding was closed.
+
+    Includes an operation *interrupted* by a close: a close may abandon
+    output the child had already written, so the adapter must not read the
+    interruption as an orderly end of stream.
+    """
+
+
+class TerminalConcurrentIOError(RuntimeError):
+    """Raised when a read or write starts while another is in flight.
+
+    Single-flight is a port contract the adapter honours, so this is defense
+    in depth against a caller defect — and it wears its own type precisely so
+    no layer above can classify a harness bug as subject evidence, the
+    disposition issue #261 settled for both bindings.
+    """
+
+
+class TerminalEndOfStreamError(Exception):
+    """Raised by ``read`` when the terminal reports end of stream.
+
+    Deliberately not a subclass of :class:`TerminalClosedError` or of
+    ``OSError``: this is the one binding failure that is *not* a failure —
+    it is how a run ends truthfully, and the adapter turns it into the
+    child's observed exit record. Collapsing it into any other kind would
+    turn every clean subject exit into a runtime failure.
+
+    Raised only while the binding is open; a read interrupted by ``close``
+    raises :class:`TerminalClosedError` instead.
+    """
+
+
+class TerminalGeometryMismatchError(OSError):
+    """The binding cannot, or provably did not, adopt the geometry.
+
+    Subclasses ``OSError`` so that a binding raising it from a spawn or a
+    resize is still handled by callers written for ordinary OS failures; the
+    structured members are what let the adapter's failure record name the
+    geometry the subject actually ran at, so a receipt's ``tier="os"`` claim
+    never stands for a geometry the subject did not have (issue #228).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        requested: tuple[int, int],
+        adopted: tuple[int, int] | None,
+    ) -> None:
+        super().__init__(message)
+        #: The requested ``(rows, columns)``.
+        self.requested = requested
+        #: The adopted ``(rows, columns)`` as measured, or ``None`` when the
+        #: refusal is predictive — nothing was spawned, so nothing was
+        #: measured.
+        self.adopted = adopted
