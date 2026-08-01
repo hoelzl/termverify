@@ -128,6 +128,17 @@ warn_unreachable = true
 module = "termverify._jsonl_pipe"
 warn_unreachable = false
 
+[[tool.mypy.overrides]]
+# _posix_pty.py is single-platform code that must still import on Windows,
+# so every native leg opens with ``if sys.platform == "win32": raise`` and
+# the body below it is unreachable to a Windows mypy while being the only
+# real code on POSIX — the same shape, and the same reason, as
+# _jsonl_pipe above. ``fcntl``/``termios`` are imported under the same
+# guard; their uses live exclusively in those unreachable-on-Windows
+# bodies.
+module = "termverify._posix_pty"
+warn_unreachable = false
+
 [tool.bumpversion]
 current_version = "0.2.0.dev0"
 commit = true
