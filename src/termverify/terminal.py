@@ -561,8 +561,8 @@ def _validate_marker_prefix(prefix: object) -> str:
         # defect the printable marker exists to fix (#233 review).
         raise ValueError(
             "readiness_marker_prefix must be printable: a control character"
-            " would route the marker through a console pass-through path"
-            " that overtakes the output the marker bounds"
+            " would route the marker onto a pass-through path that can"
+            " overtake the output the marker bounds"
         )
     if READINESS_MARKER_TERMINATOR in prefix:
         raise ValueError(
@@ -574,9 +574,9 @@ def _validate_marker_prefix(prefix: object) -> str:
         # A prefix made only of token characters can be absorbed into a
         # neighbouring candidate's token: a stray occurrence followed by the
         # real marker yields one token spanning both, which is well-formed,
-        # so the genuine token is never recorded and the console's next
-        # repaint of that marker completes another epoch — exactly the
-        # double-honour #232 exists to prevent.
+        # so the genuine token is never recorded and the next repaint of
+        # that marker completes another epoch — exactly the double-honour
+        # #232 exists to prevent.
         raise ValueError(
             "readiness_marker_prefix must contain a character outside"
             f" {_MARKER_TOKEN.pattern}, so it cannot be mistaken for part of"
@@ -756,9 +756,10 @@ class TerminalAdapter:
         before in this run.
 
         A candidate is skipped rather than honoured when its token has
-        already been honoured — the console repaints screen state, so a
-        marker's text reappears in the stream whenever the viewport is
-        redrawn — or when the token is malformed, which is what a marker
+        already been honoured — a terminal that repaints screen state puts a
+        marker's text back in the stream whenever the viewport is redrawn,
+        which ConPTY measurably does — or when the token is malformed, which
+        is what a marker
         whose screen cells were disturbed mid-emission looks like. Skipping
         is the fail-closed direction: the epoch runs on to its deadline and
         reports a structured failure, rather than completing on output the
@@ -1408,11 +1409,14 @@ class TerminalAdapter:
                 child.resize(rows=resize.rows, columns=resize.columns)
             except TerminalGeometryMismatchError as mismatch:
                 # The geometry boundary is evidence, not an opaque write
-                # failure: name what was requested, what the console
-                # adopted (when measured), and why the resize was refused.
-                # The console provably keeps its previous size, so the
-                # normalizer is never told about a geometry the child does
-                # not have (issue #228).
+                # failure: name what was requested, what the binding adopted
+                # (when it measured anything), and why the resize was refused.
+                # The normalizer is not notified, so it is never told about a
+                # geometry the child does not have (issue #228). What the
+                # binding did with the old size is the binding's statement to
+                # make in `reason`, not this layer's to assert -- ConPTY
+                # provably keeps the previous size, and that is a fact about
+                # ConPTY.
                 details: dict[str, JsonInput] = {
                     "during": "resize",
                     "terminal-rows": resize.rows,

@@ -32,7 +32,7 @@
 
 - **The adapter no longer names a platform in anything it emits.** Sixteen
   string literals said ConPTY, pseudoconsole or Windows — fourteen distinct
-  texts, three of the sites sharing one. Twelve of the sixteen reach a
+  texts, three of the sites sharing one. Twelve of the sixteen can reach a
   transcript, as `AdapterFailure.message`, `AdapterFailure.details` values,
   `ConstraintUnsupported` reasons and a `Diagnostic`: a Linux run would have
   been told its pty session ended by "forced ConPTY teardown". The other four

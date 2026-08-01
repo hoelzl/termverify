@@ -135,7 +135,9 @@ places, both found by looking rather than by a failing test:
    both native families subclass, driven by a red test parametrised over both
    families *and* the bare neutral kinds — the third row being what
    distinguishes "neutral" from "knows the two bindings that exist today".
-2. **Thirteen emitted messages named a platform**, including a
+2. **Sixteen emitted string literals named a platform** — fourteen distinct
+   texts, three sites sharing one; twelve reach a transcript and four are
+   `RuntimeError` texts raised to the host — including a
    `forced-termination` diagnostic that would have told a Linux run its pty
    session ended by "forced ConPTY teardown". These are transcript evidence,
    not log lines, so leaving them would have shipped false statements about
@@ -179,11 +181,13 @@ moratorium, recorded under `docs/agent/design/`.
 
 ## 4. Current status
 
-- **Phases 1 and 2 are implemented.** Phase 1 is the POSIX PTY binding (#267,
-  PR #272, squash `ceb7bb3`), merged 2026-08-01. Phase 2 is the
-  platform-neutral terminal adapter (#268, PR #275) — the change this paragraph
-  arrives in, so a reader who has it is reading it from a merge commit and not
-  from `main` before one. Suite green; still `0.2.0.dev0`.
+- **Phase 1 is on `main`:** the POSIX PTY binding (#267, PR #272, squash
+  `ceb7bb3`), merged 2026-08-01.
+- **Phase 2 is written and under review:** the platform-neutral terminal
+  adapter (#268, PR #275), which is the change this paragraph arrives in. It is
+  on `main` if and only if PR #275 merged; this document cannot say which,
+  because it is part of that PR. Check `git log --oneline origin/main --   src/termverify/terminal.py` rather than trusting this line. Suite green on
+  the branch; still `0.2.0.dev0`.
 - **Phase 0 is complete.** Boundary accepted 2026-07-31 with all five
   decisions; issues filed under the `vertical-204` label:
 

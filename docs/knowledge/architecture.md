@@ -64,9 +64,9 @@ injected, layered over the reviewed ConPTY binding and fail-closed
 `termverify.vt.VtScreenNormalizer`. That adapter is platform-neutral and also
 ships `PosixPtyBinding`, whose evidence today stops at the binding — the
 adapter-level POSIX legs are issue #269, so there is no POSIX production path
-to claim yet. It verifies
-real terminal input, rendering, resize, EOF/exit evidence, forced teardown, and
-process-tree handling through explicit readiness-marker epochs. A successful
+to claim yet. On Windows that path verifies real terminal input, rendering,
+resize, EOF/exit evidence, forced teardown, and process-tree handling through
+explicit readiness-marker epochs. A successful
 Windows integration run has exercised the real binding, cooperation-tier
 constraint delivery, text input, normalized/replayable frames, resize, and
 observed exit. `termverify.key-encoding/v1` dispatch is implemented; real-child
@@ -80,8 +80,11 @@ The production adapter does not claim OS filesystem/network containment. Its
 terminal dimensions receipt is OS-level; the other constraints require explicit
 subject-cooperation ports whose `delivered` receipts disclose delivery rather
 than subject compliance. Non-empty terminal capabilities remain unsupported.
-There is no POSIX PTY adapter yet. Browser bridging remains deferred until the
-direct and terminal vertical slices prove that a shared abstraction is needed.
+The terminal adapter is platform-neutral and ships a POSIX binding, but no leg
+anywhere yet drives a real subject through it on a pseudoterminal, so there is
+no POSIX terminal path to rely on (issue #269). Browser bridging remains
+deferred until the direct and terminal vertical slices prove that a shared
+abstraction is needed.
 
 ## Process containment is bounded, and the boundary is disclosed
 

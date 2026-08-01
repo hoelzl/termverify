@@ -1,4 +1,4 @@
-"""Negotiation evidence for the public ConPTY adapter.
+"""Negotiation evidence for the public terminal adapter.
 
 Everything here runs cross-platform against fake bindings and fake constraint
 ports: the adapter owns terminal negotiation, delegates the six non-terminal
@@ -14,7 +14,7 @@ from typing import cast
 
 import pytest
 
-from termverify import _conpty
+from termverify import _conpty, _posix_pty
 from termverify._conpty import ConptyChild, ConptyGeometryMismatchError
 from termverify.adapter import (
     Adapter,
@@ -46,6 +46,7 @@ from termverify.adapter import (
 from termverify.terminal import (
     ApplyNothingConstraintPorts,
     ConptyBinding,
+    PosixPtyBinding,
     TerminalAdapter,
     TerminalBindingPort,
     TerminalChildPort,
@@ -256,6 +257,75 @@ def test_native_binding_delegates_spawn(monkeypatch: pytest.MonkeyPatch) -> None
     ]
 
 
+# --- the POSIX binding's delegation ----------------------------------------
+#
+# The mirror of the two tests above, and it exists because it did not. The
+# round-2 review transposed `rows=columns, columns=rows` in `PosixPtyBinding`
+# and the whole suite stayed green: nothing anywhere called either of its
+# methods, so the second of the slice's two bindings had its geometry plumbing
+# — the very thing the receipt's ``tier="os"`` claim is made about — verified
+# by nothing at all. Neither test needs a pty, so neither is waiting on #269.
+
+
+def test_posix_binding_satisfies_the_binding_port() -> None:
+    binding: TerminalBindingPort = PosixPtyBinding()
+    assert isinstance(binding, TerminalBindingPort)
+
+
+def test_posix_binding_delegates_the_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Delegation, not a hardcoded answer.
+
+    ``PosixPtyBinding().is_supported()`` is ``False`` on this Windows host and
+    ``True`` on Linux, so asserting either constant would make the test pass
+    for the wrong reason on one leg. Patching the native probe is what
+    distinguishes delegation from a coincidence.
+    """
+    monkeypatch.setattr(_posix_pty, "is_supported", lambda: True)
+    assert PosixPtyBinding().is_supported() is True
+    monkeypatch.setattr(_posix_pty, "is_supported", lambda: False)
+    assert PosixPtyBinding().is_supported() is False
+
+
+def test_posix_binding_delegates_spawn(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every argument forwarded, and ``rows``/``columns`` not transposed.
+
+    ``rows`` and ``columns`` are both ``int`` and adjacent in the signature, so
+    a swap type-checks, lints clean, and is invisible to every other test in
+    the repository. Asymmetric values (24 vs 80) are what make the swap
+    observable; equal ones would not be.
+    """
+    sentinel = object()
+    recorded: list[
+        tuple[tuple[str, ...], int, int, Mapping[str, str] | None, str | None]
+    ] = []
+
+    def fake_spawn(
+        argv: Sequence[str],
+        *,
+        rows: int,
+        columns: int,
+        env_overlay: Mapping[str, str] | None = None,
+        cwd: str | None = None,
+    ) -> object:
+        recorded.append((tuple(argv), rows, columns, env_overlay, cwd))
+        return sentinel
+
+    monkeypatch.setattr(_posix_pty.PosixPtyChild, "spawn", staticmethod(fake_spawn))
+
+    child = PosixPtyBinding().spawn(
+        ["subject", "--flag"],
+        rows=24,
+        columns=80,
+        env_overlay={"TERMVERIFY_SEED": "42"},
+        cwd="/sandbox",
+    )
+
+    assert child is sentinel
+    assert recorded == [
+        (("subject", "--flag"), 24, 80, {"TERMVERIFY_SEED": "42"}, "/sandbox")
+    ]
+
+
 @pytest.mark.parametrize("constraint", _NON_TERMINAL_CONSTRAINTS)
 def test_default_ports_report_not_enforced(constraint: str) -> None:
     ports = ApplyNothingConstraintPorts()
@@ -366,9 +436,11 @@ def test_unsupported_probe_fails_terminal_negotiation() -> None:
     assert "unsupported" in result.message
     # No platform, because the adapter cannot see one. Checked as an explicit
     # absence: an assertion on the wording alone would still pass a message
-    # that named a platform in the same sentence.
-    for platform in ("ConPTY", "pseudoconsole", "Windows", "POSIX", "pty"):
-        assert platform not in result.message, platform
+    # that named a platform in the same sentence. Case-folded, because
+    # ``"ConPTY" not in message`` is satisfied by ``CONPTY``.
+    folded = result.message.casefold()
+    for platform in ("conpty", "pseudoconsole", "console", "windows", "posix"):
+        assert platform not in folded, platform
     assert ports.calls == ["seed", "clock", "locale", "timezone"]
     assert binding.probe_calls == 1
     assert binding.spawn_calls == 0

@@ -52,6 +52,18 @@ unraised kind is unreachable through one binding and reachable through the
 other, which is the ordinary shape of a port with two implementations, not a
 gap to be filled with a conditional.
 
+**What the two bindings do not give equally, stated rather than implied.** The
+guarantee above is that no child ever *runs* at an unrequested geometry, and it
+holds on both. The *evidence* on the refusal path does not match: an
+out-of-range POSIX request surfaces as the ``struct.error`` from packing the
+``winsize``, which the adapter classifies as a plain failed resize with no
+``terminal-rows``/``adopted-*`` details, where ConPTY produces the structured
+#228 record. Same host error, unequal transcript. Nothing false is recorded
+either way, and geometries that large are not what a real subject asks for —
+but a POSIX binding that raised this kind for its own out-of-range refusals
+would close the gap, and that is a binding-side change belonging with the
+adapter-level POSIX evidence in #269, not to this refactor.
+
 These names are private on purpose. They are the *binding author's* contract,
 not the harness caller's: nothing a host writes against
 ``termverify.terminal`` needs them, so exporting them would widen the public

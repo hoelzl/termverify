@@ -1,4 +1,4 @@
-"""Epoch-machinery evidence for the public ConPTY adapter (slice 3).
+"""Epoch-machinery evidence for the public terminal adapter (slice 3).
 
 Everything here runs cross-platform against fake bindings, fake normalizers,
 and a fake watchdog trigger: the readiness-marker protocol, the epoch loop,

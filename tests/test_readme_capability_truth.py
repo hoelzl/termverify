@@ -90,24 +90,29 @@ _PINNED_INTRO = (
 #: does not trip the guard. ``test_every_planned_capability_is_guarded``
 #: asserts these keys still match the vision document's headings.
 _DEFERRED_GUARDS: dict[str, tuple[str, ...]] = {
-    # ``posix\w*`` and not ``posix``: the bare word could not see
-    # ``PosixPtyBinding``, and #268 shipped exactly that name -- a POSIX claim
-    # reached the capability section and this guard stayed green.
+    # Every bare word carries a trailing ``\w*``, because the patterns are
+    # wrapped in ``...`` and a bare word cannot match inside a compound
+    # identifier. #268 shipped ``PosixPtyBinding`` and named it in a capability
+    # bullet; ``posix`` could not see it and this guard stayed green. Its
+    # seven siblings had the identical hole -- ``GoldenMasterStore``,
+    # ``DifferentialRunner``, ``MetamorphicOracle``, ``MinimizationEngine``,
+    # ``StateMachineRunner``, ``SaveRestorePort``, ``PropertyTestHarness`` all
+    # passed -- so all eight are widened, not just the one that was exploited.
     "A POSIX PTY adapter": (r"posix\w*",),
     "Property and state-machine testing": (
         r"property test\w*",
         r"property-based",
-        r"state[- ]machine",
+        r"state[- ]?machine\w*",
     ),
-    "Reviewed golden snapshots": (r"golden", r"baseline\w*", r"snapshot\w*"),
-    "Differential testing": (r"differential",),
-    "Metamorphic oracles": (r"metamorphic",),
+    "Reviewed golden snapshots": (r"golden\w*", r"baseline\w*", r"snapshot\w*"),
+    "Differential testing": (r"differential\w*",),
+    "Metamorphic oracles": (r"metamorphic\w*",),
     "State save/restore persistence": (
-        r"save[/ -]restore",
-        r"save[/ -]load",
+        r"save[/ -]?restore\w*",
+        r"save[/ -]?load\w*",
         r"persistence oracle\w*",
     ),
-    "Failure minimization": (r"minimization", r"minimiz\w*ing", r"shrink\w*"),
+    "Failure minimization": (r"minimi[sz]\w*", r"shrink\w*"),
     "CI artifacts and reports": (r"ci artifact\w*", r"artifact\w*"),
 }
 
