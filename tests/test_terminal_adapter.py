@@ -4,7 +4,7 @@ Everything here runs cross-platform against fake bindings and fake constraint
 ports: the adapter owns terminal negotiation, delegates the six non-terminal
 constraints, and every negotiation failure ends the start before any child is
 spawned. Epoch behavior after a complete negotiation is covered in
-``test_conpty_epochs``.
+``test_terminal_epochs``.
 """
 
 from __future__ import annotations
@@ -43,12 +43,12 @@ from termverify.adapter import (
     TextInput,
     TimezoneReceipt,
 )
-from termverify.conpty import (
+from termverify.terminal import (
     ApplyNothingConstraintPorts,
-    ConptyAdapter,
     ConptyBinding,
-    ConptyBindingPort,
-    ConptyChildPort,
+    TerminalAdapter,
+    TerminalBindingPort,
+    TerminalChildPort,
 )
 
 _NON_TERMINAL_CONSTRAINTS = (
@@ -93,7 +93,7 @@ class _Binding:
         columns: int,
         env_overlay: Mapping[str, str] | None = None,
         cwd: str | None = None,
-    ) -> ConptyChildPort:
+    ) -> TerminalChildPort:
         self.spawn_calls += 1
         raise OSError("this negotiation fake refuses to spawn a child")
 
@@ -161,12 +161,12 @@ class _EnforcingPorts:
 def _adapter(
     binding: _Binding | None = None,
     ports: ConstraintPorts | None = None,
-) -> tuple[ConptyAdapter, _Binding]:
+) -> tuple[TerminalAdapter, _Binding]:
     bound = binding if binding is not None else _Binding()
     if ports is None:
-        adapter = ConptyAdapter(("subject",), binding=bound, abort_deadline_ms=60_000)
+        adapter = TerminalAdapter(("subject",), binding=bound, abort_deadline_ms=60_000)
     else:
-        adapter = ConptyAdapter(
+        adapter = TerminalAdapter(
             ("subject",),
             binding=bound,
             constraint_ports=ports,
@@ -175,20 +175,20 @@ def _adapter(
     return adapter, bound
 
 
-def test_conpty_adapter_satisfies_the_adapter_protocol() -> None:
+def test_terminal_adapter_satisfies_the_adapter_protocol() -> None:
     adapter, _ = _adapter()
     checked: Adapter = adapter
     assert checked is adapter
 
 
 def test_conpty_child_satisfies_the_child_port() -> None:
-    child: ConptyChildPort = ConptyChild(object(), 1, 0, 0)
-    assert isinstance(child, ConptyChildPort)
+    child: TerminalChildPort = ConptyChild(object(), 1, 0, 0)
+    assert isinstance(child, TerminalChildPort)
 
 
 def test_native_binding_satisfies_the_binding_port() -> None:
-    binding: ConptyBindingPort = ConptyBinding()
-    assert isinstance(binding, ConptyBindingPort)
+    binding: TerminalBindingPort = ConptyBinding()
+    assert isinstance(binding, TerminalBindingPort)
 
 
 def test_probe_reports_the_spawn_precondition() -> None:
@@ -471,17 +471,17 @@ def test_constructor_validates_argv() -> None:
     binding = _Binding()
 
     with pytest.raises(ValueError):
-        ConptyAdapter((), binding=binding, abort_deadline_ms=60_000)
+        TerminalAdapter((), binding=binding, abort_deadline_ms=60_000)
     with pytest.raises(TypeError):
-        ConptyAdapter(
+        TerminalAdapter(
             cast("tuple[str, ...]", ("subject", 3)),
             binding=binding,
             abort_deadline_ms=60_000,
         )
     with pytest.raises(ValueError):
-        ConptyAdapter(("",), binding=binding, abort_deadline_ms=60_000)
+        TerminalAdapter(("",), binding=binding, abort_deadline_ms=60_000)
     with pytest.raises(TypeError):
-        ConptyAdapter(
+        TerminalAdapter(
             cast("tuple[str, ...]", "subject"),
             binding=binding,
             abort_deadline_ms=60_000,
@@ -532,7 +532,7 @@ def test_a_geometry_mismatch_yields_a_structured_start_failed() -> None:
             columns: int,
             env_overlay: Mapping[str, str] | None = None,
             cwd: str | None = None,
-        ) -> ConptyChildPort:
+        ) -> TerminalChildPort:
             raise ConptyGeometryMismatchError(
                 "requested terminal geometry 100000x10 but the pseudoconsole"
                 " adopted 120x30",
@@ -574,7 +574,7 @@ def test_a_predicted_geometry_refusal_yields_start_failed_without_adopted() -> N
             columns: int,
             env_overlay: Mapping[str, str] | None = None,
             cwd: str | None = None,
-        ) -> ConptyChildPort:
+        ) -> TerminalChildPort:
             raise ConptyGeometryMismatchError(
                 "the requested terminal geometry 100000x10 cannot be adopted:"
                 " columns=100000 wraps to -31072 in the console's signed"

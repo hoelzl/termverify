@@ -24,10 +24,12 @@ module is where it lives.
 - **A deterministic in-process runtime** — `termverify.direct` drives a
   subject through input and clock epochs with no terminal, clock, or
   filesystem ambient state.
-- **A Windows ConPTY adapter with a VT normalizer** — `termverify.conpty`
-  owns a real pseudoconsole end to end (spawn, drain, resize, process-tree
-  teardown, cancellation) and `termverify.vt` turns its byte stream into
-  comparable screen state.
+- **A terminal adapter with a VT normalizer** — `termverify.terminal` drives a
+  subject through a pseudoterminal binding port (spawn, drain, resize,
+  process-tree teardown, cancellation) and `termverify.vt` turns its byte
+  stream into comparable screen state. Two bindings are shipped:
+  `ConptyBinding` owns a real Windows pseudoconsole end to end, and
+  `PosixPtyBinding` owns a Linux pseudoterminal.
 - **Opt-in cooperation-tier constraint ports** — `termverify.cooperation`
   delivers the six non-terminal constraints to the subject's environment,
   within documented per-constraint limits (only `UTC` for timezone, only
@@ -87,8 +89,13 @@ and the key registries' entry points are all importable from it directly. The
 module paths named above remain public and equivalent — see the
 [adapter-author surface](docs/developer-guide/adapter-authors.md).
 
-Two boundaries are worth stating before you rely on a run. The ConPTY adapter
-is **Windows-only**; there is no POSIX pseudoterminal adapter yet. And
+Two boundaries are worth stating before you rely on a run. The terminal
+adapter is platform-neutral, but its two bindings are not equally proven: the
+ConPTY binding has end-to-end evidence on the Windows CI matrix, while the
+POSIX binding's evidence today is at the binding itself — spawning a real
+pseudoterminal, geometry, teardown — and **not yet** the adapter driving a
+real subject through it end to end (issue #269). Treat the POSIX path as
+unproven until that lands. And
 constraint enforcement is tiered and honestly reported: the shipped
 cooperation ports deliver the six non-terminal constraints to the subject's
 environment at the `delivered` tier, honored by subject cooperation rather

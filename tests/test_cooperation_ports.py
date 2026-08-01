@@ -33,12 +33,12 @@ from termverify.adapter import (
     StartUnsupported,
     TerminalConfiguration,
 )
-from termverify.conpty import ConptyAdapter, ConptyChildPort
 from termverify.cooperation import (
     CooperationConstraintPorts,
     DirectoryProbePort,
     RealDirectoryProbe,
 )
+from termverify.terminal import TerminalAdapter, TerminalChildPort
 
 RUN_ID = "run-cooperation"
 
@@ -311,7 +311,7 @@ class _RecordingBinding:
         columns: int,
         env_overlay: Mapping[str, str] | None = None,
         cwd: str | None = None,
-    ) -> ConptyChildPort:
+    ) -> TerminalChildPort:
         self.spawns.append(
             (
                 tuple(argv),
@@ -326,13 +326,13 @@ class _RecordingBinding:
 
 def _cooperation_adapter(
     ports: CooperationConstraintPorts | None = None,
-) -> tuple[ConptyAdapter, _RecordingBinding]:
+) -> tuple[TerminalAdapter, _RecordingBinding]:
     binding = _RecordingBinding()
     if ports is None:
         ports = _ports(
             probe=_FakeProbe({"C:\\hosts\\sandbox": "C:\\resolved\\sandbox"})
         )
-    adapter = ConptyAdapter(
+    adapter = TerminalAdapter(
         ("subject",),
         binding=binding,
         constraint_ports=ports,
@@ -414,7 +414,7 @@ def test_overlay_is_omitted_without_delivered_receipts() -> None:
     # path is exercised only by delivered receipts. Mixed negotiation is not
     # constructible with shipped ports, so drive the assembly helper
     # directly for the no-delivery shape.
-    from termverify.conpty import _assemble_spawn_overlay
+    from termverify.terminal import _assemble_spawn_overlay
 
     overlay, cwd = _assemble_spawn_overlay(())
 
@@ -423,7 +423,7 @@ def test_overlay_is_omitted_without_delivered_receipts() -> None:
 
 
 def test_assembly_rejects_a_second_working_directory() -> None:
-    from termverify.conpty import _assemble_spawn_overlay
+    from termverify.terminal import _assemble_spawn_overlay
 
     with pytest.raises(ValueError, match="working directory"):
         _assemble_spawn_overlay(
@@ -435,7 +435,7 @@ def test_assembly_rejects_a_second_working_directory() -> None:
 
 
 def test_assembly_rejects_colliding_variable_names() -> None:
-    from termverify.conpty import _assemble_spawn_overlay
+    from termverify.terminal import _assemble_spawn_overlay
 
     with pytest.raises(ValueError, match="disjoint"):
         _assemble_spawn_overlay(
@@ -450,7 +450,7 @@ def test_assembly_rejects_case_variant_collisions() -> None:
     # Windows environment lookup is case-insensitive: two case-variant
     # entries would let one recorded delivery silently shadow the other,
     # so disjointness is validated case-folded.
-    from termverify.conpty import _assemble_spawn_overlay
+    from termverify.terminal import _assemble_spawn_overlay
 
     with pytest.raises(ValueError, match="disjoint"):
         _assemble_spawn_overlay(

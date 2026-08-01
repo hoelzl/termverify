@@ -22,9 +22,9 @@ import termverify
 import termverify._key_encoding_v1
 import termverify._key_v1
 import termverify.adapter
-import termverify.conpty
 import termverify.cooperation
 import termverify.direct
+import termverify.terminal
 import termverify.transcript
 from termverify._protocol_v1 import CONSTRAINT_NAMES
 
@@ -164,9 +164,10 @@ _CONSTRAINTS = CONSTRAINT_NAMES
 _RETIRED_PORT_METHODS = tuple(f"enforce_{constraint}" for constraint in _CONSTRAINTS)
 
 #: Retired by #218, and module-level names. ``UnenforcedConstraintPorts``
-#: lived in ``termverify.conpty``, never on ``termverify``, so a check
-#: confined to the top level passes vacuously for it — both modules are
-#: inspected below.
+#: lived in the terminal-adapter module — named ``termverify.conpty`` until
+#: #268 generalized it to ``termverify.terminal`` — and never on
+#: ``termverify``, so a check confined to the top level passes vacuously for
+#: it; both modules are inspected below.
 _RETIRED_TYPE_NAMES = ("EnforcedConstraints", "UnenforcedConstraintPorts")
 
 #: The vocabulary that deliberately keeps saying "enforcement": it names the
@@ -185,7 +186,7 @@ _RETAINED_ENFORCEMENT_NAMES = (
 #: half-renamed class still satisfies ``hasattr`` on the protocol itself.
 _PORT_CARRIERS = (
     termverify.ConstraintPorts,
-    termverify.conpty.ApplyNothingConstraintPorts,
+    termverify.terminal.ApplyNothingConstraintPorts,
     termverify.cooperation.CooperationConstraintPorts,
 )
 
@@ -193,7 +194,7 @@ _PORT_CARRIERS = (
 def test_the_applied_vocabulary_replaced_the_enforced_one() -> None:
     assert "AppliedConstraints" in termverify.__all__
     assert termverify.AppliedConstraints is termverify.adapter.AppliedConstraints
-    assert "ApplyNothingConstraintPorts" in termverify.conpty.__all__
+    assert "ApplyNothingConstraintPorts" in termverify.terminal.__all__
     for constraint in _CONSTRAINTS:
         method = f"apply_{constraint}"
         for ports in _PORT_CARRIERS:
@@ -203,7 +204,7 @@ def test_the_applied_vocabulary_replaced_the_enforced_one() -> None:
 def test_no_retired_enforced_name_survives_on_the_surface() -> None:
     """Both retired kinds, each checked where it could actually survive."""
     for name in _RETIRED_TYPE_NAMES:
-        for module in (termverify, termverify.conpty):
+        for module in (termverify, termverify.terminal):
             assert name not in module.__all__, f"{module.__name__}.{name}"
             assert not hasattr(module, name), f"{module.__name__}.{name}"
 
@@ -220,16 +221,17 @@ def test_the_enforcement_tier_axis_keeps_its_name() -> None:
 
 
 #: The modules this file pins the ordering of: the top-level surface, the two
-#: it is assembled from, and ``conpty`` because #218 renamed a name in its
-#: ``__all__``. Deliberately **not** every module with an ``__all__`` — the
-#: repo has no single convention yet (``termverify.control.__all__`` is in
-#: ``RUF022``'s isort order, not this plain one), and settling that is a
-#: lint-configuration decision, not this test's job.
+#: it is assembled from, and ``terminal`` because #218 renamed a name in its
+#: ``__all__`` and #268 renamed four more. Deliberately **not** every module
+#: with an ``__all__`` — the repo has no single convention yet
+#: (``termverify.control.__all__`` is in ``RUF022``'s isort order, not this
+#: plain one), and settling that is a lint-configuration decision, not this
+#: test's job.
 _ORDERED_SURFACE_MODULES = (
     termverify,
     termverify.adapter,
-    termverify.conpty,
     termverify.direct,
+    termverify.terminal,
 )
 
 

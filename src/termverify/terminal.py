@@ -1,8 +1,8 @@
 """Public Windows terminal adapter over the ConPTY binding port.
 
 This module implements slices 2 and 3 of the accepted ConPTY adapter design
-(`docs/agent/design/conpty-adapter-design.md`): the ``ConptyBindingPort``/
-``ConptyChildPort`` protocols, truthful constraint negotiation, and the epoch
+(`docs/agent/design/conpty-adapter-design.md`): the ``TerminalBindingPort``/
+``TerminalChildPort`` protocols, truthful constraint negotiation, and the epoch
 machinery — readiness-marker protocol, epoch loop, failure classification,
 watchdog-driven abort deadline, and forced stop teardown. All logic is
 cross-platform and testable against fake bindings, normalizers, and watchdog
@@ -174,14 +174,15 @@ from termverify.vt import ScreenSnapshot, TerminalOutputNormalizer, VtScreenNorm
 
 __all__ = [
     "ApplyNothingConstraintPorts",
-    "ConptyAdapter",
     "ConptyBinding",
-    "ConptyBindingPort",
-    "ConptyChildPort",
-    "ConptyWatchdogPort",
     "NormalizerFactory",
+    "PosixPtyBinding",
     "READINESS_MARKER_PREFIX_DEFAULT",
     "READINESS_MARKER_TERMINATOR",
+    "TerminalAdapter",
+    "TerminalBindingPort",
+    "TerminalChildPort",
+    "TerminalWatchdogPort",
     "TimerWatchdog",
 ]
 
@@ -266,8 +267,12 @@ _State = Literal[
 
 
 @runtime_checkable
-class ConptyChildPort(Protocol):
-    """Per-child binding surface, shaped exactly like ``ConptyChild``."""
+class TerminalChildPort(Protocol):
+    """Per-child binding surface, shaped exactly like ``ConptyChild``.
+
+    ``PosixPtyChild`` is shaped to the same surface (issue #267), so the
+    epoch machinery drives either without knowing which it holds.
+    """
 
     @property
     def pid(self) -> int: ...
@@ -287,13 +292,22 @@ class ConptyChildPort(Protocol):
 
 
 @runtime_checkable
-class ConptyBindingPort(Protocol):
-    """Injected boundary to the native ConPTY binding.
+class TerminalBindingPort(Protocol):
+    """Injected boundary to a native pseudoterminal binding.
+
+    Two are shipped — :class:`ConptyBinding` and :class:`PosixPtyBinding` —
+    and the adapter cannot tell them apart, which is the point: every
+    platform difference is absorbed here rather than branched on above.
 
     The explicit support probe makes platform support answerable at
     negotiation time — before any spawn — without the adapter reading
     ambient platform state. Fake bindings supply their own probe, so both
     negotiation outcomes are drivable on every platform.
+
+    A binding reports failure through the error hierarchy in
+    ``termverify._terminal_binding``: the adapter classifies those base
+    types, so a third binding is classified correctly without the adapter
+    learning its name.
     """
 
     def is_supported(self) -> bool: ...
@@ -306,7 +320,7 @@ class ConptyBindingPort(Protocol):
         columns: int,
         env_overlay: Mapping[str, str] | None = None,
         cwd: str | None = None,
-    ) -> ConptyChildPort: ...
+    ) -> TerminalChildPort: ...
 
 
 @runtime_checkable
@@ -317,7 +331,7 @@ class NormalizerFactory(Protocol):
 
 
 @runtime_checkable
-class ConptyWatchdogPort(Protocol):
+class TerminalWatchdogPort(Protocol):
     """Injectable abort-deadline trigger.
 
     ``arm`` schedules ``expire`` to run once the deadline elapses and
@@ -342,7 +356,14 @@ class TimerWatchdog:
 
 
 class ConptyBinding:
-    """Default binding port delegating to ``termverify._conpty``."""
+    """Windows binding port delegating to ``termverify._conpty``.
+
+    The native module is imported inside the methods, not at module scope:
+    this module is platform-neutral and importing it must not pull in a
+    binding the host cannot use. That is also what keeps the probe honest —
+    :meth:`is_supported` answers by asking the native layer, so a Windows
+    host without the pseudoconsole entry points reports unsupported.
+    """
 
     def is_supported(self) -> bool:
         from termverify import _conpty
@@ -357,10 +378,46 @@ class ConptyBinding:
         columns: int,
         env_overlay: Mapping[str, str] | None = None,
         cwd: str | None = None,
-    ) -> ConptyChildPort:
+    ) -> TerminalChildPort:
         from termverify._conpty import ConptyChild
 
         return ConptyChild.spawn(
+            argv, rows=rows, columns=columns, env_overlay=env_overlay, cwd=cwd
+        )
+
+
+class PosixPtyBinding:
+    """POSIX binding port delegating to ``termverify._posix_pty``.
+
+    The sibling of :class:`ConptyBinding`, and deliberately its structural
+    twin: same lazy native import, same probe-before-spawn contract, same
+    child surface. Which of the two a host injects is the host's choice and
+    the adapter never asks — that is what makes the adapter above this port
+    platform-neutral rather than platform-branching.
+
+    The platform claim is Linux only (issue #204, boundary decision 2), and
+    :meth:`is_supported` is where that claim is made. Every other platform,
+    macOS included, reports unsupported: not a claim that a pty cannot work
+    there, but a refusal to claim a platform CI has never run.
+    """
+
+    def is_supported(self) -> bool:
+        from termverify import _posix_pty
+
+        return _posix_pty.is_supported()
+
+    def spawn(
+        self,
+        argv: Sequence[str],
+        *,
+        rows: int,
+        columns: int,
+        env_overlay: Mapping[str, str] | None = None,
+        cwd: str | None = None,
+    ) -> TerminalChildPort:
+        from termverify._posix_pty import PosixPtyChild
+
+        return PosixPtyChild.spawn(
             argv, rows=rows, columns=columns, env_overlay=env_overlay, cwd=cwd
         )
 
@@ -561,7 +618,7 @@ class _EpochFailure(Exception):
         self.details: dict[str, JsonInput] = dict(details)
 
 
-class ConptyAdapter:
+class TerminalAdapter:
     """Drive one terminal subject through the injected ConPTY binding port.
 
     The subject command line is bound at construction, exactly as the direct
@@ -574,12 +631,12 @@ class ConptyAdapter:
         self,
         argv: Sequence[str],
         *,
-        binding: ConptyBindingPort,
+        binding: TerminalBindingPort,
         abort_deadline_ms: int,
         constraint_ports: ConstraintPorts | None = None,
         normalizer_factory: NormalizerFactory | None = None,
         readiness_marker_prefix: str = READINESS_MARKER_PREFIX_DEFAULT,
-        watchdog: ConptyWatchdogPort | None = None,
+        watchdog: TerminalWatchdogPort | None = None,
         monotonic: Callable[[], float] | None = None,
     ) -> None:
         self._argv = _validate_argv(argv)
@@ -598,7 +655,7 @@ class ConptyAdapter:
         # one. One entry per completed epoch, so this grows with the run's
         # length and not with its output.
         self._honoured_tokens: set[str] = set()
-        self._watchdog: ConptyWatchdogPort = (
+        self._watchdog: TerminalWatchdogPort = (
             watchdog if watchdog is not None else TimerWatchdog()
         )
         # Injected so the per-epoch deadline is drivable without sleeping.
@@ -611,7 +668,7 @@ class ConptyAdapter:
         self._state: _State = "created"
         self._state_lock = threading.Lock()
         self._manual_time: ManualTime | None = None
-        self._child: ConptyChildPort | None = None
+        self._child: TerminalChildPort | None = None
         self._normalizer: TerminalOutputNormalizer | None = None
         self._pending = ""
         self._columns = 0
@@ -716,7 +773,7 @@ class ConptyAdapter:
 
     # --- epoch loop --------------------------------------------------------
 
-    def _read_chunk(self, child: ConptyChildPort, expired: threading.Event) -> str:
+    def _read_chunk(self, child: TerminalChildPort, expired: threading.Event) -> str:
         def expire() -> None:
             expired.set()
             try:
@@ -911,7 +968,7 @@ class ConptyAdapter:
         return None
 
     def _read_epoch_chunks(
-        self, child: ConptyChildPort, chunks: list[str], expired: threading.Event
+        self, child: TerminalChildPort, chunks: list[str], expired: threading.Event
     ) -> None:
         """Read until one readiness marker is observed in stream order.
 
@@ -928,7 +985,7 @@ class ConptyAdapter:
           ``terminal.output`` string those chunks become may cost its
           observation record.
 
-        ``ConptyChildPort.read`` may return an empty string, and since the
+        ``TerminalChildPort.read`` may return an empty string, and since the
         ConPTY binding took ownership of decoding (issue #197) it regularly
         does: a native read landing inside a multi-byte codepoint decodes to
         nothing until the rest of it arrives. Empty reads are skipped here
@@ -1045,7 +1102,7 @@ class ConptyAdapter:
     def _finish_from_exit(
         self, at_ms: ManualTime, chunks: Sequence[str]
     ) -> TerminalResult:
-        child = cast(ConptyChildPort, self._child)
+        child = cast(TerminalChildPort, self._child)
         status = child.exit_status
         if status is None:
             return self._fail_runtime(
@@ -1083,7 +1140,7 @@ class ConptyAdapter:
         write_step: str,
         write_failure: str,
     ) -> EpochResult:
-        child = cast(ConptyChildPort, self._child)
+        child = cast(TerminalChildPort, self._child)
         chunks: list[str] = []
         # Deadline attribution is deliberately scoped: `expired` records an
         # expiry during THIS epoch's reads, and `_deadline_closed` records
@@ -1279,7 +1336,7 @@ class ConptyAdapter:
                         "keys": list(input_event.keys),
                     },
                 )
-            key_child = cast(ConptyChildPort, self._child)
+            key_child = cast(TerminalChildPort, self._child)
 
             def write_key() -> None:
                 key_child.write(encoded)
@@ -1290,7 +1347,7 @@ class ConptyAdapter:
                 "write",
                 "the encoded key input could not be written to the child",
             )
-        child = cast(ConptyChildPort, self._child)
+        child = cast(TerminalChildPort, self._child)
         if type(input_event) is TextInput:
             text = input_event.text
 
@@ -1362,7 +1419,7 @@ class ConptyAdapter:
                 raise ValueError("stop must use the current manual time")
             self._state = "stopping"
         at_ms = input_event.at_ms
-        child = cast(ConptyChildPort, self._child)
+        child = cast(TerminalChildPort, self._child)
         if not self._close_child():
             return self._fail_runtime(
                 at_ms,

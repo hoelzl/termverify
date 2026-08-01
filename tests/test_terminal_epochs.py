@@ -60,17 +60,17 @@ from termverify.adapter import (
     TextInput,
     TimezoneReceipt,
 )
-from termverify.conpty import (
+from termverify.recorder import TranscriptRecorder
+from termverify.terminal import (
     _FIXED_RECORD_STRING_BYTES,
     _MAX_MARKER_TOKEN,
     _MAX_UTF8_BYTES_PER_CELL,
     READINESS_MARKER_PREFIX_DEFAULT,
     READINESS_MARKER_TERMINATOR,
-    ConptyAdapter,
-    ConptyChildPort,
+    TerminalAdapter,
+    TerminalChildPort,
     TimerWatchdog,
 )
-from termverify.recorder import TranscriptRecorder
 from termverify.transcript import (
     _MAX_COLLECTION_ITEMS,
     _MAX_RECORD_STRING_BYTES,
@@ -108,7 +108,7 @@ _REPLAY_SUBJECT: dict[str, JsonInput] = {
     "format": "termverify.replay-subject/v1",
     "application": {"id": "fixture-app", "version": "1", "build": "b1"},
     "fixture": {"id": "basic", "version": "1"},
-    "adapter": {"id": "termverify.conpty", "version": "1"},
+    "adapter": {"id": "termverify.terminal", "version": "1"},
     "normalizer": {"id": "termverify.identity", "version": "1"},
     "state_schema": {"id": "fixture-state", "version": "1"},
 }
@@ -269,7 +269,7 @@ class _FakeBinding:
         columns: int,
         env_overlay: Mapping[str, str] | None = None,
         cwd: str | None = None,
-    ) -> ConptyChildPort:
+    ) -> TerminalChildPort:
         self.spawns.append((tuple(argv), rows, columns))
         if self._spawn_error is not None:
             raise self._spawn_error
@@ -383,8 +383,8 @@ def _adapter(
     readiness_marker_prefix: str = READINESS_MARKER_PREFIX_DEFAULT,
     abort_deadline_ms: int = _DEADLINE_MS,
     monotonic: Callable[[], float] | None = None,
-) -> ConptyAdapter:
-    return ConptyAdapter(
+) -> TerminalAdapter:
+    return TerminalAdapter(
         ("subject", "--flag"),
         binding=binding,
         monotonic=monotonic,
@@ -407,7 +407,7 @@ def _started(
     write_error: Exception | None = None,
     resize_error: Exception | None = None,
     close_error: Exception | None = None,
-) -> tuple[ConptyAdapter, _FakeBinding, _NormalizerFactory, _FakeWatchdog]:
+) -> tuple[TerminalAdapter, _FakeBinding, _NormalizerFactory, _FakeWatchdog]:
     binding = _FakeBinding(
         _FakeChild(
             reads,
@@ -430,7 +430,7 @@ def _started(
 
 def test_constructor_requires_an_explicit_abort_deadline() -> None:
     with pytest.raises(TypeError):
-        ConptyAdapter(("subject",), binding=_FakeBinding())  # type: ignore[call-arg]
+        TerminalAdapter(("subject",), binding=_FakeBinding())  # type: ignore[call-arg]
     with pytest.raises(TypeError):
         _adapter(_FakeBinding(), abort_deadline_ms=cast("int", "soon"))
     with pytest.raises(ValueError):
@@ -694,7 +694,7 @@ def test_start_with_the_default_vt_normalizer_renders_the_marker() -> None:
     """
     marker = _marker()
     binding = _FakeBinding(_FakeChild(["hi" + marker]))
-    adapter = ConptyAdapter(
+    adapter = TerminalAdapter(
         ("subject",),
         binding=binding,
         constraint_ports=_EnforcingPorts(),
