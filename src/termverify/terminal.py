@@ -114,14 +114,14 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from typing import Final, Literal, Protocol, cast, runtime_checkable
 
-from termverify._conpty import (
-    ConptyClosedError,
-    ConptyConcurrentIOError,
-    ConptyEndOfStreamError,
-    ConptyGeometryMismatchError,
-)
 from termverify._key_encoding_v1 import encode_key_chord
 from termverify._negotiation import AuthorizedTiers, negotiate
+from termverify._terminal_binding import (
+    TerminalClosedError,
+    TerminalConcurrentIOError,
+    TerminalEndOfStreamError,
+    TerminalGeometryMismatchError,
+)
 from termverify.adapter import (
     AdapterFailure,
     AppliedConstraints,
@@ -785,14 +785,14 @@ class TerminalAdapter:
         disarm = self._watchdog.arm(self._abort_deadline_ms, expire)
         try:
             return child.read()
-        except ConptyEndOfStreamError:
+        except TerminalEndOfStreamError:
             raise
-        except ConptyClosedError as error:
+        except TerminalClosedError as error:
             raise _EpochFailure(
                 "the ConPTY binding was closed outside the abort deadline",
                 {"during": "read"},
             ) from error
-        except ConptyConcurrentIOError as error:
+        except TerminalConcurrentIOError as error:
             raise _EpochFailure(
                 "concurrent native I/O was observed under the adapter's"
                 " single-flight discipline",
@@ -1170,7 +1170,7 @@ class TerminalAdapter:
                 # be claimed.
                 return self._deadline_abort(at_ms)
             observation = self._observation(at_ms, chunks, None)
-        except ConptyEndOfStreamError:
+        except TerminalEndOfStreamError:
             return self._finish_from_exit(at_ms, chunks)
         except _EpochFailure as failure:
             if expired.is_set() or self._deadline_closed:
@@ -1260,7 +1260,7 @@ class TerminalAdapter:
                 env_overlay=env_overlay,
                 cwd=cwd,
             )
-        except ConptyGeometryMismatchError as mismatch:
+        except TerminalGeometryMismatchError as mismatch:
             # The console cannot, or provably did not, adopt the requested
             # geometry: name what was requested and what was adopted rather
             # than collapsing into the generic spawn failure — the receipt's
@@ -1365,7 +1365,7 @@ class TerminalAdapter:
         def apply_resize() -> None:
             try:
                 child.resize(rows=resize.rows, columns=resize.columns)
-            except ConptyGeometryMismatchError as mismatch:
+            except TerminalGeometryMismatchError as mismatch:
                 # The geometry boundary is evidence, not an opaque write
                 # failure: name what was requested, what the console
                 # adopted (when measured), and why the resize was refused.
