@@ -87,8 +87,11 @@ _PINNED_INTRO = (
 #: Guard terms per planned-scope heading in the vision document. Phrases and
 #: word boundaries rather than bare substrings, so ordinary prose — "the
 #: verdict exposes a `first_divergence` property", "minimizes ambient state" —
-#: does not trip the guard. ``test_every_planned_capability_is_guarded``
-#: asserts these keys still match the vision document's headings.
+#: does not trip the guard. Both halves of that are load-bearing and pinned by
+#: ``test_ordinary_prose_does_not_trip_a_guard`` below, because a widening that
+#: made the second phrase illegal is exactly what #268's first attempt did.
+#: ``test_every_planned_capability_is_guarded`` asserts these keys still match
+#: the vision document's headings.
 _DEFERRED_GUARDS: dict[str, tuple[str, ...]] = {
     # Every bare word carries a trailing ``\w*``, because the patterns are
     # wrapped in ``...`` and a bare word cannot match inside a compound
@@ -112,7 +115,17 @@ _DEFERRED_GUARDS: dict[str, tuple[str, ...]] = {
         r"save[/ -]?load\w*",
         r"persistence oracle\w*",
     ),
-    "Failure minimization": (r"minimi[sz]\w*", r"shrink\w*"),
+    # Not ``minimi[sz]\w*``: that also matched "minimizes ambient state",
+    # which the comment above this dict names as prose that must stay legal.
+    # These three suffixes cover the capability's vocabulary and its likely
+    # identifiers (``MinimizationEngine``, ``minimizing``, ``minimizer``)
+    # without claiming the verb.
+    "Failure minimization": (
+        r"minimi[sz]ation\w*",
+        r"minimi[sz]ing\w*",
+        r"minimi[sz]er\w*",
+        r"shrink\w*",
+    ),
     "CI artifacts and reports": (r"ci artifact\w*", r"artifact\w*"),
 }
 
@@ -393,6 +406,34 @@ def test_the_vision_document_exists_and_is_the_single_source() -> None:
     assert text.startswith("---"), "OKF frontmatter is required in docs/knowledge/"
     assert "type:" in text.split("---")[1]
     assert len(_planned_headings()) >= 5, _planned_headings()
+
+
+def test_ordinary_prose_does_not_trip_a_guard() -> None:
+    """The guards' own false-positive floor.
+
+    Widening a guard to catch a compound identifier can make ordinary prose
+    illegal, which is a real cost: it blocks a true sentence about a shipped
+    capability. #268 widened all eight patterns after one was found too narrow,
+    and made the widened minimization pattern match "minimizes ambient state",
+    a phrase the comment above ``_DEFERRED_GUARDS`` names as prose that must
+    stay legal. These are the phrases that claim nothing planned, and none of
+    them may ever fail.
+    """
+    legal = (
+        "minimizes ambient state",
+        "minimises ambient state",
+        "the verdict exposes a `first_divergence` property",
+        "a machine-readable report",
+        "saves nothing and restores nothing",
+        "the golden rule is that a human reviews every diff",
+    )
+    for phrase in legal:
+        for heading, pattern in _GUARDS:
+            found = re.search(rf"{pattern}", _fold(phrase), re.IGNORECASE)
+            assert not found, (
+                f"{pattern!r} (guarding {heading!r}) matches ordinary prose"
+                f" {phrase!r} via {found.group(0)!r}"
+            )
 
 
 def test_every_planned_capability_is_guarded() -> None:

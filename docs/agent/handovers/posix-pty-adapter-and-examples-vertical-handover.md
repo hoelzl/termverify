@@ -9,8 +9,8 @@
   slices below in order.
 - **Owner:** project maintainer
 - **Created:** 2026-07-31
-- **Updated:** 2026-07-31 (boundary accepted; decisions recorded; Phase 0
-  closed except issue filing)
+- **Updated:** 2026-08-01 (Phase 1 merged; Phase 2 written and reviewed;
+  §4 and §6 rewritten)
 - **Review required:** yes. Every slice that changes runtime behavior, the
   public API, or a platform claim needs TDD evidence, the full validation
   gate, and an independent fresh-context adversarial review. **The review
@@ -45,11 +45,13 @@ session needs and the state that changes as slices land.
 
 Two facts set the shape of the work:
 
-- **The adapter above the binding port is already platform-neutral.**
-  `ConptyAdapter`'s epoch machinery, marker protocol, watchdog, geometry gate,
-  and classification matrix are cross-platform, fake-drivable, and ratcheted
-  today. The POSIX work is a binding plus a rename, not a second adapter —
-  which is what decision 1 chose — under the stop-and-return trigger in §2.
+- **The adapter above the binding port is already platform-neutral.** The
+  epoch machinery, marker protocol, watchdog, geometry gate and classification
+  matrix are cross-platform, fake-drivable, and ratcheted today. The POSIX work
+  is a binding plus a rename, not a second adapter — which is what decision 1
+  chose — under the stop-and-return trigger in §2. (Written before #268, when
+  the adapter was `ConptyAdapter` in `termverify.conpty`; it is now
+  `TerminalAdapter` in `termverify.terminal`.)
 - **Most of the POSIX machinery is already shipped**, in `_jsonl_pipe.py`:
   session-leader spawn, `poll` plus self-pipe for interruptible I/O with
   in-flight tracking in both directions, `killpg` teardown, and the disclosed
@@ -99,14 +101,14 @@ All five decisions taken and recorded in §2 and in the design's "Decisions
 taken"; the design is `accepted`. Slice issues are filed under the
 `vertical-204` label and listed in §4.
 
-### Phase 1 — The POSIX PTY binding [TODO — #267]
+### Phase 1 — The POSIX PTY binding [DONE — #267]
 
 `openpty`, child as session leader with the slave as controlling terminal,
 master retained as a raw descriptor, explicit line discipline, geometry via
 `TIOCSWINSZ`, interruptible reads and writes, one incremental UTF-8 decoder
 for the child's life, `killpg` teardown, end-of-stream normalization, and an
 explicit support probe. Shaped to satisfy the same child surface
-`ConptyChildPort` declares.
+`TerminalChildPort` declares (named `ConptyChildPort` when this was written).
 
 **Acceptance:** a cooperative fixture child on the Linux CI legs observes the
 creation geometry and a resized geometry; a forced close terminates the
@@ -135,9 +137,9 @@ places, both found by looking rather than by a failing test:
    both native families subclass, driven by a red test parametrised over both
    families *and* the bare neutral kinds — the third row being what
    distinguishes "neutral" from "knows the two bindings that exist today".
-2. **Sixteen emitted string literals named a platform** — fourteen distinct
-   texts, three sites sharing one; twelve reach a transcript and four are
-   `RuntimeError` texts raised to the host — including a
+2. **Seventeen emitted string literals named a platform** — fifteen distinct
+   texts, three sites sharing one; eleven reach a transcript and six are raised
+   to the host and recorded nowhere — including a
    `forced-termination` diagnostic that would have told a Linux run its pty
    session ended by "forced ConPTY teardown". These are transcript evidence,
    not log lines, so leaving them would have shipped false statements about
@@ -183,11 +185,11 @@ moratorium, recorded under `docs/agent/design/`.
 
 - **Phase 1 is on `main`:** the POSIX PTY binding (#267, PR #272, squash
   `ceb7bb3`), merged 2026-08-01.
-- **Phase 2 is written and under review:** the platform-neutral terminal
-  adapter (#268, PR #275), which is the change this paragraph arrives in. It is
-  on `main` if and only if PR #275 merged; this document cannot say which,
-  because it is part of that PR. Check `git log --oneline origin/main --   src/termverify/terminal.py` rather than trusting this line. Suite green on
-  the branch; still `0.2.0.dev0`.
+- **Phase 2 is the platform-neutral terminal adapter** (#268, PR #275). This
+  paragraph is part of that PR, so it cannot state its own merge status; `git
+  log --oneline origin/main` settles it, and `src/termverify/terminal.py`
+  existing on `main` is the one-file version of the same question. Suite green;
+  still `0.2.0.dev0`.
 - **Phase 0 is complete.** Boundary accepted 2026-07-31 with all five
   decisions; issues filed under the `vertical-204` label:
 

@@ -16,8 +16,12 @@ cross-platform, language-agnostic path. The alternatives:
 - `DirectAdapter` — in-process Python subjects, highest determinism, no OS
   process boundary.
 - `termverify.terminal` — real-terminal subjects that need a genuine terminal,
-  not pipes: `ConptyBinding` for a Windows pseudoconsole, `PosixPtyBinding` for
-  a Linux pseudoterminal.
+  not pipes. Inject `ConptyBinding` for a Windows pseudoconsole, which is the
+  path proven end to end, or `PosixPtyBinding` for a Linux pseudoterminal,
+  whose evidence today stops at the binding's own tests — the adapter-level
+  POSIX legs are
+  [issue #269](https://github.com/hoelzl/termverify/issues/269), so do not pick
+  it expecting a verified pipeline yet.
 
 ## Spawning a subject
 

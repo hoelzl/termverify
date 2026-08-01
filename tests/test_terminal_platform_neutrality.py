@@ -14,58 +14,74 @@ The count never had to rise, so this file exists to keep it that way. It is
 the acceptance criterion of the slice expressed as a check, because a
 criterion that lives only in an issue is one nobody runs.
 
-**Every check here has been mutation-tested, and the first version of two of
-them was not strong enough.** That history is recorded next to each, because
-this repository has now found three successive rename pins weaker than they
-read (#218 twice, #268 once), and the pattern is always the same: the check
-matched the spelling the author happened to think of rather than the spelling
-the code uses.
+**Three adversarial rounds rewrote this file twice, and one defect drove every
+round: a check that matched the spelling its author had in mind rather than the
+spellings Python has.** Round 1 got a native import past it using the spelling
+the bindings themselves use. Round 2 got a real ``os.name`` conditional past it
+with ``import os.path``, and a platform-named message past it in POSIX
+vocabulary. The specific repairs are recorded at each check, not because the
+history is interesting but because the next person to widen one of these needs
+to know which kind of confidence was misplaced.
 
-**What each check can and cannot see**, stated because a ratchet's parser is
-itself an attack surface and overclaiming for one is the same defect it
-guards against:
+**What these checks are, and what they are not.** They are not a proof that no
+platform can be read here; no static check over one file could be. Python has
+too many ways to ask — ``sysconfig.get_platform()``, ``shutil.which``, an
+environment variable, a deliberately failed import, a helper in another module.
+What they do is make every *ordinary* way loud and make the forms this module
+actually uses impossible to reintroduce quietly. The threshold stays a **review**
+criterion as well as a checked one; these checks exist so that an honest
+platform branch shows up in a diff, not so that a dishonest one is impossible.
+
+Precisely:
 
 - The token scan reads source text with comments and string literals removed,
-  so it counts platform reads in *code*. That exclusion is not a loophole, it
-  is the measurement: the threshold is about conditionals, and a docstring
-  explaining why there are none is not one — this very file's prose names both
-  tokens, and an unfiltered scan of the adapter's own docstring flagged the
-  sentence describing the ratchet. It sees ``sys.platform`` and ``os.name``
-  written literally, which is how every occurrence in this repository is
-  written. It does not see ``getattr(sys, "plat" + "form")``,
-  ``eval("sys.platform")``, ``importlib.import_module("os").name``, a platform
-  test smuggled through a helper in another module, or a conditional keyed on
-  something else entirely (``shutil.which``, an environment variable, a failed
-  import).
+  so it counts platform reads in *code*. That exclusion is the measurement, not
+  a loophole: the threshold is about conditionals, and a docstring explaining
+  why there are none is not one — this very paragraph names both tokens, and an
+  unfiltered scan of the adapter's own docstring flagged the sentence describing
+  the ratchet. It sees ``sys.platform`` and ``os.name`` written literally, which
+  is how every occurrence in this repository is written, and nothing else.
 - The import checks read the module's AST, so they see every ``import`` and
-  ``from ... import`` at any nesting depth, whether or not it ever executes,
-  including one wrapped in a module-level ``try``/``if``. They do not see
-  ``__import__`` or ``importlib``. They are what makes the string-literal
-  exclusion above safe: every form the token scan cannot see still needs one of
-  ``os``, ``sys`` or ``platform`` in scope, and none of the three may be
-  imported here at all.
-- The message scan reads every string literal that is not a docstring, and
-  checks each against a case-insensitive word list with a small exact-match
-  allowlist. It does not see a banned word split across concatenated fragments
-  (``"Con" + "PTY"``) or assembled from a variable — but it does see a whole
-  banned word in *any* fragment, which is what the first version of it missed.
-
-What closes the gap the parser leaves is not a cleverer parser: it is that a
-platform branch above this port has to be *justified in review*, and these
-checks make an honest one visible in the diff. A dishonest one is a different
-problem than this file solves.
+  ``from ... import`` at any nesting depth whether or not it executes: wrapped
+  in a module-level ``try`` or ``if``, relative, aliased, or dotted. They do not
+  see ``__import__`` or ``importlib``. They check the *names bound* rather than
+  the module paths named, which is why ``import os.path`` counts — that spelling
+  names no listed module and binds ``os`` anyway, and it is what carried round
+  2's conditional across the threshold.
+- The module list they check covers the modules whose job includes reporting the
+  platform. It is deliberately not claimed to be exhaustive, because it cannot
+  be.
+- Behind both, :func:`test_importing_the_terminal_adapter_loads_no_native_binding`
+  imports the adapter in a fresh interpreter and asks whether either native
+  module came with it. For the native-import property specifically no spelling
+  evades it, which is why the static checks above only have to produce a *good
+  failure message*.
+- The message scan reads every string literal that is neither a docstring nor an
+  ``__all__`` entry, and checks each against vocabulary from both platforms. It
+  does not see a banned word split across concatenated fragments (``"Con" +
+  "PTY"``) or built from a variable, and it does not read comments — a comment
+  narrating "the console" is invisible to it by construction, so that is a
+  review question rather than a checked one.
 """
 
 from __future__ import annotations
 
 import ast
 import re
+import subprocess
+import sys
 import tokenize
 from pathlib import Path
 
 import pytest
 
+import termverify.terminal
+
 _SOURCE_ROOT = Path(__file__).resolve().parents[1] / "src" / "termverify"
+
+#: The package every module inspected here lives in, so a relative import can
+#: be resolved to the absolute path the checks compare against.
+_PACKAGE = "termverify"
 
 #: The module the threshold is about: the adapter, above the binding port.
 _ADAPTER = _SOURCE_ROOT / "terminal.py"
@@ -73,45 +89,67 @@ _ADAPTER = _SOURCE_ROOT / "terminal.py"
 #: How a platform is read in Python, as it is actually written here.
 _PLATFORM_READ = re.compile(r"sys\.platform|os\.name")
 
-#: Modules that make platform state reachable. ``platform`` is included even
-#: though nothing in this repository uses it: the point is that the adapter
-#: has no business importing any of them, and naming only the two in use
-#: would leave the obvious third as a silent way past this check.
-_PLATFORM_MODULES = frozenset({"os", "sys", "platform"})
+#: Modules whose purpose includes reporting the platform. ``platform`` and
+#: ``sysconfig`` are listed although nothing in this repository uses either:
+#: naming only the two in use would leave the obvious alternatives as silent
+#: ways past this check, and round 2 demonstrated that with ``sysconfig``.
+#: **Not** claimed to be exhaustive — see the module docstring.
+_PLATFORM_MODULES = frozenset({"os", "sys", "platform", "sysconfig"})
 
 #: The native bindings. Importable from the adapter module — that is how
 #: ``ConptyBinding`` and ``PosixPtyBinding`` delegate — but only from inside
 #: their methods, never at module scope.
 _NATIVE_MODULES = frozenset({"termverify._conpty", "termverify._posix_pty"})
 
-#: Platform names the adapter has no standing to use in a message it emits.
+#: Platform vocabulary the adapter has no standing to use in anything it emits.
+#: Both sides of the port, because the first two versions of this list were
+#: Windows-only: round 2 replaced a resize message with "the ``TIOCSWINSZ``
+#: ioctl on this Unix host … a Darwin or WSL kernel may clamp it" and it passed,
+#: then did it again with "the console did not adopt …", because
+#: ``pseudoconsole`` was banned and ``console`` was not. Listing what the code
+#: said yesterday is how a ratchet ends up guarding one spelling.
 #:
-#: Matched case-insensitively and **without word boundaries**. The first
-#: version had both wrong: it was case-sensitive, so ``CONPTY`` passed, and it
-#: anchored on word boundaries, so every one of these inside a longer
-#: identifier passed too — ``CreatePseudoConsole`` being the obvious one to name
-#: in a message about a failed spawn. None of the seven occurs as a substring of
-#: an innocent English word, so boundaries buy nothing and cost the compound
-#: cases.
+#: Matched case-insensitively, and as substrings except for the tokens short
+#: enough to appear inside unrelated words (``nt`` is in "count", ``mac`` in
+#: "machine"). Substring matching is what lets ``pseudoconsole`` see
+#: ``CreatePseudoConsole``.
 #:
-#: ``pseudoterminal`` is deliberately absent: a ConPTY pseudoconsole *is* a
-#: pseudoterminal, so it is the one word that stays true whichever binding is
-#: injected, and banning it would leave the messages with nothing to call the
-#: thing they are about.
+#: ``terminal`` and ``pseudoterminal`` are deliberately absent: a ConPTY
+#: pseudoconsole *is* a pseudoterminal, so they are the words that stay true
+#: whichever binding is injected, and banning them would leave the messages
+#: with nothing to call the thing they are about.
 _PLATFORM_WORDS = re.compile(
-    r"conpty|pseudoconsole|windows|posix|linux|win32|conhost",
+    "|".join(
+        (
+            # Windows
+            "conpty",
+            "pseudoconsole",
+            "conhost",
+            "windows",
+            "win32",
+            "kernel32",
+            "console",
+            r"\bnt\b",
+            # POSIX
+            "posix",
+            "linux",
+            "darwin",
+            "macos",
+            r"\bmac\b",
+            r"\bbsd\b",
+            r"\bunix\b",
+            r"\bwsl\b",
+            "termios",
+            "ioctl",
+            "tiocswinsz",
+            "openpty",
+            "sigwinch",
+            "killpg",
+            "setsid",
+        )
+    ),
     re.IGNORECASE,
 )
-
-#: String literals that legitimately name a platform: the two bindings' own
-#: class names, which appear as ``__all__`` entries. An exact-match allowlist
-#: and not a shape heuristic — the first version of the message scan skipped
-#: every literal without a space in it, on the theory that those are symbol
-#: names rather than prose. The round-1 review broke it in one line:
-#: ``"forced " + "ConPTY" + " teardown;"`` restored the exact pre-#268
-#: diagnostic text, with the platform in a fragment the space filter dropped,
-#: and every check in the repository stayed green.
-_PLATFORM_NAMING_ALLOWED = frozenset({"ConptyBinding", "PosixPtyBinding"})
 
 
 def _code_only(source: str) -> str:
@@ -122,19 +160,26 @@ def _code_only(source: str) -> str:
     spaces rather than deleted so that line numbers in a failure still point
     at the right place.
 
-    ``FSTRING_MIDDLE`` is blanked alongside ``STRING`` because from Python
-    3.12 an f-string's literal text is tokenized as its own type and not as a
-    ``STRING`` at all — so an earlier revision that blanked only ``STRING``
-    left f-string prose readable to the scan, which is a false *positive*
-    rather than a hole, and still a sentence that did not describe the code.
+    ``FSTRING_MIDDLE`` and ``TSTRING_MIDDLE`` are blanked alongside ``STRING``
+    because from 3.12 (and 3.14 for t-strings) the literal text of those is
+    tokenized as its own type and not as a ``STRING`` at all — so blanking only
+    ``STRING`` left f-string prose readable to the scan. That was a false
+    *positive* rather than a hole, and still a docstring that did not describe
+    its own code. ``TSTRING_MIDDLE`` is fetched defensively because it does not
+    exist before 3.14 and the CI matrix runs 3.12 through 3.14.
+
     The interpolated parts of an f-string tokenize as ordinary ``NAME``/``OP``
-    tokens and are deliberately left alone: ``f"{sys.platform}"`` is a
-    platform read and must still be counted.
+    tokens and are deliberately left alone: ``f"{sys.platform}"`` is a platform
+    read and must still be counted.
     """
+    literal = {tokenize.COMMENT, tokenize.STRING, tokenize.FSTRING_MIDDLE}
+    tstring = getattr(tokenize, "TSTRING_MIDDLE", None)
+    if tstring is not None:  # pragma: no cover - 3.14+ only
+        literal.add(tstring)
+
     lines = source.splitlines(keepends=True)
     readline = iter(lines).__next__
     blanked = [list(line) for line in lines]
-    literal = {tokenize.COMMENT, tokenize.STRING, tokenize.FSTRING_MIDDLE}
     for token in tokenize.generate_tokens(readline):
         if token.type not in literal:
             continue
@@ -150,23 +195,42 @@ def _code_only(source: str) -> str:
 
 
 def _named_modules(node: ast.Import | ast.ImportFrom) -> set[str]:
-    """Every module path an import statement could be naming.
+    """Every module path an import names, and every top-level name it binds.
 
-    ``from termverify import _conpty`` is the form both bindings actually use,
-    and its ``ImportFrom.module`` is ``"termverify"`` — so a check that matched
-    ``node.module`` against a native module path missed the one spelling in the
-    file. That is how the round-1 review hoisted the binding's own import line
-    to module scope and kept every check green. Each ``from X import a`` is
-    therefore taken to name both ``X`` and ``X.a``; some of those are not
-    modules at all, which costs nothing for a membership test.
+    Three spellings defeated earlier versions of this function, each because it
+    matched the form its author had in mind rather than the forms Python has:
+
+    - ``from termverify import _conpty`` is what both bindings write, and its
+      ``ImportFrom.module`` is ``"termverify"``. Matching ``node.module``
+      against a native path missed the only spelling in the file, which is how
+      round 1 hoisted the binding's own import to module scope with every check
+      green. Each ``from X import a`` therefore names both ``X`` and ``X.a``.
+    - ``import os.path`` *binds* ``os``, so it makes ``os.name`` reachable while
+      naming a module that is not ``os``. Round 2 used exactly that to carry a
+      real platform conditional above the binding port. Every dotted import
+      therefore also yields its top-level package.
+    - ``from . import _conpty`` and ``from ._conpty import X`` carry the package
+      in ``ImportFrom.level``, which an earlier version ignored, so a relative
+      native import at module scope was invisible to the static check. Relative
+      imports resolve against ``termverify``, where every module inspected here
+      lives.
+
+    Some of what comes back is a *name* rather than a module, which costs
+    nothing: every use is a membership test against a fixed set of paths.
     """
     if isinstance(node, ast.Import):
+        names: set[str] = set()
+        for alias in node.names:
+            names.add(alias.name)
+            names.add(alias.name.split(".")[0])
+        return names
+
+    base = node.module or ""
+    if node.level:
+        base = _PACKAGE if not base else f"{_PACKAGE}.{base}"
+    if not base:  # pragma: no cover - an absolute `from` always has a module
         return {alias.name for alias in node.names}
-    if node.module is None:
-        # ``from . import x`` — relative, so it cannot name a native module by
-        # the absolute paths this file checks.
-        return {alias.name for alias in node.names}
-    return {node.module} | {f"{node.module}.{alias.name}" for alias in node.names}
+    return {base, base.split(".")[0]} | {f"{base}.{alias.name}" for alias in node.names}
 
 
 def _all_imports(tree: ast.Module) -> set[str]:
@@ -185,9 +249,9 @@ def _module_scope_imports(tree: ast.Module) -> set[str]:
     ``tree.body``. Iterating ``tree.body`` looks equivalent and is not: a
     module-level ``try:`` or ``if:`` wrapping an import contributes an
     ``ast.Try``/``ast.If`` to that list and no ``ast.Import``, so the import
-    inside it executes at import time and was invisible. The round-1 review
-    used exactly that shape — a try-wrapped native import, which is also the
-    failed-import capability sniff this file's own docstring names as a hazard.
+    inside it executes at import time and was invisible. Round 1 used exactly
+    that shape — a try-wrapped native import, which is also the failed-import
+    capability sniff this module's docstring names as a hazard.
     """
     enclosed: set[int] = set()
     for node in ast.walk(tree):
@@ -204,13 +268,39 @@ def _module_scope_imports(tree: ast.Module) -> set[str]:
     return modules
 
 
-def _non_docstring_literals(tree: ast.Module) -> list[tuple[int, str]]:
-    """Every string literal that is not a docstring, with its line.
+def _dunder_all_literals(tree: ast.Module) -> set[int]:
+    """``id()`` of every string literal inside the module's ``__all__``.
 
-    Docstrings are excluded because they are prose for a reader, and prose
-    about how ConPTY delivers output is exactly the knowledge this module
-    should keep. What is left is the message and detail text the adapter
-    emits, plus its ``__all__`` entries.
+    The exclusion the message scan needs is **positional**, not by value. A
+    value-based allowlist was tried and broken twice: once by adding a whole
+    diagnostic's text to it, and once by interpolating an allowlisted class name
+    into a message — ``f"forced {'ConptyBinding'} teardown"`` — where the
+    literal is legitimately allowed *in* ``__all__`` and is a platform name
+    anywhere else. Excluding by position permits the export list and nothing
+    that merely quotes it.
+    """
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(
+            isinstance(target, ast.Name) and target.id == "__all__"
+            for target in node.targets
+        ):
+            continue
+        return {
+            id(element)
+            for element in ast.walk(node.value)
+            if isinstance(element, ast.Constant) and isinstance(element.value, str)
+        }
+    raise AssertionError("the adapter module has no __all__ to exclude")
+
+
+def _emitted_literals(tree: ast.Module) -> list[tuple[int, str]]:
+    """Every string literal that is neither a docstring nor an ``__all__`` entry.
+
+    Docstrings are excluded because they are prose for a reader, and prose about
+    how ConPTY delivers output is exactly the knowledge this module should keep.
+    What is left is the message and detail text the adapter emits.
     """
     docstrings = {
         id(node.body[0].value)
@@ -221,12 +311,13 @@ def _non_docstring_literals(tree: ast.Module) -> list[tuple[int, str]]:
         and isinstance(node.body[0].value, ast.Constant)
         and isinstance(node.body[0].value.value, str)
     }
+    excluded = docstrings | _dunder_all_literals(tree)
     return [
         (node.lineno, node.value)
         for node in ast.walk(tree)
         if isinstance(node, ast.Constant)
         and isinstance(node.value, str)
-        and id(node) not in docstrings
+        and id(node) not in excluded
     ]
 
 
@@ -250,22 +341,23 @@ def test_the_terminal_adapter_reads_no_platform() -> None:
     )
 
 
-def test_the_terminal_adapter_imports_nothing_that_can_read_a_platform() -> None:
-    """The token scan's blind spot, closed from the other side.
+def test_the_terminal_adapter_binds_nothing_that_reports_a_platform() -> None:
+    """The token scan's blind spot, narrowed from the other side.
 
-    ``sys.platform`` is only reachable through an import, and the adapter
-    imports none of the three modules that make platform state reachable at
-    all — so a future ``import os`` fails here before its first use can fail
-    above. Checked at every nesting depth: a function-scope ``import sys`` is
-    the obvious way to hold the count at zero while reading the platform.
+    ``sys.platform`` is only reachable through a binding, and the adapter binds
+    none of the modules whose job is to report the platform — so a future
+    ``import os`` fails here before its first use can fail above. Checked at
+    every nesting depth, because a function-scope ``import sys`` is the obvious
+    way to hold the count at zero while reading the platform, and by *bound
+    name* rather than by module path, because ``import os.path`` binds ``os``.
     """
     tree = ast.parse(_ADAPTER.read_text(encoding="utf-8"))
 
     reachable = _all_imports(tree) & _PLATFORM_MODULES
 
     assert reachable == set(), (
-        f"{_ADAPTER.name} imports {sorted(reachable)}, which makes platform"
-        " state reachable above the binding port"
+        f"{_ADAPTER.name} binds {sorted(reachable)}, which puts platform state"
+        " within reach above the binding port"
     )
 
 
@@ -296,14 +388,11 @@ def test_importing_the_terminal_adapter_loads_no_native_binding() -> None:
     """The property the AST check stands in for, measured directly.
 
     The static check is the one that gives a useful failure message; this is
-    the one that cannot be evaded by a spelling. A fresh interpreter imports
-    the adapter and reports whether either native module came with it, which
-    an in-process check cannot do — the rest of this suite has already
-    imported both.
+    the one no spelling of an import can evade. A fresh interpreter imports the
+    adapter and reports whether either native module came with it, which an
+    in-process check cannot do — the rest of this suite has already imported
+    both.
     """
-    import subprocess
-    import sys
-
     probe = (
         "import sys; import termverify.terminal;"
         " print(int('termverify._conpty' in sys.modules),"
@@ -316,39 +405,45 @@ def test_importing_the_terminal_adapter_loads_no_native_binding() -> None:
         check=True,
     )
 
-    assert result.stdout.split() == ["0", "0"], result.stdout
+    assert result.stdout.split() == ["0", "0"], (
+        "importing termverify.terminal loaded a native binding;"
+        f" (_conpty, _posix_pty) = {result.stdout.strip()!r}"
+    )
 
 
-def test_no_message_the_terminal_adapter_emits_names_a_platform() -> None:
+def test_no_literal_the_terminal_adapter_emits_names_a_platform() -> None:
     """A platform conditional is not the only way to leak a platform.
 
-    Everything below reaches a host or a transcript: ``AdapterFailure.message``
-    and its ``details`` values, ``ConstraintUnsupported``'s reason, a
-    ``Diagnostic``'s text, and the ``RuntimeError`` messages raised at a
-    lifecycle violation. The adapter holds a ``TerminalBindingPort`` and cannot
-    see which binding is behind it, so a message naming one is a claim it has
-    no evidence for — and before #268 fourteen of them did, including a
-    ``forced-termination`` diagnostic that would have told a Linux run its pty
-    session ended by "forced ConPTY teardown".
+    Everything checked here reaches a host or a transcript:
+    ``AdapterFailure.message`` and its ``details`` values,
+    ``ConstraintUnsupported``'s reason, a ``Diagnostic``'s text, and the
+    ``RuntimeError`` messages raised at a lifecycle violation. The adapter holds
+    a ``TerminalBindingPort`` and cannot see which binding is behind it, so a
+    message naming one is a claim it has no evidence for — and before #268
+    seventeen literals did, including a ``forced-termination`` diagnostic that
+    would have told a Linux run its pty session ended by "forced ConPTY
+    teardown".
 
     **What this cannot see**, and deliberately does not try to: a platform name
     arriving through ``str(error)`` from the binding itself. Those are recorded
-    verbatim in a ``reason`` detail, and there naming the platform is
-    *correct* — the binding knows what it is, and that is the one layer whose
-    diagnostics should say so. Nor can it see a banned word split across
-    fragments (``"Con" + "PTY"``) or built from a variable.
+    verbatim in a ``reason`` detail, and there naming the platform is *correct*
+    — the binding knows what it is, and that is the one layer whose diagnostics
+    should say so. Nor a banned word split across fragments (``"Con" + "PTY"``)
+    or built from a variable, nor a comment.
 
-    Every literal is checked, with no shape filter. An earlier revision skipped
-    literals without a space in them as "symbol names, not prose", and the
-    round-1 review used that to restore the exact pre-#268 diagnostic text with
-    the platform in a space-free fragment.
+    Every literal outside ``__all__`` is checked, with no shape filter and no
+    value allowlist. Both were tried and broken: a filter skipping literals
+    without a space in them let ``"forced " + "ConPTY" + " teardown"`` through,
+    and a value allowlist let the same text through by being added to it — and
+    would still let ``f"forced {'ConptyBinding'} teardown"`` through, because
+    that literal is legitimately allowed in ``__all__``.
     """
     tree = ast.parse(_ADAPTER.read_text(encoding="utf-8"))
 
     offenders = [
         (line, text)
-        for line, text in _non_docstring_literals(tree)
-        if text not in _PLATFORM_NAMING_ALLOWED and _PLATFORM_WORDS.search(text)
+        for line, text in _emitted_literals(tree)
+        if _PLATFORM_WORDS.search(text)
     ]
 
     assert offenders == [], (
@@ -357,27 +452,31 @@ def test_no_message_the_terminal_adapter_emits_names_a_platform() -> None:
     )
 
 
-def test_the_platform_naming_allowlist_has_no_dead_entries() -> None:
-    """An allowlist is the check's weakest part, so it may not grow quietly.
+def test_only_the_export_list_is_exempt_from_the_message_scan() -> None:
+    """The exemption is positional, minimal, and load-bearing.
 
-    Every entry must be a literal the module actually contains and actually
-    needs. Without this, waiving a future offender is one line and leaves no
-    trace of what was waived.
+    Positional so it cannot be reused to waive prose; minimal so it covers the
+    export list and nothing else; load-bearing because if no ``__all__`` entry
+    named a platform the exemption would be dead code, and its removal would
+    then pass unnoticed until the next binding is added.
     """
     tree = ast.parse(_ADAPTER.read_text(encoding="utf-8"))
-    literals = {text for _, text in _non_docstring_literals(tree)}
-
-    used = {
-        allowed
-        for allowed in _PLATFORM_NAMING_ALLOWED
-        if allowed in literals and _PLATFORM_WORDS.search(allowed)
+    exempt_ids = _dunder_all_literals(tree)
+    exempt = {
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and id(node) in exempt_ids
     }
 
-    assert used == set(_PLATFORM_NAMING_ALLOWED), (
-        "these allowlist entries are not platform-naming literals in"
-        f" {_ADAPTER.name}, so they waive nothing:"
-        f" {sorted(set(_PLATFORM_NAMING_ALLOWED) - used)}"
-    )
+    # Exactly the export list, and every entry a bare name.
+    assert exempt == set(termverify.terminal.__all__)
+    assert all(name.isidentifier() for name in exempt), sorted(exempt)
+
+    # ...and it really is doing work: both bindings are named after a platform.
+    platform_named = {name for name in exempt if _PLATFORM_WORDS.search(name)}
+    assert platform_named == {"ConptyBinding", "PosixPtyBinding"}, platform_named
 
 
 def test_the_scans_would_catch_what_they_are_for() -> None:
@@ -391,11 +490,19 @@ def test_the_scans_would_catch_what_they_are_for() -> None:
     assert _PLATFORM_WORDS.search("the pseudoconsole did not adopt it") is not None
     assert _PLATFORM_WORDS.search("CONPTY") is not None, "must be case-insensitive"
     assert _PLATFORM_WORDS.search("CreatePseudoConsole") is not None
+    # The three that got past the round-2 word list.
+    assert _PLATFORM_WORDS.search("the console did not adopt it") is not None
+    assert _PLATFORM_WORDS.search("the TIOCSWINSZ ioctl on this Unix host") is not None
+    assert _PLATFORM_WORDS.search("a Darwin or WSL kernel may clamp it") is not None
+    # ...without banning the two words a neutral message needs.
     assert _PLATFORM_WORDS.search("the terminal binding was closed") is None
     assert _PLATFORM_WORDS.search("through a pseudoterminal") is None
+    # A short token may not fire inside an unrelated word.
+    assert _PLATFORM_WORDS.search("the retained chunk count") is None
+    assert _PLATFORM_WORDS.search("the state machine is idle") is None
 
     tree = ast.parse(_ADAPTER.read_text(encoding="utf-8"))
-    assert len(_non_docstring_literals(tree)) > 100, "literal collector went dead"
+    assert len(_emitted_literals(tree)) > 100, "literal collector went dead"
 
     # The blanking pass must leave code behind, or every scan over it is
     # vacuous. An f-string's *interpolation* is code and must survive it.

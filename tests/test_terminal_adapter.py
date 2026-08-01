@@ -439,7 +439,7 @@ def test_unsupported_probe_fails_terminal_negotiation() -> None:
     # that named a platform in the same sentence. Case-folded, because
     # ``"ConPTY" not in message`` is satisfied by ``CONPTY``.
     folded = result.message.casefold()
-    for platform in ("conpty", "pseudoconsole", "console", "windows", "posix"):
+    for platform in ("conpty", "pseudoconsole", "console", "windows", "posix", "pty"):
         assert platform not in folded, platform
     assert ports.calls == ["seed", "clock", "locale", "timezone"]
     assert binding.probe_calls == 1

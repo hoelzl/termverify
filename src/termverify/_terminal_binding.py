@@ -53,8 +53,13 @@ other, which is the ordinary shape of a port with two implementations, not a
 gap to be filled with a conditional.
 
 **What the two bindings do not give equally, stated rather than implied.** The
-guarantee above is that no child ever *runs* at an unrequested geometry, and it
-holds on both. The *evidence* on the refusal path does not match: an
+guarantee above is that no *subject* ever runs at an unrequested geometry, and
+it holds on both. Not "no child": ConPTY learns what a geometry was adopted as
+by spawning a throwaway probe child into the console and reading the size back,
+so a child does run there — just never the subject, which is what a
+``tier="os"`` receipt is a claim about.
+
+The *evidence* on the refusal path does not match: an
 out-of-range POSIX request surfaces as the ``struct.error`` from packing the
 ``winsize``, which the adapter classifies as a plain failed resize with no
 ``terminal-rows``/``adopted-*`` details, where ConPTY produces the structured

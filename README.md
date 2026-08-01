@@ -50,9 +50,9 @@ module is where it lives.
 ## Where TermVerify is going
 
 The capabilities above are the foundation, not the destination — property and
-state-machine testing, reviewed golden snapshots, differential testing,
-failure minimization, CI artifacts, and a verified POSIX terminal path are all
-intended and none of them exists yet. They are described once, with their sequencing, in
+state-machine testing, reviewed golden snapshots, differential testing, failure
+minimization, CI artifacts, and a verified POSIX terminal path are all intended,
+and none of them exists yet. They are described once, with their sequencing, in
 [the product vision](docs/knowledge/product-vision.md); this README
 deliberately does not restate them.
 

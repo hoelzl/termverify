@@ -59,17 +59,16 @@ process state.
 
 The direct adapter is the default for fast unit tests, and is the path
 property testing will use when it exists (`[planned]` above). The Windows
-production path is `termverify.terminal.TerminalAdapter` with `ConptyBinding`
-injected, layered over the reviewed ConPTY binding and fail-closed
-`termverify.vt.VtScreenNormalizer`. That adapter is platform-neutral and also
-ships `PosixPtyBinding`, whose evidence today stops at the binding — the
-adapter-level POSIX legs are issue #269, so there is no POSIX production path
-to claim yet. On Windows that path verifies real terminal input, rendering,
-resize, EOF/exit evidence, forced teardown, and process-tree handling through
-explicit readiness-marker epochs. A successful
-Windows integration run has exercised the real binding, cooperation-tier
-constraint delivery, text input, normalized/replayable frames, resize, and
-observed exit. `termverify.key-encoding/v1` dispatch is implemented; real-child
+production path is `termverify.terminal.TerminalAdapter` over the reviewed
+`ConptyBinding`, with the fail-closed `termverify.vt.VtScreenNormalizer` above
+it. That adapter is platform-neutral and also ships `PosixPtyBinding`, whose
+evidence today stops at the binding, so there is no POSIX production path to
+claim yet (issue #269). On Windows the path verifies real terminal input,
+rendering, resize, EOF/exit evidence, forced teardown, and process-tree
+handling through explicit readiness-marker epochs. A successful Windows
+integration run has exercised the real binding, cooperation-tier constraint
+delivery, text input, normalized/replayable frames, resize, and observed
+exit. `termverify.key-encoding/v1` dispatch is implemented; real-child
 Windows-matrix evidence proves exact byte delivery to a cooperative raw-mode
 subject for one representative of every encodable family class, replay identity,
 native exit through an in-band key, and fail-closed unencodable input with
