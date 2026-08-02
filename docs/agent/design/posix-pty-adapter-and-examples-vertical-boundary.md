@@ -143,7 +143,13 @@ adapter above it needs no platform branch:
 - **Incremental UTF-8 decoding across reads**, by the same rule `_conpty.py`
   established after issue #197: one decoder for the life of the child, so a
   read landing mid-codepoint heals across chunks instead of embedding
-  irreparable `U+FFFD` in evidence.
+  irreparable `U+FFFD` in evidence. Issue #279 added the other half of that
+  rule, which was implicit here and unimplemented on this side: at
+  end-of-stream the decoder is *flushed*, so a sequence nothing can now
+  complete is reported as replacement text rather than discarded. It is now
+  a stated port contract on `TerminalEndOfStreamError`, and the divergence
+  it opens — a pty hands the binding those bytes where a Windows console
+  host has already consumed them — is recorded in `_terminal_binding.py`.
 - **Interruptible reads and writes**, reusing the mechanism
   `_jsonl_pipe.py` already ships on POSIX: `poll` over the descriptor plus a
   self-pipe, with every close signalling before it touches a descriptor, and

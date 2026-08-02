@@ -85,13 +85,35 @@ answer by reading two implementations.
 **A third, and it is not one the bindings choose.** Both honour the
 end-of-stream flush stated at :class:`TerminalEndOfStreamError`; what differs
 is what reaches them to be flushed. A pty decodes nothing, so a subject that
-exits mid-codepoint hands its unfinished bytes to the POSIX binding, which
-surfaces them as ``U+FFFD``. The Windows console host is itself a UTF-8
-decoder, so the same subject's unfinished bytes are consumed and discarded
-before the ConPTY binding sees anything at all. The transcripts differ: POSIX
-records a replacement character where ConPTY records nothing. Nothing false is
-recorded either way — each binding reports every byte it received, and the
-ConPTY binding cannot report bytes the host destroyed upstream of it.
+stops part-way through a multibyte character hands its unfinished bytes to
+the POSIX binding, which surfaces them as ``U+FFFD``. The Windows console
+host is itself a UTF-8 decoder, so those bytes are consumed and discarded
+before the ConPTY binding sees any of them — the binding still receives the
+rest of the subject's output, just nothing of that sequence.
+
+The divergence is **exactly** the incomplete-but-valid prefix, and it is worth
+stating at that width because the obvious wider phrasing — "a bad tail" — is
+false. Measured, with the subject writing ``START`` and then one tail before
+exiting:
+
+============================  ===========  ===========
+tail at end of stream         ConPTY       POSIX
+============================  ===========  ===========
+``\xe2\x82`` (2 of 3)         ``START``    ``START�``
+``\xf0`` (1 of 4)             ``START``    ``START�``
+``\x82`` (lone continuation)  ``START�``   ``START�``
+``\xff`` (never valid)        ``START�``   ``START�``
+============================  ===========  ===========
+
+A byte that can neither begin nor continue a sequence is resolved the moment
+it is seen, so the host emits a replacement of its own and the two bindings
+agree. Only a valid prefix makes the host wait for a byte that never comes.
+
+Nothing false is recorded either way — at end of stream each binding reports
+every byte it received, and the ConPTY binding cannot report bytes the host
+destroyed upstream of it. (At end of stream, and only there: a read
+interrupted by a close reports nothing held, on both, for the reason
+:class:`TerminalEndOfStreamError` gives.)
 
 Issue #279 predicted this divergence with the platforms the other way round —
 ConPTY surfacing the replacement, POSIX dropping it — and filed the fix as a
@@ -170,8 +192,15 @@ class TerminalEndOfStreamError(Exception):
     bytes it receives, so at end of stream it may still hold an incomplete
     sequence that nothing can now complete. Those bytes are returned as
     replacement text by the read that *meets* end of stream, and this error
-    is raised by the read after it — deferred by exactly one call, never
-    delivered alongside text and never dropped.
+    is raised by the read after it — never delivered alongside text and never
+    dropped.
+
+    The deferral is **conditional, not unconditional**, and a third binding
+    should implement it that way: only a read with something to flush returns
+    text instead of raising. When the decoder is empty — the ordinary case,
+    every run whose output ends on a complete character — this is raised by
+    the very read that meets end of stream, with no extra call. Both shipped
+    bindings behave so.
 
     The asymmetry with ``close`` is the reason the flush is honest. At end of
     stream an incomplete tail is evidence that the stream really did end

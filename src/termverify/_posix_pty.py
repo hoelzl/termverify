@@ -255,7 +255,7 @@ class PosixPtyLiveChildError(RuntimeError):
     ``SIGHUP``, which is why this side refuses instead. The adapter never
     reaches either answer — it closes with ``force=True`` on every path —
     so the divergence is latent, and it is recorded in
-    ``_terminal_binding.py`` beside the other one the two bindings do not
+    ``_terminal_binding.py`` beside the other two the two bindings do not
     give equally.
     """
 
@@ -266,6 +266,12 @@ class PosixPtyEndOfStreamError(TerminalEndOfStreamError):
     Only raised while the binding is open: a read interrupted by ``close``
     raises :class:`PosixPtyClosedError`, because a close may have abandoned
     output the child had already written.
+
+    **Raised one call later than the end-of-stream itself when the decoder
+    still holds an incomplete sequence** — that read returns the flushed
+    replacement text instead, and this arrives on the next one. The contract
+    is stated in full on the neutral base class; it is repeated here because
+    a reader debugging a real subject reaches this type first.
     """
 
 
@@ -887,8 +893,17 @@ class PosixPtyChild:
 
         A read *interrupted by a close* does not flush, and the asymmetry is
         the point: a close may have abandoned output the child had already
-        written, so an incomplete tail is not evidence that the subject
-        truncated anything. Only end-of-stream establishes that.
+        written, so an incomplete tail then says nothing about what the
+        subject did.
+
+        End-of-stream does say something, **on this binding specifically**. A
+        pty decodes nothing, so bytes held here are bytes the subject wrote
+        and did not finish. That inference is the pty's to offer and not the
+        port's: the ConPTY binding's console host decodes upstream of it, so
+        the same held bytes there would be the pipe's rather than the child's
+        — the distinction issue #279 measured, recorded at
+        :class:`~termverify._terminal_binding.TerminalEndOfStreamError` and in
+        that module's docstring.
         """
         with self._lock:
             if self._closed:

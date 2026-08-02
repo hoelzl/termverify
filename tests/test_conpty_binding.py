@@ -497,6 +497,42 @@ def test_a_truncated_codepoint_the_host_can_decide_is_replaced() -> None:
     assert status == 0
 
 
+#: A byte that can neither begin nor continue a UTF-8 sequence, at the very
+#: end of the stream. Unlike a valid prefix, there is nothing to wait for.
+_UNDECODABLE_TAIL_CHILD: Final = """\
+import sys
+
+sys.stdout.buffer.write(b"START")
+sys.stdout.buffer.write(b"\\xff")
+sys.stdout.buffer.flush()
+"""
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_a_tail_the_host_can_reject_without_waiting_is_replaced() -> None:
+    """Where the #279 divergence stops, measured rather than reasoned.
+
+    The wide claim — "ConPTY loses a bad trailing byte, POSIX reports it" —
+    is false, and this is the case that falsifies it. ``\\xff`` can neither
+    begin nor continue a sequence, so the host has nothing to wait for: it
+    resolves the byte immediately, emits its own replacement, and the two
+    bindings agree. Only an incomplete but *valid* prefix leaves the host
+    waiting for a byte that never comes, which is the one shape where the
+    transcripts differ.
+
+    Found by the round-1 adversarial review of #279, which measured this
+    while checking a sentence that read broader than the evidence under it.
+    """
+    text, terminal, status = _drain_to_end(_UNDECODABLE_TAIL_CHILD)
+    assert isinstance(terminal, ConptyEndOfStreamError)
+    assert text == "START�", (
+        f"the host rendered an undecodable trailing byte as {text!r}; the"
+        " divergence recorded in _terminal_binding.py is bounded by this"
+        " case agreeing with the POSIX binding"
+    )
+    assert status == 0
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
 def test_forced_close_terminates_child_observed_at_os_level() -> None:
     """Item 2: forced close ends the child, proven by an OS handle wait."""

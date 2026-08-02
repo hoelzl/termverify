@@ -1386,8 +1386,13 @@ class ConptyChild:
         self._pending_io = 0
         # One decoder per child, fed every native chunk in stream order, so a
         # read that lands between two bytes of one codepoint heals on the next
-        # read instead of losing the character. ``replace`` therefore only
-        # ever fires on bytes the child genuinely emitted as invalid UTF-8.
+        # read instead of losing the character. ``replace`` therefore never
+        # fires on a split this binding introduced. It fires on two things it
+        # did not: bytes the pseudoconsole emitted that are not valid UTF-8 —
+        # which for a real subject means the console host already resolved
+        # them that way, since the host decodes upstream of here — and a
+        # conout pipe that ends mid-sequence, flushed by ``read``. Issue #279
+        # measured that the second has no observed cause through a real host.
         self._decoder = codecs.getincrementaldecoder("utf-8")("replace")
 
     @classmethod

@@ -554,10 +554,13 @@ def test_end_of_stream_is_reported_once_the_child_and_its_slave_are_gone() -> No
 #:
 #: What does **not** produce this shape, though issue #279 listed it as a
 #: second cause: a pty splitting a subject's final character across reads.
-#: The master reports ``EIO`` only once its buffer is drained *and* the last
-#: slave is gone, so every byte the subject did write is delivered before
-#: end-of-stream and the incremental decoder heals the split. Bytes the
-#: subject never wrote are the only ones that can still be held here.
+#: On Linux — the only platform this binding claims, and where the
+#: end-of-stream signal is ``EIO`` rather than an empty read — the master
+#: reports it only once its buffer is drained *and* the last slave is gone,
+#: so every byte the subject did write is delivered before end-of-stream and
+#: the incremental decoder heals the split. What can still be held at
+#: end-of-stream is therefore only a sequence whose *remaining* bytes the
+#: subject never wrote.
 _TRUNCATED_TAIL_CHILD = (
     "import sys\n"
     "sys.stdout.buffer.write(b'START')\n"
@@ -592,6 +595,45 @@ def test_a_truncated_trailing_codepoint_surfaces_rather_than_vanishing() -> None
     already honored.
     """
     child = _spawn(_TRUNCATED_TAIL_CHILD)
+    try:
+        collected = _read_until(child, "START")
+        with pytest.raises(PosixPtyEndOfStreamError):
+            for _ in range(100):
+                collected += child.read()
+        assert collected == "START�"
+        assert child.exit_status == 0
+    finally:
+        child.close(force=True)
+
+
+#: A byte that can neither begin nor continue a sequence, at end of stream.
+#: The incremental decoder resolves it the moment it arrives, so no flush is
+#: involved — which is exactly why it belongs here.
+_UNDECODABLE_TAIL_CHILD = (
+    "import sys\n"
+    "sys.stdout.buffer.write(b'START')\n"
+    "sys.stdout.buffer.write(b'\\xff')\n"
+    "sys.stdout.buffer.flush()\n"
+)
+
+
+@_LINUX_ONLY
+def test_a_tail_that_can_never_be_valid_needs_no_flush_and_matches_conpty() -> None:
+    """The other side of where the #279 divergence stops.
+
+    The Windows twin of this
+    (``tests/test_conpty_binding.py::test_a_tail_the_host_can_reject_without_waiting_is_replaced``)
+    measures the console host emitting its own replacement for this byte,
+    because there is nothing to wait for. This side reaches the same text by
+    a different route — the incremental decoder resolves ``\\xff`` on arrival
+    and holds nothing — so the two bindings agree here and the divergence
+    recorded in ``_terminal_binding.py`` is bounded to the valid-prefix case.
+
+    It also held *before* #279, which is the point: this text is not what the
+    flush produces, and a change that made it look like the flush's doing
+    would be widening the divergence rather than describing it.
+    """
+    child = _spawn(_UNDECODABLE_TAIL_CHILD)
     try:
         collected = _read_until(child, "START")
         with pytest.raises(PosixPtyEndOfStreamError):
@@ -811,13 +853,21 @@ def test_a_close_does_not_flush_the_decoder_the_way_end_of_stream_does() -> None
     establish nothing, and turning them into a ``U+FFFD`` would put a
     character into a transcript on the strength of a teardown.
 
-    Nothing in the suite forbade it: widening ``read``'s handler from
-    :class:`PosixPtyEndOfStreamError` to its supertype, or to
-    :class:`PosixPtyClosedError` alongside it, leaves every other test green
-    because their decoders are empty when the close lands. So this one
-    **proves its own precondition** before asserting anything — the parked
-    tail is read back out of the decoder rather than assumed to be there —
-    and then repeats the blocked-read arrangement above.
+    Nothing in the suite forbade that. Two mutations were run against it, and
+    both left every *other* test green because their decoders are empty by
+    the time a close lands: widening ``read``'s handler to
+    ``except (PosixPtyEndOfStreamError, PosixPtyClosedError)``, and widening
+    it all the way to ``except Exception``. Only this test reds. Both halves
+    of the arrangement are why — it **proves its own precondition**, reading
+    the parked tail back out of the decoder rather than assuming it is there,
+    and then repeats the blocked-read spin the sibling test above uses so the
+    close lands on a read that is genuinely in flight.
+
+    A third mutation is what the tail of this test covers: moving the flush
+    *above* ``read``'s closed-binding guard, so a read arriving after the
+    teardown returns the held bytes instead of raising. That path is adjacent
+    to this one and was unpinned until an adversarial review of #279 measured
+    it surviving.
     """
     child = _spawn(
         "import sys\n"
@@ -866,6 +916,17 @@ def test_a_close_does_not_flush_the_decoder_the_way_end_of_stream_does() -> None
         assert "closed during a read" in str(failures[0]), (
             f"the read was rejected before it began, so the flush path this"
             f" test is named for was never reached: {failures[0]!r}"
+        )
+
+        # The adjacent path, and the tail is still parked: a read that the
+        # closed-binding guard *rejects* must not flush either. Nothing
+        # forbade moving the flush above that guard until this line.
+        assert child._decoder.getstate()[0] == b"\xe2\x82"
+        with pytest.raises(PosixPtyClosedError) as rejected:
+            child.read()
+        assert "binding is closed" in str(rejected.value), (
+            f"a read after the teardown reported something other than the"
+            f" closed binding: {rejected.value!r}"
         )
     finally:
         child.close(force=True)

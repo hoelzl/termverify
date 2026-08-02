@@ -11,9 +11,18 @@ These tests pin the healed contract at the binding boundary and need no
 Windows host: :class:`ConptyChild` is constructed directly over a fake native
 session that hands out byte chunks split at adversarial points, which is the
 same seam the native session implements. The claim under test is exact: after
-this slice a ``U+FFFD`` in ConPTY evidence means the child genuinely emitted
-invalid UTF-8, never that a native read landed between two bytes of one
-codepoint.
+this slice a ``U+FFFD`` in ConPTY evidence never means that a native read
+landed between two bytes of one codepoint.
+
+What it *does* mean needs one more layer than this file can see, and issue
+#279 measured the difference. Two things upstream can produce one: the
+console host, which decodes the child's output itself and replaces a sequence
+it can resolve as invalid; and — only in the fake sessions below — a conout
+pipe that ends mid-codepoint, which the flush then reports. Neither is "the
+binding corrupted a split", which is what R7 was about. The host has not been
+observed to hand this binding an unfinished tail at all, so through a real
+console the second case does not arise; see
+``tests/test_conpty_binding.py::test_a_truncated_trailing_codepoint_never_reaches_this_binding``.
 """
 
 from __future__ import annotations
@@ -159,7 +168,7 @@ def test_truncated_trailing_sequence_is_flushed_before_end_of_stream() -> None:
     """
     child = _child([_THREE_BYTE.encode("utf-8")[:2]])
     assert child.read() == ""  # the two bytes could still have been completed
-    assert child.read() == "�"  # they were not: the child truncated its output
+    assert child.read() == "�"  # they were not: the byte stream ended on them
     with pytest.raises(ConptyEndOfStreamError):
         child.read()
 
