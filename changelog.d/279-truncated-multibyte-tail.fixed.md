@@ -37,14 +37,21 @@
   is what *creates* the divergence, deliberately, and it is recorded in
   `_terminal_binding.py` beside the two already there.
 
-  That divergence is narrower than it first reads, and the boundary is
-  measured: it is exactly an incomplete but *valid* multibyte prefix. A
+  The divergence this opens is narrower than it first reads, and the boundary
+  is measured: it is exactly an incomplete but *valid* multibyte prefix. A
   trailing byte that can neither begin nor continue a sequence — `\xff`, or a
   lone continuation byte — is resolved on arrival by the console host and by
   the pty binding's decoder alike, so both record a replacement and the two
-  agree. Every case above is pinned by a real-subject test on its own
-  platform, so a console host that changes its mind fails a test rather than
-  silently re-converging the two.
+  agree. Each case is pinned by a real-subject test on its own platform, so a
+  console host that changes its mind fails a test rather than silently
+  re-converging the two.
+
+  Bounding it also turned up divergences that are **not** this change's and
+  are recorded rather than fixed: the console host resolves a byte only when
+  it cannot structurally continue what the lead announced, so it waits on
+  `\xc0` and on the overlong `\xe0\x80` where Python's decoder rejects both on
+  sight, and it renders a surrogate with a different number of replacement
+  characters. Those differences predate this release and are unchanged by it.
 
   Filed as a fix rather than a change: the Python API and the transcript
   protocol are both untouched, and a run that previously under-reported its

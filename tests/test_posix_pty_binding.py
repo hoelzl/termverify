@@ -617,6 +617,17 @@ _UNDECODABLE_TAIL_CHILD = (
 )
 
 
+#: ``\xc0`` is in the lead-byte range but can never appear in valid UTF-8.
+#: Python's decoder rejects it on sight where the console host waits on it
+#: structurally — a divergence that predates #279 and is not the flush's.
+_STRUCTURAL_ONLY_LEAD_CHILD = (
+    "import sys\n"
+    "sys.stdout.buffer.write(b'START')\n"
+    "sys.stdout.buffer.write(b'\\xc0')\n"
+    "sys.stdout.buffer.flush()\n"
+)
+
+
 @_LINUX_ONLY
 def test_a_tail_that_can_never_be_valid_needs_no_flush_and_matches_conpty() -> None:
     """The other side of where the #279 divergence stops.
@@ -626,14 +637,40 @@ def test_a_tail_that_can_never_be_valid_needs_no_flush_and_matches_conpty() -> N
     measures the console host emitting its own replacement for this byte,
     because there is nothing to wait for. This side reaches the same text by
     a different route — the incremental decoder resolves ``\\xff`` on arrival
-    and holds nothing — so the two bindings agree here and the divergence
-    recorded in ``_terminal_binding.py`` is bounded to the valid-prefix case.
+    and holds nothing — so the two bindings agree here.
 
     It also held *before* #279, which is the point: this text is not what the
     flush produces, and a change that made it look like the flush's doing
     would be widening the divergence rather than describing it.
     """
     child = _spawn(_UNDECODABLE_TAIL_CHILD)
+    try:
+        collected = _read_until(child, "START")
+        with pytest.raises(PosixPtyEndOfStreamError):
+            for _ in range(100):
+                collected += child.read()
+        assert collected == "START�"
+        assert child.exit_status == 0
+    finally:
+        child.close(force=True)
+
+
+@_LINUX_ONLY
+def test_a_lead_byte_that_can_never_be_valid_is_replaced_without_waiting() -> None:
+    """The POSIX half of a divergence #279 did **not** open.
+
+    ``\\xc0`` announces a two-byte sequence and can never legally begin one.
+    Python's decoder knows that and replaces it the moment it arrives, so
+    nothing is held and the flush is not involved — this text was produced
+    before #279 and is unchanged by it. The console host instead waits for
+    the announced second byte and then drops the lot, so it renders
+    ``START``; the twin above pins that side.
+
+    Together the two stop the summary "outside the valid-prefix case the
+    bindings agree" from being written down, which is what bounding #279's
+    divergence disproved.
+    """
+    child = _spawn(_STRUCTURAL_ONLY_LEAD_CHILD)
     try:
         collected = _read_until(child, "START")
         with pytest.raises(PosixPtyEndOfStreamError):

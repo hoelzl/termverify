@@ -513,12 +513,11 @@ def test_a_tail_the_host_can_reject_without_waiting_is_replaced() -> None:
     """Where the #279 divergence stops, measured rather than reasoned.
 
     The wide claim — "ConPTY loses a bad trailing byte, POSIX reports it" —
-    is false, and this is the case that falsifies it. ``\\xff`` can neither
+    is false, and this is a case that falsifies it. ``\\xff`` can neither
     begin nor continue a sequence, so the host has nothing to wait for: it
     resolves the byte immediately, emits its own replacement, and the two
-    bindings agree. Only an incomplete but *valid* prefix leaves the host
-    waiting for a byte that never comes, which is the one shape where the
-    transcripts differ.
+    bindings agree. What the host waits on is a lead byte whose announced
+    sequence has not arrived, which is where #279's divergence lives.
 
     Found by the round-1 adversarial review of #279, which measured this
     while checking a sentence that read broader than the evidence under it.
@@ -529,6 +528,45 @@ def test_a_tail_the_host_can_reject_without_waiting_is_replaced() -> None:
         f"the host rendered an undecodable trailing byte as {text!r}; the"
         " divergence recorded in _terminal_binding.py is bounded by this"
         " case agreeing with the POSIX binding"
+    )
+    assert status == 0
+
+
+#: ``\xc0`` is in the lead-byte range and can never appear in valid UTF-8.
+#: The host takes it structurally and waits; Python's decoder rejects it on
+#: sight. Hence a divergence that has nothing to do with #279's flush.
+_STRUCTURAL_ONLY_LEAD_CHILD: Final = """\
+import sys
+
+sys.stdout.buffer.write(b"START")
+sys.stdout.buffer.write(b"\\xc0")
+sys.stdout.buffer.flush()
+"""
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_the_host_waits_on_a_lead_byte_that_can_never_be_valid() -> None:
+    """A divergence #279 did **not** open, pinned so the record cannot rot.
+
+    Bounding #279's divergence turned this up, and it is the reason the
+    summary "otherwise the two bindings agree" is not in any docstring here.
+    The console host resolves a byte only when it cannot structurally
+    continue what the lead announced. ``\\xc0`` announces a two-byte
+    sequence, so the host waits and then drops it exactly as it drops a
+    valid prefix — while Python's decoder knows ``\\xc0`` can never begin
+    one and replaces it at once, so the POSIX binding renders ``START�``
+    here and did so before #279 as well.
+
+    Nothing in this PR changed either side of that. It is pinned because
+    ``_terminal_binding.py`` now states it, and an unpinned stated fact is
+    the shape this project keeps finding to be false.
+    """
+    text, terminal, status = _drain_to_end(_STRUCTURAL_ONLY_LEAD_CHILD)
+    assert isinstance(terminal, ConptyEndOfStreamError)
+    assert text == "START", (
+        f"the host rendered a never-valid lead byte as {text!r}, not 'START'."
+        " The divergence table in _terminal_binding.py says the host waits"
+        " on it structurally and drops it; that is what changed."
     )
     assert status == 0
 

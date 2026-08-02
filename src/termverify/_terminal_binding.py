@@ -91,23 +91,43 @@ host is itself a UTF-8 decoder, so those bytes are consumed and discarded
 before the ConPTY binding sees any of them — the binding still receives the
 rest of the subject's output, just nothing of that sequence.
 
-The divergence is **exactly** the incomplete-but-valid prefix, and it is worth
-stating at that width because the obvious wider phrasing — "a bad tail" — is
-false. Measured, with the subject writing ``START`` and then one tail before
-exiting:
+The divergence **this change opens** is exactly the incomplete-but-valid
+prefix, and the width matters because the obvious phrasings on either side of
+it are both false. Measured, with the subject writing ``START`` and then one
+tail before exiting:
 
-============================  ===========  ===========
-tail at end of stream         ConPTY       POSIX
-============================  ===========  ===========
-``\xe2\x82`` (2 of 3)         ``START``    ``START�``
-``\xf0`` (1 of 4)             ``START``    ``START�``
-``\x82`` (lone continuation)  ``START�``   ``START�``
-``\xff`` (never valid)        ``START�``   ``START�``
-============================  ===========  ===========
+=============================  =============  ==============  ==============
+tail at end of stream          ConPTY         POSIX           opened by #279
+=============================  =============  ==============  ==============
+``\xc2`` / ``\xe0`` / ``\xf0`` ``START``      ``START�``      yes
+``\xe2\x82`` (2 of 3)          ``START``      ``START�``      yes
+``\xf0\x9f\x98`` (3 of 4)      ``START``      ``START�``      yes
+``\x82`` (lone continuation)   ``START�``     ``START�``      — they agree
+``\xff`` (never valid)         ``START�``     ``START�``      — they agree
+``\xe2\x28`` (lead, then ASCII) ``START�(``   ``START�(``     — they agree
+``\xc0`` (lead, never valid)   ``START``      ``START�``      no, pre-existing
+``\xe0\x80`` (overlong)        ``START``      ``START��``     no, pre-existing
+``\xed\xa0\x80`` (surrogate)   ``START��``    ``START���``    no, pre-existing
+=============================  =============  ==============  ==============
 
-A byte that can neither begin nor continue a sequence is resolved the moment
-it is seen, so the host emits a replacement of its own and the two bindings
-agree. Only a valid prefix makes the host wait for a byte that never comes.
+Two different things are in that table and only the first is this change's.
+
+**What #279 opened**: the six rows where the byte stream ends part-way through
+a sequence that *is* a valid prefix. The pty hands those bytes over and the
+flush reports them; the host holds them, waits for a byte that never comes,
+and drops them. Before this change POSIX dropped them too, so the two agreed.
+
+**What already differed**: the last three rows, where the *decoders* disagree
+about what is invalid rather than about what is unfinished. The console host
+resolves a byte only when it cannot even structurally continue what the lead
+announced, so it goes on waiting through ``\xc0`` and ``\xe0\x80`` — both of
+which Python's decoder rejects on sight — and it renders a surrogate with a
+different number of replacement characters. None of that is the flush's doing
+and none of it changed here; it is recorded because bounding this change's
+divergence measured it, and because the tempting summary "otherwise the two
+agree" is what the measurement disproved. Whether the two decoders *should*
+agree on a complete-but-invalid sequence is issue #282, filed rather than
+answered here.
 
 Nothing false is recorded either way — at end of stream each binding reports
 every byte it received, and the ConPTY binding cannot report bytes the host
