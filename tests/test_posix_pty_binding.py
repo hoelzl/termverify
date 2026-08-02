@@ -957,9 +957,10 @@ def test_abandoning_a_spawn_ends_the_descendants_it_already_forked() -> None:
 
     ``start_new_session=True`` puts the child in a session of its own before
     the exec, so a subject that reached ``execv`` and forked has descendants
-    that signalling the pid alone leaves running. They hold the pty slave,
-    which keeps the master readable, so the end-of-stream that would
-    otherwise be the only sign anything survived never arrives.
+    that signalling the pid alone leaves running. They hold the pty slave
+    open, which is what stops the master reporting the hangup — so a
+    survivor suppresses the end-of-stream that would otherwise be the only
+    sign it was there.
 
     The three spawn-failure paths claim "no child outlives a failed spawn".
     That claim was false while they killed the pid, and the tests could not
@@ -997,7 +998,7 @@ def test_abandoning_a_spawn_ends_the_descendants_it_already_forked() -> None:
 def test_an_ordinary_close_releases_every_descriptor_the_spawn_took() -> None:
     """The success path had no descriptor accounting at all.
 
-    Two tests count ``/proc/self/fd`` around a *failed* spawn, and none
+    Three tests count ``/proc/self/fd`` around a *failed* spawn, and none
     counted it around a successful one — so ``_release_descriptors`` could
     be emptied out entirely with the whole suite green. Deleting either the
     master's close or the wake pipe's loop leaks on **every** run rather
@@ -1638,10 +1639,12 @@ def test_the_status_pipe_write_end_is_kept_clear_of_the_stdio_range() -> None:
     # Freeing the stdio range is what makes this able to fail, and freeing
     # *fd 0 alone is not enough* — which is how this test spent a round
     # passing without the fix it names. `os.pipe()` returns the two lowest
-    # free descriptors: with only fd 0 free it answers (0, 4), whose write
-    # end already satisfies `> 2`, so the kernel handed out a high number
-    # and the relocation loop never ran. Measured, not reasoned. With 0, 1
-    # and 2 all free it answers (0, 1) and the assertion needs the loop.
+    # free descriptors, so with only fd 0 free the read end lands on 0 and
+    # the write end on whatever is next above the process's open set —
+    # measured at 4 in one environment and 13 in another, and `> 2` either
+    # way, so the assertion was satisfied by the kernel rather than by the
+    # relocation loop. With 0, 1 and 2 all free it answers (0, 1), measured
+    # in both, and the assertion needs the loop.
     #
     # pytest's capture holds 1 and 2, so they are restored in reverse and
     # every dup is taken before any close: a failure partway must not leave

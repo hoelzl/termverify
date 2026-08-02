@@ -549,10 +549,14 @@ def _abandon_spawned_child(  # coverage: exclude-windows - POSIX-only helper
     The **group**, not the pid. ``start_new_session=True`` puts the child in
     a session of its own before the exec, so a subject that already reached
     ``execv`` and forked has descendants that signalling the pid alone would
-    not reach — and every one of them holds the pty slave, which keeps the
-    master readable and stops the end-of-stream that would otherwise be the
-    only sign anything survived. ``ESRCH`` means the group does not exist
-    yet, which the pid still covers.
+    not reach — and every one of them holds the pty slave open, which is
+    what *stops* the master reporting the hangup. The end-of-stream that
+    would otherwise be the only sign anything survived arrives when the last
+    slave closes, so a survivor suppresses exactly the evidence of itself.
+    ``ESRCH`` from ``killpg`` means there is no such group — the child has
+    not reached its ``setsid`` yet, or is already gone — and the pid covers
+    both, so the second signal is sent unconditionally rather than behind a
+    test for it.
 
     **Best effort, unlike :meth:`PosixPtyChild._terminate_session`.** There
     the kill *is* the operation and its failure is what the caller needs to
@@ -642,12 +646,20 @@ class PosixPtyChild:
         Both ends are non-blocking: a close signalling a full wake pipe
         would be a teardown blocking on its own interruption.
         """
-        # Bound to locals first. Assigning the tuple straight to the two
-        # attributes puts a bytecode boundary between them, and CPython
-        # checks signals at those — an interrupt landing there would leave
-        # one descriptor open with its attribute still ``-1``, so neither
-        # this handler nor ``spawn``'s could release it. The same width of
-        # window ``_status_pipe`` already reasons about, closed the same way.
+        # Bound to locals, published once everything has succeeded — so the
+        # attributes are either both set or both ``-1``, and the handler
+        # below has exactly one shape to unwind.
+        #
+        # Not for the reason first given here, which was measured false and
+        # is recorded because the measurement is the useful part: assigning
+        # the tuple straight to the attributes does compile to two adjacent
+        # ``STORE_ATTR``s, but CPython does **not** check for signals
+        # between them. The eval breaker runs at ``RESUME`` and backward
+        # jumps, not at every bytecode boundary, so a ``KeyboardInterrupt``
+        # cannot land mid-pair in straight-line code — ~20,000 interrupts
+        # delivered at 1 ms into exactly that store pair produced zero
+        # half-assigned observations on 3.12 and 3.13 alike. The window this
+        # comment used to claim does not exist.
         read_fd, write_fd = os.pipe()
         try:
             os.set_blocking(write_fd, False)
