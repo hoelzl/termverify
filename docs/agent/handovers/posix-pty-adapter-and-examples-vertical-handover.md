@@ -9,8 +9,8 @@
   slices below in order.
 - **Owner:** project maintainer
 - **Created:** 2026-07-31
-- **Updated:** 2026-08-01 (Phase 1 merged; Phase 2 written and reviewed;
-  §4 and §6 rewritten)
+- **Updated:** 2026-08-02 (Phases 1 and 2 merged; §4 and §5 brought current;
+  #274 in flight)
 - **Review required:** yes. Every slice that changes runtime behavior, the
   public API, or a platform claim needs TDD evidence, the full validation
   gate, and an independent fresh-context adversarial review. **The review
@@ -185,11 +185,16 @@ moratorium, recorded under `docs/agent/design/`.
 
 - **Phase 1 is on `main`:** the POSIX PTY binding (#267, PR #272, squash
   `ceb7bb3`), merged 2026-08-01.
-- **Phase 2 is the platform-neutral terminal adapter** (#268, PR #275). This
-  paragraph is part of that PR, so it cannot state its own merge status; `git
-  log --oneline origin/main` settles it, and `src/termverify/terminal.py`
-  existing on `main` is the one-file version of the same question. Suite green;
-  still `0.2.0.dev0`.
+- **Phase 2 is on `main`:** the platform-neutral terminal adapter (#268,
+  PR #275, squash `85c7a65`), merged 2026-08-01 after three adversarial
+  rounds. `termverify.conpty` is now `termverify.terminal`, the four
+  `Conpty*Port`/`ConptyAdapter` names are `Terminal*`, `PosixPtyBinding`
+  ships beside `ConptyBinding`, and `_terminal_binding.py` holds the neutral
+  failure taxonomy the adapter classifies. It was **not** a pure refactor as
+  planned: the adapter caught concrete `Conpty*Error` types, so a POSIX
+  end-of-stream would have been reported as a runtime failure, and seventeen
+  emitted literals named a platform (eleven of them transcript-reaching).
+  Both are recorded in Phase 2 above. Suite green; still `0.2.0.dev0`.
 - **Phase 0 is complete.** Boundary accepted 2026-07-31 with all five
   decisions; issues filed under the `vertical-204` label:
 
@@ -206,32 +211,52 @@ moratorium, recorded under `docs/agent/design/`.
   `PosixPtyBinding` and a POSIX path anyone may rely on, and until it lands
   the README, the architecture page and the adapter's own docstring all say so
   explicitly.
-- **Two issues were deferred out of Phase 1 and are Phase 3's context, not
-  its blockers:** #274 (POSIX binding residue — prose accuracy, test hygiene,
-  the release-only refusal's over-broad `RuntimeError`) and #273 (pty `ECHO`
-  puts harness input in the subject's output stream, where the marker scanner
-  reads). #273 was closed by accident on 2026-08-01 — PR #272's squash message
-  contains the words "rather than fixed: #273", which GitHub's linker read as
-  a closing keyword — and has been reopened. Phase 2 did not touch either: a
-  pure-refactor slice is the wrong place to change what the scanner honours,
-  and #273's question only becomes answerable with a real subject on the pty,
-  which is #269.
-- **Adjacent open issues, none of them this initiative's:** #261 (concurrent-
-  I/O disposition — decided re-raise on 2026-07-31, needs a POSIX red, so it
-  becomes cheap once Phase 1 exists and may be sequenced against it); the
-  #213/#217/#238 Windows containment cluster; #114, whose asks 1–4 are all
-  shipped except the examples directory Phase 4 creates.
+- **Two issues were deferred out of Phase 1.** **#274** (POSIX binding
+  residue) is being cleared *before* Phase 3 rather than alongside it: two of
+  its findings sit directly under the slice that comes next — `_read_until`
+  hung instead of failing, bounded only by CI's 30-minute job timeout, and
+  Phase 3 is a CI-driven slice that leans on that helper for every read.
+  **#273** (pty `ECHO` puts harness input in the subject's output stream,
+  where the marker scanner reads) stays open and becomes answerable inside
+  #269, which is the first slice with a real subject on a pty. Phase 2
+  touched neither: a pure-refactor slice is the wrong place to change what
+  the scanner honours.
+- **The closing-keyword trap is a merge-time check, not a writing-time one.**
+  #273 was closed by accident on 2026-08-01: PR #272's squash message put a
+  closing keyword immediately before the issue reference, and GitHub's linker
+  read the pair as an instruction to close. It was reopened — and then PR
+  #275, whose body *documents that mistake*, re-armed it by quoting the
+  phrase, so GitHub listed #273 among the issues that PR would close.
+  Before merging anything, query `closingIssuesReferences` for the PR and
+  confirm the list is exactly what should close; the links come from the
+  body *and* the commits, so supply the squash message explicitly rather
+  than letting GitHub concatenate commit bodies.
+- **Adjacent open issues, none of them this initiative's:** #261
+  (concurrent-I/O disposition — decided re-raise on 2026-07-31; it needed a
+  POSIX red, and Phase 1 has now shipped one, so the cost it was waiting on
+  is paid); the #213/#217/#238 Windows containment cluster; #114, whose asks
+  1–4 are all shipped except the examples directory Phase 4 creates.
 
 ## 5. Next steps
 
 1. ~~Owner decisions and issue filing~~ **done 2026-07-31** — see §4.
-2. **Start Phase 1 (#267)** in a fresh sibling worktree. Write the first
-   failing test before the binding exists, push it, and read the red off the
-   Ubuntu legs. Begin with the measurements the design deliberately refused to
-   assume: the inherited line discipline, and what a master reports once its
-   last slave closes.
-3. Then #268, #269, #270 in order — each consumes its predecessor — and
-   prepare #271 once they have landed.
+2. ~~Phase 1 (#267), the POSIX pty binding~~ **merged 2026-08-01** (PR #272,
+   squash `ceb7bb3`), after three adversarial rounds.
+3. ~~Phase 2 (#268), the platform-neutral terminal adapter~~ **merged
+   2026-08-01** (PR #275, squash `85c7a65`), after three adversarial rounds.
+4. **Clear #274 first** — the Phase 1 residue, in flight. It is not a
+   blocker for Phase 3 but it is underneath it: the read helper every
+   evidence test uses had no bound, and Phase 3 adds more tests to that same
+   helper on the same CI legs.
+5. **Then Phase 3 (#269)**, the adapter-level POSIX evidence, and #270 after
+   it — each consumes its predecessor. Prepare #271 once they have landed.
+
+A note on how to get a red for this work, learned on #274 and worth keeping:
+**a local WSL Ubuntu runs the POSIX suite in ~33s**, against the same
+worktree, with `UV_PROJECT_ENVIRONMENT` pointed at a Linux-side venv so the
+Windows `.venv` is untouched. That turns a ~6-minute CI round trip into a
+loop fast enough for real TDD. CI stays the authority — it is the matrix the
+claims are made about — but it no longer has to be the *first* red.
 
 ## 6. Key files & architecture
 
