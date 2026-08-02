@@ -566,11 +566,20 @@ for line in iter(sys.stdin.readline, ''):
 
 @_LINUX_ONLY
 def test_the_child_observes_the_creation_geometry() -> None:
+    """The needle is the whole expected line, and that is not cosmetic.
+
+    Waiting for a *prefix* of what is then asserted is a race the reader
+    loses roughly whenever the pty splits the line: the wait is satisfied by
+    ``SIZE`` while the digits are still in the kernel, and the assertion
+    then fails on output that was about to arrive. It cost a red on the
+    Ubuntu 3.14 leg in the sibling test below. Waiting for the full text
+    costs nothing — ``_read_until`` reports everything it collected when it
+    times out, so a genuinely wrong geometry still says what it saw.
+    """
     child = _spawn(_GEOMETRY_CHILD, rows=30, columns=100)
     try:
         child.write("go\n")
-        output = _read_until(child, "SIZE")
-        assert "SIZE 30 100" in output, output
+        assert "SIZE 30 100" in _read_until(child, "SIZE 30 100")
     finally:
         child.close(force=True)
 
@@ -599,7 +608,7 @@ def test_the_kernel_applies_a_geometry_the_windows_console_would_substitute() ->
     child = _spawn(_GEOMETRY_CHILD, rows=200, columns=500)
     try:
         child.write("go\n")
-        assert "SIZE 200 500" in _read_until(child, "SIZE")
+        assert "SIZE 200 500" in _read_until(child, "SIZE 200 500")
     finally:
         child.close(force=True)
 
@@ -817,7 +826,11 @@ def test_the_environment_overlay_and_cwd_compose_inside_the_binding() -> None:
         cwd="/tmp",
     )
     try:
-        output = _read_until(child, "TV ")
+        # The needle is the whole line. Waiting for the prefix "TV " let the
+        # read return with the environment value in hand and the working
+        # directory still in the kernel, which is exactly how the Ubuntu
+        # 3.14 leg reported `assert 'TV overlaid /tmp' in 'TV overlaid'`.
+        output = _read_until(child, "TV overlaid /tmp")
         assert "TV overlaid /tmp" in output, output
     finally:
         child.close(force=True)
