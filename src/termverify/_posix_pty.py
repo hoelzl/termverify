@@ -110,6 +110,7 @@ __all__ = [
     "PosixPtyClosedError",
     "PosixPtyConcurrentIOError",
     "PosixPtyEndOfStreamError",
+    "PosixPtyLiveChildError",
     "PosixPtyUnsupportedError",
     "is_supported",
     "set_terminal_flags",
@@ -199,6 +200,32 @@ class PosixPtyConcurrentIOError(TerminalConcurrentIOError):
     depth. It is a *caller* defect and wears its own type so no layer above
     can classify it as subject evidence — the disposition issue #261
     settled for both bindings.
+    """
+
+
+class PosixPtyLiveChildError(RuntimeError):
+    """Raised when a release-only close would abandon a live child.
+
+    Its own type because the alternatives are all wrong in the same
+    direction. A bare ``RuntimeError`` — what this path raised before — is
+    the *supertype* of three of the four kinds above, so ``except
+    RuntimeError`` written for this refusal silently swallowed a closed
+    binding, a single-flight violation and an unsupported host as well; and
+    :class:`PosixPtyClosedError` would mean the opposite of what happened,
+    since the binding is still open and the child still running.
+
+    Deliberately **not** one of the neutral kinds in
+    ``_terminal_binding.py``, because there is nothing neutral to name: the
+    ConPTY binding permits a release-only close of a live child, where
+    releasing the pseudoconsole handle makes the OS terminate the attached
+    client, so the two bindings answer this call differently and the
+    difference is real rather than an oversight. Closing a pty master
+    hangs up the terminal but guarantees nothing about a child that ignores
+    ``SIGHUP``, which is why this side refuses instead. The adapter never
+    reaches either answer — it closes with ``force=True`` on every path —
+    so the divergence is latent, and it is recorded in
+    ``_terminal_binding.py`` beside the other one the two bindings do not
+    give equally.
     """
 
 
@@ -864,7 +891,7 @@ class PosixPtyChild:
                 # would deadlock the teardown this method exists to
                 # guarantee.
                 if not force and process is not None and process.poll() is None:
-                    raise RuntimeError(
+                    raise PosixPtyLiveChildError(
                         "a release-only close of a live pty child would abandon"
                         " it; use force=True"
                     )

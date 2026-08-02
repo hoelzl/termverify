@@ -467,10 +467,14 @@ def test_a_release_only_close_of_a_live_child_is_refused() -> None:
     ``except PosixPtyClosedError: pass`` around a release-only close would
     turn a refusal-to-abandon into a leaked live child holding the pty.
     The binding is still open afterwards, which is the other half.
+
+    It wears its own type rather than a bare ``RuntimeError``, which is the
+    supertype of three of this module's four other error types — see
+    :func:`test_the_live_child_refusal_catches_nothing_else`.
     """
     child = _spawn("import time; time.sleep(300)")
     try:
-        with pytest.raises(RuntimeError) as caught:
+        with pytest.raises(_posix_pty.PosixPtyLiveChildError) as caught:
             child.close(force=False)
         assert not isinstance(caught.value, PosixPtyClosedError)
         assert child.is_alive()
@@ -478,6 +482,35 @@ def test_a_release_only_close_of_a_live_child_is_refused() -> None:
         child.resize(rows=10, columns=20)
     finally:
         child.close(force=True)
+
+
+def test_the_live_child_refusal_catches_nothing_else() -> None:
+    """A refusal type must not be a supertype of the failures around it.
+
+    The refusal used to raise a bare ``RuntimeError``, which three of this
+    module's four other error types derive from — so ``except RuntimeError``
+    written for a release-only close silently swallowed a closed binding, a
+    single-flight violation and an unsupported host as well. That is the
+    same defect the test above pins from the other side, and it is why
+    ``PosixPtyClosedError`` was not simply reused.
+
+    A type relationship is not platform evidence, so this runs everywhere.
+    """
+    others = (
+        _posix_pty.PosixPtyUnsupportedError,
+        PosixPtyClosedError,
+        PosixPtyConcurrentIOError,
+        PosixPtyEndOfStreamError,
+    )
+    for other in others:
+        assert not issubclass(other, _posix_pty.PosixPtyLiveChildError), (
+            f"{other.__name__} would be caught by a handler written for the"
+            f" release-only refusal"
+        )
+    assert sum(issubclass(other, RuntimeError) for other in others) == 3, (
+        "the breadth that made a bare RuntimeError wrong has changed; the"
+        " refusal's type needs re-deciding rather than re-asserting"
+    )
 
 
 @_LINUX_ONLY
