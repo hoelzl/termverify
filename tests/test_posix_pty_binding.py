@@ -675,10 +675,23 @@ def test_a_blocked_read_is_woken_by_a_forced_close() -> None:
     below is the deterministic form the sibling concurrency test already
     uses, and the message is what tells the two paths apart: only an
     interrupted read says "closed *during* a read".
+
+    **And neither of those was enough either — the timing is the third
+    load-bearing part.** Pointing ``read`` at the wrong end of the wake pipe
+    left this test green: the reader is never signalled, the teardown's
+    delivery wait expires after ``_IO_DELIVERY_WAIT_S``, and only then
+    does ``_release_descriptors`` free the pipe, whose closure the blocked
+    ``poll`` reports as ``POLLERR`` regardless of the mask it asked for. So
+    the read *was* woken, with the right type and the right message — by a
+    descriptor being freed underneath a blocked syscall after the teardown
+    gave up waiting for it, which is the precise hazard ``close``'s ordering
+    exists to prevent. Measured: 0.02s when the wake byte arrives, 5.03s
+    when it does not. Only the clock can tell those apart.
     """
     child = _spawn("import sys; sys.stdin.readline()")
     woken = threading.Event()
     failures: list[BaseException] = []
+    woken_at: list[float] = []
 
     def blocked_read() -> None:
         try:
@@ -686,6 +699,7 @@ def test_a_blocked_read_is_woken_by_a_forced_close() -> None:
         except BaseException as error:  # noqa: BLE001 - recorded for the assert
             failures.append(error)
         finally:
+            woken_at.append(time.monotonic())
             woken.set()
 
     reader = threading.Thread(target=blocked_read, daemon=True)
@@ -694,12 +708,72 @@ def test_a_blocked_read_is_woken_by_a_forced_close() -> None:
     while not child._read_in_flight:
         assert time.monotonic() < deadline, "the reader never reached the read"
         time.sleep(0.01)
+    closed_at = time.monotonic()
     child.close(force=True)
     assert woken.wait(_TIMEOUT_S), "the blocked read was never woken"
     assert failures and isinstance(failures[0], PosixPtyClosedError)
     assert "closed during a read" in str(failures[0]), (
         f"the read was rejected before it began, so the self-pipe was never"
         f" exercised: {failures[0]!r}"
+    )
+    elapsed = woken_at[0] - closed_at
+    assert elapsed < _posix_pty._IO_DELIVERY_WAIT_S / 2, (
+        f"the read took {elapsed:.2f}s to wake against a"
+        f" {_posix_pty._IO_DELIVERY_WAIT_S}s delivery wait, so what freed it was the"
+        f" teardown giving up and closing the pipe, not the wake byte"
+    )
+
+
+@_LINUX_ONLY
+def test_a_blocked_write_is_woken_by_a_forced_close() -> None:
+    """The write side of the same guarantee, which nothing exercised.
+
+    ``test_a_write_woken_by_a_close_reports_the_closed_binding`` patches
+    ``_wait_until_ready`` to answer "woken", so it proves the raise and
+    never the wake. Deleting ``close``'s wait for the write's delivery, or
+    pointing ``write`` at the wrong end of the wake pipe, left the whole
+    suite green.
+
+    A real block needs a subject that never reads its stdin and more bytes
+    than the pty will buffer, so the payload is far larger than any pipe
+    capacity. As on the read side, the clock is what distinguishes the wake
+    byte from the teardown expiring and freeing the descriptor underneath
+    the blocked syscall.
+    """
+    child = _spawn("import time; time.sleep(300)")
+    woken = threading.Event()
+    failures: list[BaseException] = []
+    woken_at: list[float] = []
+
+    def blocked_write() -> None:
+        try:
+            child.write("x" * (4 * 1024 * 1024))
+        except BaseException as error:  # noqa: BLE001 - recorded for the assert
+            failures.append(error)
+        finally:
+            woken_at.append(time.monotonic())
+            woken.set()
+
+    writer = threading.Thread(target=blocked_write, daemon=True)
+    writer.start()
+    deadline = time.monotonic() + _TIMEOUT_S
+    while not child._write_in_flight:
+        assert time.monotonic() < deadline, "the writer never reached the write"
+        time.sleep(0.01)
+    # The write is in flight, but "in flight" is set before the first poll;
+    # give it a moment to actually fill the buffer and block, so the close
+    # lands on a blocked syscall rather than racing it.
+    time.sleep(0.2)
+    closed_at = time.monotonic()
+    child.close(force=True)
+    assert woken.wait(_TIMEOUT_S), "the blocked write was never woken"
+    assert failures and isinstance(failures[0], PosixPtyClosedError), failures
+    assert "closed during a write" in str(failures[0]), failures[0]
+    elapsed = woken_at[0] - closed_at
+    assert elapsed < _posix_pty._IO_DELIVERY_WAIT_S / 2, (
+        f"the write took {elapsed:.2f}s to wake against a"
+        f" {_posix_pty._IO_DELIVERY_WAIT_S}s delivery wait, so what freed it was the"
+        f" teardown giving up, not the wake byte"
     )
 
 
@@ -967,6 +1041,13 @@ def test_abandoning_a_spawn_ends_the_descendants_it_already_forked() -> None:
     see it: their subjects never fork, so a pid kill and a group kill are
     indistinguishable there. The mutation that removes ``killpg`` survives
     every one of them, which is why this exercises the helper directly.
+
+    **One environmental assumption, stated because this test's whole point
+    is not passing for the wrong reason.** The grandchild is orphaned by the
+    kill, so only PID 1 can reap it, and ``os.kill(pid, 0)`` succeeds
+    against an unreaped zombie. Both legs of the declared matrix reap
+    orphans; a container run without an init would spin here for the full
+    timeout and report a false red rather than a false green.
     """
     process = subprocess.Popen(  # noqa: S603 - fixed argv
         [sys.executable, "-I", "-u", "-c", _FORKING_SUBJECT],
@@ -1646,9 +1727,10 @@ def test_the_status_pipe_write_end_is_kept_clear_of_the_stdio_range() -> None:
     # relocation loop. With 0, 1 and 2 all free it answers (0, 1), measured
     # in both, and the assertion needs the loop.
     #
-    # pytest's capture holds 1 and 2, so they are restored in reverse and
-    # every dup is taken before any close: a failure partway must not leave
-    # the process without stdio.
+    # Every dup is taken before any close, so a failure partway cannot leave
+    # the process without stdio. The restore order does not matter — each
+    # `dup2` names its own target descriptor — so it runs in the same order
+    # as the dups.
     spares = [os.dup(fd) for fd in (0, 1, 2)]
     try:
         for fd in (0, 1, 2):
@@ -1801,10 +1883,22 @@ def test_a_subject_that_cannot_be_executed_fails_the_spawn(
     stream and exit 1 — indistinguishable from a subject that exited 1.
     ``shutil.which`` does not prevent this: a script with no shebang is
     executable and still cannot be ``execv``'d.
+
+    This is the **fourth** spawn-failure path, and the descriptor count
+    below is what it was missing. Its three siblings each count
+    ``/proc/self/fd``; this one drove the branch and asserted only the
+    message, so deleting its ``os.close(master_fd)`` leaked a pty master per
+    attempt with the whole suite green — the failure a harness retrying a
+    mistyped subject command hits until ``EMFILE`` surfaces somewhere
+    unrelated.
     """
     script = tmp_path / "no-shebang"
     script.write_bytes(b"echo this file has no shebang\n")
     script.chmod(0o755)
+    before = len(os.listdir("/proc/self/fd"))
     with pytest.raises(OSError, match="the subject could not be started") as caught:
         PosixPtyChild.spawn([str(script)], rows=_INITIAL_ROWS, columns=_INITIAL_COLUMNS)
     assert "no-shebang" in str(caught.value)
+    assert len(os.listdir("/proc/self/fd")) == before, (
+        "the master outlived a spawn whose subject could not be executed"
+    )

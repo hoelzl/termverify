@@ -807,7 +807,13 @@ class PosixPtyChild:
         except BaseException as error:
             # Construction calls `os.pipe` and `os.set_blocking`, which fail
             # on EMFILE/ENFILE. Fail closed rather than leaking a live child
-            # and the master: no child outlives a failed spawn.
+            # and the master. What that delivers, stated at its real
+            # strength: no child *this process can signal* outlives a failed
+            # spawn. `_abandon_spawned_child` suppresses the kill's own
+            # failures, so a subject that changed uid and refuses `EPERM`
+            # survives — the case `_terminate_session` deliberately
+            # propagates, and the one place these paths cannot, because the
+            # caller is already unwinding a different failure.
             #
             # `BaseException`, not `OSError`, and the difference is a real
             # defect this caught: adoption releases its *own* wake pipe on
