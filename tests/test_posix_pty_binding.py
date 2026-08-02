@@ -725,56 +725,74 @@ def test_a_blocked_read_is_woken_by_a_forced_close() -> None:
 
 
 @_LINUX_ONLY
-def test_a_blocked_write_is_woken_by_a_forced_close() -> None:
-    """The write side of the same guarantee, which nothing exercised.
+def test_a_write_that_cannot_proceed_watches_the_wake_pipe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The write side's half of the wake guarantee, which nothing exercised.
 
     ``test_a_write_woken_by_a_close_reports_the_closed_binding`` patches
     ``_wait_until_ready`` to answer "woken", so it proves the raise and
-    never the wake. Deleting ``close``'s wait for the write's delivery, or
-    pointing ``write`` at the wrong end of the wake pipe, left the whole
-    suite green.
+    never the wake. Pointing ``write`` at the wrong end of the wake pipe
+    left the whole suite green.
 
-    A real block needs a subject that never reads its stdin and more bytes
-    than the pty will buffer, so the payload is far larger than any pipe
-    capacity. As on the read side, the clock is what distinguishes the wake
-    byte from the teardown expiring and freeing the descriptor underneath
-    the blocked syscall.
+    **The first attempt at this test was wrong about the platform, and CI
+    said so.** It tried to block a real write by giving a non-reading child
+    more bytes than the pty would buffer — but a pty in canonical mode
+    *discards* input once its queue is full rather than pushing back on the
+    master, so the write can simply complete. It passed on five matrix legs
+    on the timing of the echo queue and failed on the sixth. A test whose
+    premise is "this syscall will block" needs the platform to guarantee
+    that, and this one does not.
+
+    So the block is injected instead: every write to the master reports
+    ``BlockingIOError``, which is the state ``_write_all`` is written for,
+    and the loop then turns entirely on what ``_wait_until_ready`` says
+    about the wake pipe. Deterministic on every leg, and it fails rather
+    than hangs — with the wrong end polled, the loop never sees a wake and
+    the bounded wait below reports it.
+
+    What this does *not* cover is a genuinely blocked ``os.write`` being
+    freed by the wake byte, and ``close``'s wait for that write's delivery.
+    Both are recorded in #278 rather than pinned by something flaky.
     """
     child = _spawn("import time; time.sleep(300)")
     woken = threading.Event()
     failures: list[BaseException] = []
-    woken_at: list[float] = []
+    real_write = os.write
 
-    def blocked_write() -> None:
+    def never_ready(fd: int, data: object) -> int:
+        # Only the master. The wake byte `close` writes must get through,
+        # or this arranges the very failure it is checking for.
+        if fd == child._master_fd:
+            raise BlockingIOError
+        return real_write(fd, data)  # type: ignore[arg-type]
+
+    def spinning_write() -> None:
         try:
-            child.write("x" * (4 * 1024 * 1024))
+            child.write("x")
         except BaseException as error:  # noqa: BLE001 - recorded for the assert
             failures.append(error)
         finally:
-            woken_at.append(time.monotonic())
             woken.set()
 
-    writer = threading.Thread(target=blocked_write, daemon=True)
+    monkeypatch.setattr(os, "write", never_ready)
+    writer = threading.Thread(target=spinning_write, daemon=True)
     writer.start()
     deadline = time.monotonic() + _TIMEOUT_S
     while not child._write_in_flight:
         assert time.monotonic() < deadline, "the writer never reached the write"
         time.sleep(0.01)
-    # The write is in flight, but "in flight" is set before the first poll;
-    # give it a moment to actually fill the buffer and block, so the close
-    # lands on a blocked syscall rather than racing it.
-    time.sleep(0.2)
-    closed_at = time.monotonic()
-    child.close(force=True)
-    assert woken.wait(_TIMEOUT_S), "the blocked write was never woken"
-    assert failures and isinstance(failures[0], PosixPtyClosedError), failures
-    assert "closed during a write" in str(failures[0]), failures[0]
-    elapsed = woken_at[0] - closed_at
-    assert elapsed < _posix_pty._IO_DELIVERY_WAIT_S / 2, (
-        f"the write took {elapsed:.2f}s to wake against a"
-        f" {_posix_pty._IO_DELIVERY_WAIT_S}s delivery wait, so what freed it was the"
-        f" teardown giving up, not the wake byte"
-    )
+    try:
+        child.close(force=True)
+        assert woken.wait(_TIMEOUT_S), (
+            "the write never observed the wake pipe: it is watching a"
+            " descriptor a close does not signal"
+        )
+        assert failures and isinstance(failures[0], PosixPtyClosedError), failures
+        assert "closed during a write" in str(failures[0]), failures[0]
+    finally:
+        monkeypatch.undo()
+        writer.join(_TIMEOUT_S)
 
 
 @_LINUX_ONLY
