@@ -139,6 +139,24 @@ _EXEC_STATUS_WAIT_S: Final = 60.0
 
 _READ_CHUNK_BYTES: Final = 65536
 
+#: ``IUTF8``, supplied rather than imported. ``termios.IUTF8`` arrives in
+#: **Python 3.13**; on the 3.12 this project still supports the constant does
+#: not exist, and reading it defensively meant the flag was silently *off*
+#: there — so the same subject on the same kernel erased a multibyte
+#: character one way under 3.12 and another under 3.13, a determinism input
+#: varying by interpreter rather than by platform. Supplying it makes the
+#: line discipline identical on every supported interpreter.
+#:
+#: The value is the one Linux's ``asm-generic/termbits.h`` defines, which is
+#: what every architecture this project's CI runs on uses. That assumption is
+#: checked wherever it can be:
+#: :func:`test_the_supplied_iutf8_constant_matches_the_interpreters_own`
+#: compares it against ``termios.IUTF8`` on 3.13 and 3.14, both operating
+#: systems — so an architecture whose termios bits differ from the generic
+#: ones fails there rather than silently naming the wrong bit. It cannot be
+#: checked on 3.12, which is the whole reason this constant exists.
+_IUTF8: Final = 0x4000
+
 #: The trampoline. It runs in a fresh interpreter that has just been
 #: ``exec``'d, so it is single-threaded by construction and none of the
 #: fork-safety hazards of ``preexec_fn`` apply. It does the one thing only
@@ -336,7 +354,10 @@ def _configure_line_discipline(fd: int) -> None:  # coverage: exclude-windows
     - ``IUTF8`` is **on**, so erasing a multibyte character erases the
       character rather than one of its bytes. It is a deviation on kernels
       that do not default it on, which is why it is named here rather than
-      only at the assignment.
+      only at the assignment. The value is supplied by :data:`_IUTF8` rather
+      than read from ``termios``, so that this holds on Python 3.12 too —
+      the constant is not there before 3.13, and reading it defensively
+      turned the flag off on one third of the supported matrix.
 
     ``ECHO`` and ``ICANON`` stay **on**, per the module docstring's
     faithfulness argument — with the consequence recorded there. So do the
@@ -354,12 +375,11 @@ def _configure_line_discipline(fd: int) -> None:  # coverage: exclude-windows
 
     _, _, cflag, _, ispeed, ospeed, cc = termios.tcgetattr(fd)
     # IUTF8 governs how a multibyte character erases and is Linux-specific.
-    # Read through `getattr` because typeshed declares it only for Python
-    # 3.13 and later while this project type-checks at `python_version =
-    # "3.12"` — so naming it directly fails mypy on a constant that exists
-    # at runtime on every Linux the binding claims. A typing workaround,
-    # not a runtime one.
-    iflag = termios.ICRNL | getattr(termios, "IUTF8", 0)
+    # Supplied by this module rather than read from `termios`, because the
+    # constant does not exist before Python 3.13 — see :data:`_IUTF8`. The
+    # comment this replaces called that a typing workaround; it was a
+    # runtime one, and reading it defensively left the flag off on 3.12.
+    iflag = termios.ICRNL | _IUTF8
     oflag = termios.OPOST | termios.ONLCR
     lflag = (
         termios.ISIG

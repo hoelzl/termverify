@@ -138,7 +138,15 @@ def test_spawn_fails_closed_where_the_probe_says_unsupported() -> None:
 #: ``termios``: asserting them in the parent would mean importing a
 #: Unix-only module into a test module that must import on Windows, and
 #: would ask the parent what the child sees instead of asking the child.
-_TERMIOS_CHILD = """
+#: The binding's own ``IUTF8`` value is injected rather than resolved in the
+#: child, because ``termios.IUTF8`` does not exist before Python 3.13 —
+#: naming it there killed the child before it printed anything, which is how
+#: the Ubuntu 3.12 leg reported this as an end-of-stream. Injecting the
+#: binding's constant also stops this from becoming a second copy of a value
+#: that must agree with the one the binding sets.
+_TERMIOS_CHILD = (
+    f"_IUTF8 = {_posix_pty._IUTF8}\n"
+    + """
 import os, sys, termios
 a = termios.tcgetattr(0)
 iflag, oflag, lflag = a[0], a[1], a[3]
@@ -149,7 +157,7 @@ for name, flag, value in (
     ("ICANON", "lflag", termios.ICANON),
     ("ISIG", "lflag", termios.ISIG),
     ("ICRNL", "iflag", termios.ICRNL),
-    ("IUTF8", "iflag", termios.IUTF8),
+    ("IUTF8", "iflag", _IUTF8),
     ("ECHOE", "lflag", termios.ECHOE),
     ("ECHOK", "lflag", termios.ECHOK),
     ("ECHOKE", "lflag", termios.ECHOKE),
@@ -178,6 +186,7 @@ except OSError as error:
 print("READY")
 sys.stdin.readline()
 """
+)
 
 
 @_LINUX_ONLY
@@ -324,6 +333,22 @@ _FLAG_NAMES: dict[str, tuple[str, ...]] = {
 _NAMED_DEVIATIONS = frozenset({"IXON", "ECHOCTL", "IEXTEN", "IUTF8"})
 
 
+def _flag_bit(name: str) -> int:
+    """Resolve one flag by name, falling back to the binding's constant.
+
+    Only ``IUTF8`` needs the fallback, and it needs it on exactly the leg
+    where the binding is supplying the value itself: ``termios.IUTF8`` does
+    not exist before Python 3.13, so a table asking only ``termios`` would
+    be unable to name the one bit whose absence started this — and would
+    then report the binding's own deviation as an *unnameable* changed bit.
+    """
+    import termios
+
+    if name == "IUTF8":
+        return getattr(termios, "IUTF8", _posix_pty._IUTF8)
+    return getattr(termios, name, 0)
+
+
 def _named_changed_flags(word: str, before: int, after: int) -> set[str]:
     """Name every bit that differs between two values of one flag word.
 
@@ -331,13 +356,11 @@ def _named_changed_flags(word: str, before: int, after: int) -> set[str]:
     is exactly the silent deviation the caller is asking about, so it is
     surfaced as its own assertion instead of being dropped.
     """
-    import termios
-
     changed = before ^ after
     named: set[str] = set()
     covered = 0
     for name in _FLAG_NAMES[word]:
-        bit = getattr(termios, name, 0)
+        bit = _flag_bit(name)
         if bit and changed & bit == bit:
             named.add(name)
             covered |= bit
@@ -394,6 +417,31 @@ def test_the_configured_discipline_deviates_from_the_default_only_as_stated() ->
         f" `_configure_line_discipline` does not name:"
         f" {sorted(deviations - _NAMED_DEVIATIONS)}"
     )
+
+
+@_LINUX_ONLY
+def test_the_supplied_iutf8_constant_matches_the_interpreters_own() -> None:
+    """The one assumption the supplied constant introduces, checked.
+
+    `_IUTF8` exists because ``termios.IUTF8`` arrives only in Python 3.13,
+    and reading it defensively left the flag *off* on 3.12 — the same
+    subject erasing a multibyte character differently depending on which
+    interpreter drove the harness. Supplying the value fixes that and buys
+    one assumption in exchange: that the bit is the one Linux's
+    ``asm-generic/termbits.h`` defines.
+
+    This is where that assumption is paid for. It runs on 3.13 and 3.14,
+    both operating systems — so an architecture whose termios bits differ
+    from the generic ones fails here rather than silently naming a
+    different bit. It cannot run on 3.12, which is precisely the leg the
+    constant exists for, and that gap is real: the check is four of the six
+    matrix legs, not all of them.
+    """
+    import termios
+
+    if not hasattr(termios, "IUTF8"):
+        pytest.skip("this interpreter has no termios.IUTF8 to compare against")
+    assert _posix_pty._IUTF8 == termios.IUTF8
 
 
 @_LINUX_ONLY

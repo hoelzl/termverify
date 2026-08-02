@@ -12,4 +12,7 @@
   also stops deviating from the conventional terminal in two flags it never
   named: `ECHOK` and `ECHOKE` are on again, so the `^U` this binding
   installs as `cc[VKILL]` echoes its erasure the way the erase character
-  already did.
+  already did. And `IUTF8` is now set on **every** supported interpreter:
+  `termios.IUTF8` arrives only in Python 3.13, so reading it defensively
+  left the flag off on 3.12 — the same subject on the same kernel erasing a
+  multibyte character one way under 3.12 and another under 3.13.
