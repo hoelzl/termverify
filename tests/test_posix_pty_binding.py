@@ -148,6 +148,10 @@ for name, flag, value in (
     ("ICANON", "lflag", termios.ICANON),
     ("ISIG", "lflag", termios.ISIG),
     ("ICRNL", "iflag", termios.ICRNL),
+    ("IUTF8", "iflag", termios.IUTF8),
+    ("ECHOE", "lflag", termios.ECHOE),
+    ("ECHOK", "lflag", termios.ECHOK),
+    ("ECHOKE", "lflag", termios.ECHOKE),
     ("IXON", "iflag", termios.IXON),
     ("ECHOCTL", "lflag", termios.ECHOCTL),
     ("IEXTEN", "lflag", termios.IEXTEN),
@@ -195,6 +199,16 @@ def test_the_child_inherits_the_line_discipline_the_binding_set() -> None:
             ("ICANON", True, "a conventional terminal is canonical"),
             ("ISIG", True, "a conventional terminal generates signals"),
             ("ICRNL", True, "a conventional terminal maps CR to NL"),
+            # The editing echoes, which travel together. ECHOE was always
+            # on while ECHOK and ECHOKE were off, unremarked — an erase
+            # echoed as a person would see it, a kill echoed nothing,
+            # although this binding installs ^U as cc[VKILL] itself. There
+            # is no reading under which those are different decisions, and
+            # the conventional one is what the module argues for.
+            ("ECHOE", True, "the erase character echoes as a person's does"),
+            ("ECHOK", True, "so does the kill character this module installs"),
+            ("ECHOKE", True, "and it erases the line rather than adding one"),
+            ("IUTF8", True, "erasing a multibyte character erases the character"),
             # These three are ON in the kernel default and the binding
             # turns them OFF, so they are what makes this test able to
             # fail: with the configuration removed, the child would report
@@ -247,6 +261,154 @@ def test_configuring_the_line_discipline_is_idempotent_and_measured() -> None:
     # kernel's choice rather than the binding's contract, and the design
     # refused to predict it. It rides in the message above so a future
     # divergence is visible wherever it breaks something.
+
+
+#: Flag names, by word, resolved against the running kernel's ``termios``.
+#: Only single-bit flags: the delay masks in ``oflag`` (``NLDLY``, ``CRDLY``,
+#: ``TABDLY``, ``BSDLY``, ``VTDLY``, ``FFDLY``) are multi-bit fields whose
+#: zero value is a legitimate setting, so naming a *changed bit* through them
+#: would report nonsense. The coverage assertion below is what stops that
+#: exclusion from hiding a real change.
+_FLAG_NAMES: dict[str, tuple[str, ...]] = {
+    "iflag": (
+        "IGNBRK",
+        "BRKINT",
+        "IGNPAR",
+        "PARMRK",
+        "INPCK",
+        "ISTRIP",
+        "INLCR",
+        "IGNCR",
+        "ICRNL",
+        "IUCLC",
+        "IXON",
+        "IXANY",
+        "IXOFF",
+        "IMAXBEL",
+        "IUTF8",
+    ),
+    "oflag": (
+        "OPOST",
+        "OLCUC",
+        "ONLCR",
+        "OCRNL",
+        "ONOCR",
+        "ONLRET",
+        "OFILL",
+        "OFDEL",
+    ),
+    "lflag": (
+        "ISIG",
+        "ICANON",
+        "XCASE",
+        "ECHO",
+        "ECHOE",
+        "ECHOK",
+        "ECHONL",
+        "NOFLSH",
+        "TOSTOP",
+        "ECHOCTL",
+        "ECHOPRT",
+        "ECHOKE",
+        "FLUSHO",
+        "PENDIN",
+        "IEXTEN",
+        "EXTPROC",
+    ),
+}
+
+
+#: Every flag `_configure_line_discipline` states it chooses against the
+#: conventional terminal. Anything else it changes is an unnamed deviation.
+_NAMED_DEVIATIONS = frozenset({"IXON", "ECHOCTL", "IEXTEN", "IUTF8"})
+
+
+def _named_changed_flags(word: str, before: int, after: int) -> set[str]:
+    """Name every bit that differs between two values of one flag word.
+
+    Fails rather than under-reports: a changed bit this module cannot name
+    is exactly the silent deviation the caller is asking about, so it is
+    surfaced as its own assertion instead of being dropped.
+    """
+    import termios
+
+    changed = before ^ after
+    named: set[str] = set()
+    covered = 0
+    for name in _FLAG_NAMES[word]:
+        bit = getattr(termios, name, 0)
+        if bit and changed & bit == bit:
+            named.add(name)
+            covered |= bit
+    assert covered == changed, (
+        f"{word} changed bits this test cannot name:"
+        f" {changed & ~covered:#x} (before={before:#x} after={after:#x})"
+    )
+    return named
+
+
+@_LINUX_ONLY
+def test_the_configured_discipline_deviates_from_the_default_only_as_stated() -> None:
+    """Every deviation from the kernel default is named, or this fails.
+
+    The function's own rule is that a choice which costs something is named
+    rather than left to be discovered, and its docstring names three. It
+    made five: ``ECHOK`` and ``ECHOKE`` were also turned off, unremarked,
+    and nothing pinned them — ``_TERMIOS_CHILD`` checks nine flags and none
+    of these. With both off, the ``^U`` this module explicitly installs as
+    ``cc[VKILL]`` kills the line and echoes nothing, where the default
+    erases it, so a harness-written kill produced different transcript bytes
+    for a reason no reader could find.
+
+    The deviation set is *measured against the running kernel* rather than
+    spelled out here. Hardcoding the expected words would restate the
+    implementation and pass by construction; comparing configured against
+    inherited pins what the binding changes about the terminal a person
+    would get — which is the contract — and leaves the default itself
+    unpinned, as the design decided.
+
+    **Asserted as a subset, and only this direction is sound.** Which named
+    choices *show up* as deviations depends on the kernel: ``IUTF8`` is a
+    deviation on the kernel this was written against and would silently
+    stop being one on a kernel that already defaults it on. So a lost
+    deviation cannot be detected here at all — turning ``IXON`` back on
+    would shrink the set and still pass. That direction is
+    :func:`test_the_child_inherits_the_line_discipline_the_binding_set`'s
+    job, which asserts the absolute state the child sees and does not
+    depend on any default.
+    """
+    master_fd, slave_fd = os.openpty()  # type: ignore[attr-defined,unused-ignore]
+    try:
+        inherited = _posix_pty.terminal_flags(slave_fd)
+        _posix_pty._configure_line_discipline(slave_fd)
+        configured = _posix_pty.terminal_flags(slave_fd)
+    finally:
+        os.close(master_fd)
+        os.close(slave_fd)
+    deviations = set()
+    for index, word in enumerate(("iflag", "oflag", "lflag")):
+        deviations |= _named_changed_flags(word, inherited[index], configured[index])
+    assert deviations <= _NAMED_DEVIATIONS, (
+        f"the binding deviates from this kernel's default in flags"
+        f" `_configure_line_discipline` does not name:"
+        f" {sorted(deviations - _NAMED_DEVIATIONS)}"
+    )
+
+
+@_LINUX_ONLY
+def test_a_changed_flag_with_no_name_is_reported_rather_than_dropped() -> None:
+    """The flag tables above are not exhaustive, so silence would be the bug.
+
+    ``_named_changed_flags`` reports deviations *by name*, and the test that
+    consumes it asserts over the names — so a changed bit the tables cannot
+    name would be dropped, and the deviation check would pass while the
+    binding quietly changed something. The tables deliberately omit the
+    multi-bit delay masks, which is exactly the kind of gap that makes this
+    escape hatch necessary rather than theoretical.
+    """
+    assert _named_changed_flags("lflag", 0, 0) == set()
+    with pytest.raises(AssertionError, match="cannot name"):
+        _named_changed_flags("lflag", 0, 1 << 30)
 
 
 @_LINUX_ONLY

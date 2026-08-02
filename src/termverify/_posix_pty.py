@@ -308,8 +308,12 @@ def _configure_line_discipline(fd: int) -> None:  # coverage: exclude-windows
       serial line — parity, stop bits, baud — and a pseudoterminal has no
       wire for them to describe. Nothing in them reaches evidence.
 
-    Two choices here are deliberate and cost something, so they are named
-    rather than left to be discovered:
+    Every choice that deviates from the conventional terminal is named
+    here, and
+    :func:`test_the_configured_discipline_deviates_from_the_default_only_as_stated`
+    fails if this list stops being exhaustive — it diffs the configured
+    words against what the running kernel hands a fresh pty and reports any
+    flag this docstring does not mention. There are four:
 
     - ``IXON`` is **off**. Software flow control would let a harness write
       of ``0x13`` suspend the subject's output until ``0x11`` arrived —
@@ -317,9 +321,20 @@ def _configure_line_discipline(fd: int) -> None:  # coverage: exclude-windows
       determinism input.
     - ``ECHOCTL`` and ``IEXTEN`` are **off**, so no byte the harness writes
       is echoed back in an expanded form the subject never produced.
+    - ``IUTF8`` is **on**, so erasing a multibyte character erases the
+      character rather than one of its bytes. It is a deviation on kernels
+      that do not default it on, which is why it is named here rather than
+      only at the assignment.
 
     ``ECHO`` and ``ICANON`` stay **on**, per the module docstring's
-    faithfulness argument — with the consequence recorded there.
+    faithfulness argument — with the consequence recorded there. So do the
+    editing echoes ``ECHOE``, ``ECHOK`` and ``ECHOKE``, and that is a
+    correction: ``ECHOE`` was on while ``ECHOK`` and ``ECHOKE`` were off,
+    which no argument supports. This function installs ``^U`` as
+    ``cc[VKILL]`` itself, so with those two off a harness-written kill
+    erased the line and echoed nothing back, where the terminal a person
+    drives shows the erasure — a difference in transcript bytes produced by
+    a choice nobody had made on purpose. The three travel together now.
     """
     if sys.platform == "win32":  # coverage: exclude-posix - POSIX-only path
         raise AssertionError("the POSIX PTY path is POSIX-only")
@@ -331,7 +346,14 @@ def _configure_line_discipline(fd: int) -> None:  # coverage: exclude-windows
     # named directly.
     iflag = termios.ICRNL | getattr(termios, "IUTF8", 0)
     oflag = termios.OPOST | termios.ONLCR
-    lflag = termios.ISIG | termios.ICANON | termios.ECHO | termios.ECHOE
+    lflag = (
+        termios.ISIG
+        | termios.ICANON
+        | termios.ECHO
+        | termios.ECHOE
+        | termios.ECHOK
+        | termios.ECHOKE
+    )
     control = list(cc)
     for name, value in (
         ("VINTR", 3),  # ^C
