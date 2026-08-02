@@ -572,7 +572,10 @@ def test_the_child_observes_the_creation_geometry() -> None:
     loses roughly whenever the pty splits the line: the wait is satisfied by
     ``SIZE`` while the digits are still in the kernel, and the assertion
     then fails on output that was about to arrive. It cost a red on the
-    Ubuntu 3.14 leg in the sibling test below. Waiting for the full text
+    Ubuntu 3.14 leg — not here, but in
+    :func:`test_the_environment_overlay_and_cwd_compose_inside_the_binding`,
+    which had the same shape with ``TV `` for a needle. These two geometry
+    tests were found by looking for the shape, not by failing. The full text
     costs nothing — ``_read_until`` reports everything it collected when it
     times out, so a genuinely wrong geometry still says what it saw.
     """
@@ -935,6 +938,194 @@ def test_a_wake_pipe_that_cannot_be_configured_is_released(
     )
 
 
+#: Forks a grandchild that stays in the session, reports its pid, and then
+#: both sleep. The grandchild is what a pid-only kill misses.
+_FORKING_SUBJECT = """
+import os, sys, time
+child = os.fork()
+if child == 0:
+    time.sleep(300)
+    os._exit(0)
+print(child, flush=True)
+time.sleep(300)
+"""
+
+
+@_LINUX_ONLY
+def test_abandoning_a_spawn_ends_the_descendants_it_already_forked() -> None:
+    """The group, not the pid — and no pty is needed to prove it.
+
+    ``start_new_session=True`` puts the child in a session of its own before
+    the exec, so a subject that reached ``execv`` and forked has descendants
+    that signalling the pid alone leaves running. They hold the pty slave,
+    which keeps the master readable, so the end-of-stream that would
+    otherwise be the only sign anything survived never arrives.
+
+    The three spawn-failure paths claim "no child outlives a failed spawn".
+    That claim was false while they killed the pid, and the tests could not
+    see it: their subjects never fork, so a pid kill and a group kill are
+    indistinguishable there. The mutation that removes ``killpg`` survives
+    every one of them, which is why this exercises the helper directly.
+    """
+    process = subprocess.Popen(  # noqa: S603 - fixed argv
+        [sys.executable, "-I", "-u", "-c", _FORKING_SUBJECT],
+        stdout=subprocess.PIPE,
+        start_new_session=True,
+    )
+    assert process.stdout is not None
+    grandchild = int(process.stdout.readline())
+    try:
+        _posix_pty._abandon_spawned_child(process)
+        deadline = time.monotonic() + _TIMEOUT_S
+        while True:
+            try:
+                os.kill(grandchild, 0)
+            except OSError:
+                break
+            assert time.monotonic() < deadline, (
+                f"grandchild {grandchild} outlived the abandoned spawn; a"
+                f" pid-only kill leaves the session's descendants running"
+            )
+            time.sleep(0.01)
+    finally:
+        process.stdout.close()
+        with contextlib.suppress(OSError):
+            os.kill(grandchild, FORCED_TERMINATION_SIGNAL)
+
+
+@_LINUX_ONLY
+def test_an_ordinary_close_releases_every_descriptor_the_spawn_took() -> None:
+    """The success path had no descriptor accounting at all.
+
+    Two tests count ``/proc/self/fd`` around a *failed* spawn, and none
+    counted it around a successful one — so ``_release_descriptors`` could
+    be emptied out entirely with the whole suite green. Deleting either the
+    master's close or the wake pipe's loop leaks on **every** run rather
+    than on a rare error path: a harness driving subjects in sequence, which
+    is the product's ordinary mode, walks into ``EMFILE`` and first learns
+    about it from an unrelated later spawn.
+
+    The spawn is asserted to actually take descriptors, so the comparison
+    cannot pass by measuring nothing.
+    """
+    before = len(os.listdir("/proc/self/fd"))
+    child = _spawn("import time; time.sleep(300)")
+    try:
+        assert len(os.listdir("/proc/self/fd")) > before, (
+            "the spawn took no descriptors, so releasing them proves nothing"
+        )
+    finally:
+        child.close(force=True)
+    assert len(os.listdir("/proc/self/fd")) == before, (
+        "a successful close left the master or the wake pipe open"
+    )
+
+
+@_LINUX_ONLY
+def test_a_spawn_whose_exec_status_fails_leaves_no_child_and_no_descriptor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """What the *spawn* does when the new bound fires had never run.
+
+    This slice's headline repair is bounding the exec-status wait, and the
+    bound is pinned — but only against ``_read_exec_status`` called directly
+    on a pipe a test holds open. The ``OSError`` it now raises lands in a
+    handler in ``_spawn_posix`` that no test had ever entered, so the thing
+    the bound exists to protect was unverified: a stalled trampoline would
+    have been caught by the timeout and then leaked the master and the child
+    on the way out.
+    """
+    spawned: list[subprocess.Popen[bytes]] = []
+    real_popen = subprocess.Popen
+
+    def recording(*args: object, **kwargs: object) -> subprocess.Popen[bytes]:
+        process = real_popen(*args, **kwargs)  # type: ignore[call-overload]
+        spawned.append(process)
+        return process  # type: ignore[no-any-return]
+
+    def timed_out(status_read: int, *, timeout: float = 0.0) -> str | None:
+        raise OSError("the subject's exec status did not arrive within 60s")
+
+    before = len(os.listdir("/proc/self/fd"))
+    monkeypatch.setattr(subprocess, "Popen", recording)
+    monkeypatch.setattr(_posix_pty, "_read_exec_status", timed_out)
+    with pytest.raises(OSError, match="exec status"):
+        _spawn("import time; time.sleep(300)")
+    monkeypatch.undo()
+    assert spawned, "the fault fired before a child existed"
+    deadline = time.monotonic() + _TIMEOUT_S
+    while spawned[0].poll() is None:
+        assert time.monotonic() < deadline, (
+            f"child {spawned[0].pid} outlived the spawn that gave up on it"
+        )
+        time.sleep(0.01)
+    # *Which* signal, not merely that it died. Releasing the master hangs up
+    # the terminal, and the child is the session leader holding it — so it
+    # dies of `SIGHUP` whether or not the teardown killed anything, and an
+    # "it is gone" assertion passes with the kill deleted. This is what the
+    # mutation harness caught in the first version of this test.
+    assert spawned[0].returncode == -FORCED_TERMINATION_SIGNAL, (
+        f"the child ended by signal {-spawned[0].returncode}, not by this"
+        f" path's own kill; the hangup from closing the master would do that"
+        f" on its own, so the teardown is unproven"
+    )
+    assert len(os.listdir("/proc/self/fd")) == before, (
+        "the master outlived the spawn that gave up on it"
+    )
+
+
+@_LINUX_ONLY
+def test_an_interrupt_during_the_abandon_still_releases_the_master(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Why the master's close sits in a ``finally`` and not after the reap.
+
+    ``_abandon_spawned_child`` suppresses the failures a kill and a reap
+    produce, but not an interrupt — and the reap it performs is bounded at
+    thirty seconds, which is a wide window for a second Ctrl-C from someone
+    who has already pressed it once. With the close written after the call
+    instead of under a ``finally``, that second interrupt skips it and
+    leaks the master on the way out of a spawn that is already failing.
+    """
+    spawned: list[subprocess.Popen[bytes]] = []
+    real_popen = subprocess.Popen
+    real_wait = subprocess.Popen.wait
+
+    def recording(*args: object, **kwargs: object) -> subprocess.Popen[bytes]:
+        process = real_popen(*args, **kwargs)  # type: ignore[call-overload]
+        spawned.append(process)
+        return process  # type: ignore[no-any-return]
+
+    def timed_out(status_read: int, *, timeout: float = 0.0) -> str | None:
+        raise OSError("the subject's exec status did not arrive within 60s")
+
+    def interrupted(self: object, timeout: float | None = None) -> int:
+        raise KeyboardInterrupt("a second Ctrl-C, during the reap")
+
+    before = len(os.listdir("/proc/self/fd"))
+    # `wait` is patched on the captured class, not on `subprocess.Popen`:
+    # the next line replaces that name with a *function*, which has no
+    # `wait` to set.
+    monkeypatch.setattr(real_popen, "wait", interrupted)
+    monkeypatch.setattr(subprocess, "Popen", recording)
+    monkeypatch.setattr(_posix_pty, "_read_exec_status", timed_out)
+    with pytest.raises(KeyboardInterrupt):
+        _spawn("import time; time.sleep(300)")
+    monkeypatch.undo()
+    try:
+        assert len(os.listdir("/proc/self/fd")) == before, (
+            "the master outlived a spawn interrupted during its own cleanup"
+        )
+    finally:
+        # The reap never ran, so this test owns ending and reaping the
+        # child — the kill did land, since only `wait` was stubbed.
+        assert spawned, "the fault fired before a child existed"
+        with contextlib.suppress(OSError):
+            os.killpg(spawned[0].pid, FORCED_TERMINATION_SIGNAL)  # type: ignore[attr-defined,unused-ignore]
+        with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+            real_wait(spawned[0], timeout=_TIMEOUT_S)
+
+
 @_LINUX_ONLY
 def test_an_interrupted_adoption_leaves_no_child_and_no_descriptor(
     monkeypatch: pytest.MonkeyPatch,
@@ -976,6 +1167,12 @@ def test_an_interrupted_adoption_leaves_no_child_and_no_descriptor(
             f"child {spawned[0].pid} outlived the spawn that could not adopt it"
         )
         time.sleep(0.01)
+    # The signal, for the reason its sibling above records: the hangup from
+    # releasing the master kills a session leader by itself.
+    assert spawned[0].returncode == -FORCED_TERMINATION_SIGNAL, (
+        f"the child ended by signal {-spawned[0].returncode}, not by this"
+        f" path's own kill, so the teardown is unproven"
+    )
     assert len(os.listdir("/proc/self/fd")) == before, (
         "the master outlived the spawn that could not adopt it"
     )
@@ -1438,14 +1635,21 @@ def test_the_status_pipe_write_end_is_kept_clear_of_the_stdio_range() -> None:
     parent reads success. Reachable whenever the parent runs with a closed
     stdin.
     """
-    # Freeing fd 0 is what makes this able to fail. Under pytest, fds 0-2
-    # are always open, so `os.pipe()` can never return a low number and
-    # the assertion below was satisfied by the *unrelocated* code — a test
-    # for a fix that passed without the fix. With fd 0 closed, a bare
-    # `os.pipe()` returns (0, 1) here and the assertion trips.
-    spare = os.dup(0)
+    # Freeing the stdio range is what makes this able to fail, and freeing
+    # *fd 0 alone is not enough* — which is how this test spent a round
+    # passing without the fix it names. `os.pipe()` returns the two lowest
+    # free descriptors: with only fd 0 free it answers (0, 4), whose write
+    # end already satisfies `> 2`, so the kernel handed out a high number
+    # and the relocation loop never ran. Measured, not reasoned. With 0, 1
+    # and 2 all free it answers (0, 1) and the assertion needs the loop.
+    #
+    # pytest's capture holds 1 and 2, so they are restored in reverse and
+    # every dup is taken before any close: a failure partway must not leave
+    # the process without stdio.
+    spares = [os.dup(fd) for fd in (0, 1, 2)]
     try:
-        os.close(0)
+        for fd in (0, 1, 2):
+            os.close(fd)
         read_fd, write_fd = _posix_pty._status_pipe()
         try:
             assert write_fd > 2, f"status write end landed at {write_fd}"
@@ -1453,8 +1657,9 @@ def test_the_status_pipe_write_end_is_kept_clear_of_the_stdio_range() -> None:
             os.close(read_fd)
             os.close(write_fd)
     finally:
-        os.dup2(spare, 0)
-        os.close(spare)
+        for fd, spare in enumerate(spares):
+            os.dup2(spare, fd)
+            os.close(spare)
 
 
 # --------------------------------------------------------------------------

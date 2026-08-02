@@ -1,6 +1,6 @@
-- **POSIX pty binding residue** (issue #274, deferred from #267) — three
-  defects in `termverify._posix_pty` and the tests that were supposed to
-  hold it. A release-only close of a live child raised a bare
+- **POSIX pty binding residue** (issue #274, deferred from #267) — the
+  issue's three findings against `termverify._posix_pty`, plus what
+  reviewing them turned up in the same code. A release-only close of a live child raised a bare
   `RuntimeError`, the supertype of three of the module's four error types,
   so a handler written for that refusal silently swallowed a closed
   binding, a single-flight violation and an unsupported host;

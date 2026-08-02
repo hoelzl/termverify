@@ -541,6 +541,37 @@ def _wait_until_ready(  # coverage: exclude-windows - POSIX-only helper
     return any(ready == wake for ready, _events in poller.poll())
 
 
+def _abandon_spawned_child(  # coverage: exclude-windows - POSIX-only helper
+    process: subprocess.Popen[bytes],
+) -> None:
+    """End and reap a child whose spawn is being unwound.
+
+    The **group**, not the pid. ``start_new_session=True`` puts the child in
+    a session of its own before the exec, so a subject that already reached
+    ``execv`` and forked has descendants that signalling the pid alone would
+    not reach — and every one of them holds the pty slave, which keeps the
+    master readable and stops the end-of-stream that would otherwise be the
+    only sign anything survived. ``ESRCH`` means the group does not exist
+    yet, which the pid still covers.
+
+    **Best effort, unlike :meth:`PosixPtyChild._terminate_session`.** There
+    the kill *is* the operation and its failure is what the caller needs to
+    learn, so an ``EPERM`` propagates. Here the caller is already unwinding
+    some other failure, and replacing it with this one would report the
+    cleanup instead of the cause. The kill and the reap are suppressed
+    separately: sharing one handler let a refused kill skip the ``wait``
+    and leave a zombie.
+    """
+    if sys.platform == "win32":  # coverage: exclude-posix - POSIX-only path
+        raise AssertionError("the POSIX PTY path is POSIX-only")
+    with _suppress_os_errors():
+        os.killpg(process.pid, FORCED_TERMINATION_SIGNAL)
+    with _suppress_os_errors():
+        process.kill()
+    with suppress(OSError, subprocess.TimeoutExpired):
+        process.wait(timeout=_CHILD_EXIT_WAIT_S)
+
+
 class _suppress_os_errors:  # coverage: exclude-windows - POSIX paths only
     """Context manager: teardown ignores already-gone descriptors."""
 
@@ -611,13 +642,20 @@ class PosixPtyChild:
         Both ends are non-blocking: a close signalling a full wake pipe
         would be a teardown blocking on its own interruption.
         """
-        self._wake_read, self._wake_write = os.pipe()
+        # Bound to locals first. Assigning the tuple straight to the two
+        # attributes puts a bytecode boundary between them, and CPython
+        # checks signals at those — an interrupt landing there would leave
+        # one descriptor open with its attribute still ``-1``, so neither
+        # this handler nor ``spawn``'s could release it. The same width of
+        # window ``_status_pipe`` already reasons about, closed the same way.
+        read_fd, write_fd = os.pipe()
         try:
-            os.set_blocking(self._wake_write, False)
-            os.set_blocking(self._wake_read, False)
+            os.set_blocking(write_fd, False)
+            os.set_blocking(read_fd, False)
             os.set_blocking(self._master_fd, False)
+            self._wake_read, self._wake_write = read_fd, write_fd
         except BaseException:
-            for fd in (self._wake_read, self._wake_write):
+            for fd in (read_fd, write_fd):
                 with _suppress_os_errors():
                     os.close(fd)
             self._wake_read = -1
@@ -722,16 +760,22 @@ class PosixPtyChild:
         try:
             failure = _read_exec_status(status_read)
         except BaseException:
-            # Reachable by a KeyboardInterrupt inside the blocking read.
-            # Every other failure point on this path has a handler; before
-            # the round-2 review this one did not, so a Ctrl-C during a
-            # spawn orphaned the subject on a pty with no binding left to
-            # close it.
-            with _suppress_os_errors():
-                process.kill()
-            with suppress(OSError, subprocess.TimeoutExpired):
-                process.wait(timeout=_CHILD_EXIT_WAIT_S)
-            os.close(master_fd)
+            # Two ways in, and the second is this slice's own doing: a
+            # ``KeyboardInterrupt`` inside the wait, and the ``OSError``
+            # ``_read_exec_status`` now raises when its bound expires
+            # against a child that stalled before its ``execv``. Before the
+            # round-2 review of #267 this path had no handler at all, so a
+            # Ctrl-C during a spawn orphaned the subject on a pty with no
+            # binding left to close it.
+            try:
+                _abandon_spawned_child(process)
+            finally:
+                # In a `finally`, for the reason the adoption handler below
+                # states: a second interrupt during the reap must not be
+                # able to skip the master's release. This is the site that
+                # handler was copied from, and the copy was the stronger of
+                # the two until this review.
+                os.close(master_fd)
             raise
         finally:
             os.close(status_read)
@@ -739,11 +783,10 @@ class PosixPtyChild:
             # The child never became the subject. Reap it and fail the
             # spawn naming the command, instead of handing back a binding
             # whose first read would return a Python traceback.
-            with _suppress_os_errors():
-                process.kill()
-            with suppress(OSError, subprocess.TimeoutExpired):
-                process.wait(timeout=_CHILD_EXIT_WAIT_S)
-            os.close(master_fd)
+            try:
+                _abandon_spawned_child(process)
+            finally:
+                os.close(master_fd)
             raise OSError(
                 f"the subject could not be started: {arguments[0]} ({failure})"
             )
@@ -762,10 +805,12 @@ class PosixPtyChild:
             # reachable case — the same one the status-read handler above
             # exists for, and it was repaired there and not here.
             try:
-                process.kill()
-                process.wait(timeout=_CHILD_EXIT_WAIT_S)
-            except (OSError, subprocess.TimeoutExpired):
-                pass
+                # The shared helper, like the two handlers above: it signals
+                # the group rather than the pid, and suppresses the kill and
+                # the reap separately. Written inline here, one `except`
+                # covered both, so a kill refused with `EPERM` skipped the
+                # `wait` and left a zombie.
+                _abandon_spawned_child(process)
             finally:
                 with _suppress_os_errors():
                     os.close(master_fd)
