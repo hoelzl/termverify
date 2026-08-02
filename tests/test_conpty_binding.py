@@ -393,6 +393,110 @@ def test_final_frame_drains_byte_complete_to_native_end_of_stream() -> None:
     assert child.exit_status == 0
 
 
+#: Issue #279's subject, on the binding that issue predicted would answer it
+#: with a replacement character: five ASCII bytes, then two of the three
+#: bytes of U+20AC EURO SIGN, then exit.
+_TRUNCATED_TAIL_CHILD: Final = """\
+import sys
+
+sys.stdout.buffer.write(b"START")
+sys.stdout.buffer.write(b"\\xe2\\x82")
+sys.stdout.buffer.flush()
+"""
+
+#: The same subject, lingering before it exits. Without this case, "the host
+#: consumes the incomplete sequence" would be indistinguishable from "the host
+#: lost a race with the exit", and only the first is a statement about the
+#: host's decoder.
+_TRUNCATED_TAIL_LINGER_CHILD: Final = """\
+import sys, time
+
+sys.stdout.buffer.write(b"START")
+sys.stdout.buffer.write(b"\\xe2\\x82")
+sys.stdout.buffer.flush()
+time.sleep(1.5)
+"""
+
+#: The same truncation with a byte *after* it, so the console host must
+#: decide rather than keep waiting. The control for the test below.
+_TRUNCATED_MIDSTREAM_CHILD: Final = """\
+import sys
+
+sys.stdout.buffer.write(b"A\\xe2\\x82B")
+sys.stdout.buffer.flush()
+"""
+
+
+def _drain_to_end(script: str) -> tuple[str, BaseException, int | None]:
+    """Run a short-lived subject to end-of-stream; return its rendered text.
+
+    The escapes the console host wraps every session in are stripped, for
+    the reason :data:`_ESCAPE` exists: a character inside an escape sequence
+    is not a character the child wrote.
+    """
+    child = _spawn(script)
+    drain = _Drain(child)
+    try:
+        terminal = drain.wait_for_end()
+    finally:
+        drain.join()
+        child.close(force=True)
+    return _ESCAPE.sub("", drain.text()), terminal, child.exit_status
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+@pytest.mark.parametrize(
+    "script",
+    [_TRUNCATED_TAIL_CHILD, _TRUNCATED_TAIL_LINGER_CHILD],
+    ids=["exits-immediately", "lingers-first"],
+)
+def test_a_truncated_trailing_codepoint_never_reaches_this_binding(
+    script: str,
+) -> None:
+    """Measured for issue #279, which predicted the opposite of this.
+
+    The issue reported that this subject yields ``U+FFFD`` here while the
+    POSIX binding drops it silently, and filed the difference as an
+    evidence divergence between the two bindings. Measured on a real
+    console host, it does not: the host is itself a UTF-8 decoder, it holds
+    the incomplete sequence waiting for a byte that never comes, and the
+    two bytes are gone before this binding sees anything. The lingering
+    variant is what makes that a statement about the host's decoder rather
+    than about a race with the child's exit.
+
+    What that means for the binding's own ``final=True`` flush, which
+    :mod:`tests.test_conpty_decode` pins over a fake native session: it is a
+    property of the *conout pipe*, and no real console host has been
+    observed to end that pipe mid-codepoint. The flush is right for the
+    stream it reads; it is simply not what produces this subject's evidence.
+    """
+    text, terminal, status = _drain_to_end(script)
+    assert isinstance(terminal, ConptyEndOfStreamError)
+    assert text == "START", (
+        f"the console host's rendering of a truncated trailing codepoint is"
+        f" {text!r}, not 'START'. Issue #279's measurement — the host consumes"
+        " the incomplete sequence, so it never reaches this binding — no"
+        " longer holds, and the platform difference recorded in"
+        " _terminal_binding.py was written on it."
+    )
+    assert status == 0
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_a_truncated_codepoint_the_host_can_decide_is_replaced() -> None:
+    """The control: the zero above is the host waiting, not a dead pipeline.
+
+    Give the host a byte that cannot continue the sequence and it resolves
+    the same truncation into ``U+FFFD`` immediately. Without this, the test
+    above would pass just as well against a pipeline that could never carry
+    a replacement character at all.
+    """
+    text, terminal, status = _drain_to_end(_TRUNCATED_MIDSTREAM_CHILD)
+    assert isinstance(terminal, ConptyEndOfStreamError)
+    assert text == "A�B"
+    assert status == 0
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
 def test_forced_close_terminates_child_observed_at_os_level() -> None:
     """Item 2: forced close ends the child, proven by an OS handle wait."""

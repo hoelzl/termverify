@@ -876,6 +876,19 @@ class PosixPtyChild:
         ``_conpty.py`` established at issue #197), so a read landing
         mid-codepoint heals across chunks instead of embedding an
         irreparable ``U+FFFD`` in evidence.
+
+        At a genuine end-of-stream nothing can complete what the decoder is
+        still holding, so those bytes are flushed as replacement text on
+        *this* call and the end-of-stream is raised by the next one — the
+        contract :class:`~termverify._terminal_binding.TerminalEndOfStreamError`
+        states, which this side did not honor before issue #279: whatever the
+        decoder held was discarded, and a subject that exited mid-codepoint
+        left a transcript asserting it produced only the bytes before it.
+
+        A read *interrupted by a close* does not flush, and the asymmetry is
+        the point: a close may have abandoned output the child had already
+        written, so an incomplete tail is not evidence that the subject
+        truncated anything. Only end-of-stream establishes that.
         """
         with self._lock:
             if self._closed:
@@ -889,7 +902,17 @@ class PosixPtyChild:
             fd = self._master_fd
             wake = self._wake_read
         try:
-            return self._decoder.decode(self._read_chunk(fd, wake))
+            try:
+                chunk = self._read_chunk(fd, wake)
+            except PosixPtyEndOfStreamError:
+                # ``final=True`` consumes the decoder's buffer, so the next
+                # read finds nothing to flush and raises instead — the
+                # end-of-stream is deferred by exactly one call, never lost.
+                truncated = self._decoder.decode(b"", final=True)
+                if truncated:
+                    return truncated
+                raise
+            return self._decoder.decode(chunk)
         finally:
             with self._lock:
                 self._read_in_flight = False

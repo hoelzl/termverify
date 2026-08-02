@@ -138,12 +138,24 @@ def test_genuinely_invalid_bytes_still_surface_as_replacement() -> None:
 
 
 def test_truncated_trailing_sequence_is_flushed_before_end_of_stream() -> None:
-    """A child that dies mid-codepoint truly truncated its output; say so.
+    """A conout pipe that ends mid-codepoint truly truncated it; say so.
 
     The incomplete tail is held back while more bytes could still complete it,
     so it surfaces as replacement text on the read that meets end-of-stream —
     and the end-of-stream itself is raised by the read after that, never
     swallowed.
+
+    **Whose truncation this is** was stated wrongly here until issue #279
+    measured it: "a child that dies mid-codepoint". It is the *pipe's*. The
+    fake session above ends the byte stream mid-codepoint directly, which a
+    real console host has not been observed to do — the host decodes the
+    child's output itself and drops an incomplete trailing sequence before
+    it ever reaches the pipe
+    (``tests/test_conpty_binding.py::test_a_truncated_trailing_codepoint_never_reaches_this_binding``).
+    The contract under test is still the right one for a binding that owns a
+    byte stream, and it is the contract the POSIX binding was made to honor
+    in #279 — there the pty decodes nothing, so a child that dies
+    mid-codepoint really does deliver this shape.
     """
     child = _child([_THREE_BYTE.encode("utf-8")[:2]])
     assert child.read() == ""  # the two bytes could still have been completed

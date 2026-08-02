@@ -546,6 +546,83 @@ def test_end_of_stream_is_reported_once_the_child_and_its_slave_are_gone() -> No
         child.close(force=True)
 
 
+#: Exits mid-codepoint: five ASCII bytes and then two of the three bytes of
+#: U+20AC EURO SIGN, which nothing will ever complete. A subject killed
+#: inside a ``write`` leaves the same shape behind — reasoned, not measured
+#: here, and the reasoning is that a partial write puts fewer than all the
+#: bytes of the final codepoint into the pty.
+#:
+#: What does **not** produce this shape, though issue #279 listed it as a
+#: second cause: a pty splitting a subject's final character across reads.
+#: The master reports ``EIO`` only once its buffer is drained *and* the last
+#: slave is gone, so every byte the subject did write is delivered before
+#: end-of-stream and the incremental decoder heals the split. Bytes the
+#: subject never wrote are the only ones that can still be held here.
+_TRUNCATED_TAIL_CHILD = (
+    "import sys\n"
+    "sys.stdout.buffer.write(b'START')\n"
+    "sys.stdout.buffer.write(b'\\xe2\\x82')\n"
+    "sys.stdout.buffer.flush()\n"
+)
+
+#: The control for the test below: the same shape with the codepoint
+#: *complete*, so a flush that invented a replacement would be visible.
+_COMPLETE_TAIL_CHILD = (
+    "import sys\n"
+    "sys.stdout.buffer.write(b'START')\n"
+    "sys.stdout.buffer.write(b'\\xe2\\x82\\xac')\n"
+    "sys.stdout.buffer.flush()\n"
+)
+
+
+@_LINUX_ONLY
+def test_a_truncated_trailing_codepoint_surfaces_rather_than_vanishing() -> None:
+    """Bytes the binding received must not leave the evidence unmarked.
+
+    A pty is a byte conduit with no decoder in it, so the subject's
+    unfinished sequence arrives here verbatim and the incremental decoder
+    holds it — correctly, while more bytes could still complete it. At
+    end-of-stream nothing can, and issue #279 measured what happened next:
+    the two bytes were discarded and the transcript asserted the subject
+    produced ``START`` and nothing more, which is false.
+
+    They are flushed as replacement text on the read that meets
+    end-of-stream, and the end-of-stream is raised by the read after that —
+    the contract ``TerminalEndOfStreamError`` states and the ConPTY binding
+    already honored.
+    """
+    child = _spawn(_TRUNCATED_TAIL_CHILD)
+    try:
+        collected = _read_until(child, "START")
+        with pytest.raises(PosixPtyEndOfStreamError):
+            for _ in range(100):
+                collected += child.read()
+        assert collected == "START�"
+        assert child.exit_status == 0
+    finally:
+        child.close(force=True)
+
+
+@_LINUX_ONLY
+def test_a_complete_trailing_codepoint_gains_no_replacement() -> None:
+    """The flush must report a truncation, never manufacture one.
+
+    Without this, a flush that returned ``U+FFFD`` unconditionally would
+    pass the test above while corrupting every run that ended on a
+    multibyte character.
+    """
+    child = _spawn(_COMPLETE_TAIL_CHILD)
+    try:
+        collected = _read_until(child, "START")
+        with pytest.raises(PosixPtyEndOfStreamError):
+            for _ in range(100):
+                collected += child.read()
+        assert collected == "START€"
+        assert child.exit_status == 0
+    finally:
+        child.close(force=True)
+
+
 # --------------------------------------------------------------------------
 # Geometry
 # --------------------------------------------------------------------------
@@ -722,6 +799,76 @@ def test_a_blocked_read_is_woken_by_a_forced_close() -> None:
         f" {_posix_pty._IO_DELIVERY_WAIT_S}s delivery wait, so what freed it was the"
         f" teardown giving up and closing the pipe, not the wake byte"
     )
+
+
+@_LINUX_ONLY
+def test_a_close_does_not_flush_the_decoder_the_way_end_of_stream_does() -> None:
+    """The asymmetry the end-of-stream flush is only correct because of.
+
+    A truncated tail is evidence that the subject left a sequence
+    unfinished — but only when the stream *ended*. A close may have
+    abandoned output the child had already written, so the same held bytes
+    establish nothing, and turning them into a ``U+FFFD`` would put a
+    character into a transcript on the strength of a teardown.
+
+    Nothing in the suite forbade it: widening ``read``'s handler from
+    :class:`PosixPtyEndOfStreamError` to its supertype, or to
+    :class:`PosixPtyClosedError` alongside it, leaves every other test green
+    because their decoders are empty when the close lands. So this one
+    **proves its own precondition** before asserting anything — the parked
+    tail is read back out of the decoder rather than assumed to be there —
+    and then repeats the blocked-read arrangement above.
+    """
+    child = _spawn(
+        "import sys\n"
+        "sys.stdout.buffer.write(b'START')\n"
+        "sys.stdout.buffer.write(b'\\xe2\\x82')\n"
+        "sys.stdout.buffer.flush()\n"
+        "sys.stdin.readline()\n"
+    )
+    try:
+        _read_until(child, "START")
+        deadline = time.monotonic() + _TIMEOUT_S
+        while child._decoder.getstate()[0] != b"\xe2\x82":
+            assert _readable_within(child, deadline - time.monotonic()), (
+                "the truncated tail never reached the decoder, so this test"
+                " would have proven nothing about flushing it"
+            )
+            assert child.read() == "", "the tail decoded to text of its own"
+        # The precondition, stated as an assertion rather than as a hope.
+        assert child._decoder.getstate()[0] == b"\xe2\x82"
+
+        returned: list[str] = []
+        failures: list[BaseException] = []
+        woken = threading.Event()
+
+        def blocked_read() -> None:
+            try:
+                returned.append(child.read())
+            except BaseException as error:  # noqa: BLE001 - recorded for the assert
+                failures.append(error)
+            finally:
+                woken.set()
+
+        reader = threading.Thread(target=blocked_read, daemon=True)
+        reader.start()
+        deadline = time.monotonic() + _TIMEOUT_S
+        while not child._read_in_flight:
+            assert time.monotonic() < deadline, "the reader never reached the read"
+            time.sleep(0.01)
+        child.close(force=True)
+        assert woken.wait(_TIMEOUT_S), "the blocked read was never woken"
+        assert not returned, (
+            f"a close flushed the decoder and returned {returned[0]!r} as though"
+            " the subject had truncated its own output"
+        )
+        assert failures and isinstance(failures[0], PosixPtyClosedError)
+        assert "closed during a read" in str(failures[0]), (
+            f"the read was rejected before it began, so the flush path this"
+            f" test is named for was never reached: {failures[0]!r}"
+        )
+    finally:
+        child.close(force=True)
 
 
 @_LINUX_ONLY

@@ -82,6 +82,30 @@ third binding would be written against, and "close(force=False) on a live
 child" is exactly the kind of question its author would otherwise have to
 answer by reading two implementations.
 
+**A third, and it is not one the bindings choose.** Both honour the
+end-of-stream flush stated at :class:`TerminalEndOfStreamError`; what differs
+is what reaches them to be flushed. A pty decodes nothing, so a subject that
+exits mid-codepoint hands its unfinished bytes to the POSIX binding, which
+surfaces them as ``U+FFFD``. The Windows console host is itself a UTF-8
+decoder, so the same subject's unfinished bytes are consumed and discarded
+before the ConPTY binding sees anything at all. The transcripts differ: POSIX
+records a replacement character where ConPTY records nothing. Nothing false is
+recorded either way — each binding reports every byte it received, and the
+ConPTY binding cannot report bytes the host destroyed upstream of it.
+
+Issue #279 predicted this divergence with the platforms the other way round —
+ConPTY surfacing the replacement, POSIX dropping it — and filed the fix as a
+way to *close* a gap. Measured on both hosts, the prediction was false and the
+bindings agreed: they lost the same two bytes for different reasons. Closing
+the POSIX side's loss is therefore what *opened* this divergence, deliberately.
+The alternative was parity bought by continuing to discard evidence one side
+actually has, which is the wrong direction for a project whose thesis is that
+a transcript states only what was observed. Pinned on each side by
+``test_a_truncated_trailing_codepoint_surfaces_rather_than_vanishing`` and
+``test_a_truncated_trailing_codepoint_never_reaches_this_binding``, so a
+console host that changes its mind fails a test rather than silently
+re-converging the two.
+
 These names are private on purpose. They are the *binding author's* contract,
 not the harness caller's: nothing a host writes against
 ``termverify.terminal`` needs them, so exporting them would widen the public
@@ -141,6 +165,29 @@ class TerminalEndOfStreamError(Exception):
 
     Raised only while the binding is open; a read interrupted by ``close``
     raises :class:`TerminalClosedError` instead.
+
+    **The decoder is flushed before this is raised.** A binding decodes the
+    bytes it receives, so at end of stream it may still hold an incomplete
+    sequence that nothing can now complete. Those bytes are returned as
+    replacement text by the read that *meets* end of stream, and this error
+    is raised by the read after it — deferred by exactly one call, never
+    delivered alongside text and never dropped.
+
+    The asymmetry with ``close`` is the reason the flush is honest. At end of
+    stream an incomplete tail is evidence that the stream really did end
+    mid-sequence; after a close it is evidence of nothing, because the close
+    may have abandoned output the child had already written. So a read
+    interrupted by a close raises :class:`TerminalClosedError` with the
+    decoder untouched. Whether "the stream ended mid-sequence" also means
+    "the *subject* truncated its output" is a question about what sits
+    between the subject and the binding, and the two platforms answer it
+    differently — see the module docstring.
+
+    Both shipped bindings owe this, and one did not pay it until issue #279:
+    the POSIX binding discarded whatever the decoder held, so a subject that
+    exited mid-codepoint left a transcript asserting it produced only the
+    bytes before it. What the two platforms then put *in front of* that
+    contract still differs, which the module docstring records.
     """
 
 
