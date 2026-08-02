@@ -69,6 +69,19 @@ but a POSIX binding that raised this kind for its own out-of-range refusals
 would close the gap, and that is a binding-side change belonging with the
 adapter-level POSIX evidence in #269, not to this refactor.
 
+A second divergence, latent rather than observable, sits on ``close``. A
+release-only close (``force=False``) of a *live* child is permitted by the
+ConPTY binding, where releasing the pseudoconsole handle makes the OS
+terminate the attached client, and refused by the POSIX binding with
+``PosixPtyLiveChildError``, because closing a pty master hangs up the
+terminal and guarantees nothing about a child that ignores ``SIGHUP``. Both
+answers are truthful about their own platform and neither is a failure kind
+the adapter classifies: it closes with ``force=True`` on every path, so no
+run reaches either. Recorded here because the port's contract is what a
+third binding would be written against, and "close(force=False) on a live
+child" is exactly the kind of question its author would otherwise have to
+answer by reading two implementations.
+
 These names are private on purpose. They are the *binding author's* contract,
 not the harness caller's: nothing a host writes against
 ``termverify.terminal`` needs them, so exporting them would widen the public

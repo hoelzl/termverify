@@ -84,6 +84,7 @@ import struct
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from typing import Final
@@ -110,6 +111,7 @@ __all__ = [
     "PosixPtyClosedError",
     "PosixPtyConcurrentIOError",
     "PosixPtyEndOfStreamError",
+    "PosixPtyLiveChildError",
     "PosixPtyUnsupportedError",
     "is_supported",
     "set_terminal_flags",
@@ -129,7 +131,33 @@ _CHILD_EXIT_WAIT_S: Final = 30.0
 #: a close has unblocked the syscall.
 _IO_DELIVERY_WAIT_S: Final = 5.0
 
+#: Bounded wait for the trampoline to report its exec status. Covers a fresh
+#: interpreter starting on a loaded host by orders of magnitude, because a
+#: budget that can fire on a slow machine would fail spawns that were going
+#: to work — a worse defect than the hang it replaces.
+_EXEC_STATUS_WAIT_S: Final = 60.0
+
 _READ_CHUNK_BYTES: Final = 65536
+
+#: ``IUTF8``, supplied rather than imported. ``termios.IUTF8`` arrives in
+#: **Python 3.13**; on the 3.12 this project still supports the constant does
+#: not exist, and reading it defensively meant the flag was silently *off*
+#: there — so the same subject on the same kernel erased a multibyte
+#: character one way under 3.12 and another under 3.13, a determinism input
+#: varying by interpreter rather than by platform. Supplying it makes the
+#: line discipline identical on every supported interpreter.
+#:
+#: The value is the one Linux's ``asm-generic/termbits.h`` defines, which is
+#: what every architecture this project's CI runs on uses. That assumption is
+#: checked wherever it can be, and where that is deserves stating precisely:
+#: :func:`test_the_supplied_iutf8_constant_matches_the_interpreters_own`
+#: compares it against ``termios.IUTF8``, so it needs both a Linux host and
+#: an interpreter that has the constant — **two of the six matrix legs**
+#: (Ubuntu on 3.13 and 3.14), which is two of the three that can run this
+#: binding at all. An architecture whose termios bits differ from the generic
+#: ones fails there rather than silently naming the wrong bit; on 3.12,
+#: nothing checks it, and 3.12 is the whole reason this constant exists.
+_IUTF8: Final = 0x4000
 
 #: The trampoline. It runs in a fresh interpreter that has just been
 #: ``exec``'d, so it is single-threaded by construction and none of the
@@ -202,6 +230,36 @@ class PosixPtyConcurrentIOError(TerminalConcurrentIOError):
     """
 
 
+class PosixPtyLiveChildError(RuntimeError):
+    """Raised when a release-only close would abandon a live child.
+
+    Its own type because the alternatives are all wrong in the same
+    direction. A bare ``RuntimeError`` — what this path raised before — is
+    the *supertype* of three of this module's four other error types
+    (:class:`PosixPtyUnsupportedError`, :class:`PosixPtyClosedError` and
+    :class:`PosixPtyConcurrentIOError`; the fourth,
+    :class:`PosixPtyEndOfStreamError`, is defined below and derives from
+    ``Exception``). So ``except RuntimeError`` written for this refusal
+    silently swallowed a closed binding, a single-flight violation and an
+    unsupported host as well; and
+    :class:`PosixPtyClosedError` would mean the opposite of what happened,
+    since the binding is still open and the child still running.
+
+    Deliberately **not** one of the neutral kinds in
+    ``_terminal_binding.py``, because there is nothing neutral to name: the
+    ConPTY binding permits a release-only close of a live child, where
+    releasing the pseudoconsole handle makes the OS terminate the attached
+    client, so the two bindings answer this call differently and the
+    difference is real rather than an oversight. Closing a pty master
+    hangs up the terminal but guarantees nothing about a child that ignores
+    ``SIGHUP``, which is why this side refuses instead. The adapter never
+    reaches either answer — it closes with ``force=True`` on every path —
+    so the divergence is latent, and it is recorded in
+    ``_terminal_binding.py`` beside the other one the two bindings do not
+    give equally.
+    """
+
+
 class PosixPtyEndOfStreamError(TerminalEndOfStreamError):
     """Raised by ``read`` when the pseudoterminal reports end-of-stream.
 
@@ -254,6 +312,11 @@ def set_terminal_flags(  # coverage: exclude-windows - POSIX-only helper
     that a configuration doing nothing at all is distinguishable from one
     that works. Without it the flags a fresh pty already carries make the
     contract untestable.
+
+    **No production code calls this**, and that is the point rather than an
+    oversight — it is in ``__all__`` because it is part of what this module
+    offers the package, and what it offers here is the ability to measure
+    the binding rather than take its word.
     """
     if sys.platform == "win32":  # coverage: exclude-posix - POSIX-only path
         raise AssertionError("the POSIX PTY path is POSIX-only")
@@ -281,8 +344,12 @@ def _configure_line_discipline(fd: int) -> None:  # coverage: exclude-windows
       serial line — parity, stop bits, baud — and a pseudoterminal has no
       wire for them to describe. Nothing in them reaches evidence.
 
-    Two choices here are deliberate and cost something, so they are named
-    rather than left to be discovered:
+    Every choice that deviates from the conventional terminal is named
+    here, and
+    :func:`test_the_configured_discipline_deviates_from_the_default_only_as_stated`
+    fails if this list stops being exhaustive — it diffs the configured
+    words against what the running kernel hands a fresh pty and reports any
+    flag this docstring does not mention. There are four:
 
     - ``IXON`` is **off**. Software flow control would let a harness write
       of ``0x13`` suspend the subject's output until ``0x11`` arrived —
@@ -290,21 +357,44 @@ def _configure_line_discipline(fd: int) -> None:  # coverage: exclude-windows
       determinism input.
     - ``ECHOCTL`` and ``IEXTEN`` are **off**, so no byte the harness writes
       is echoed back in an expanded form the subject never produced.
+    - ``IUTF8`` is **on**, so erasing a multibyte character erases the
+      character rather than one of its bytes. It is a deviation on kernels
+      that do not default it on, which is why it is named here rather than
+      only at the assignment. The value is supplied by :data:`_IUTF8` rather
+      than read from ``termios``, so that this holds on Python 3.12 too —
+      the constant is not there before 3.13, and reading it defensively
+      turned the flag off on one third of the supported matrix.
 
     ``ECHO`` and ``ICANON`` stay **on**, per the module docstring's
-    faithfulness argument — with the consequence recorded there.
+    faithfulness argument — with the consequence recorded there. So do the
+    editing echoes ``ECHOE``, ``ECHOK`` and ``ECHOKE``, and that is a
+    correction: ``ECHOE`` was on while ``ECHOK`` and ``ECHOKE`` were off,
+    which no argument supports. This function installs ``^U`` as
+    ``cc[VKILL]`` itself, so with those two off a harness-written kill
+    erased the line and echoed nothing back, where the terminal a person
+    drives shows the erasure — a difference in transcript bytes produced by
+    a choice nobody had made on purpose. The three travel together now.
     """
     if sys.platform == "win32":  # coverage: exclude-posix - POSIX-only path
         raise AssertionError("the POSIX PTY path is POSIX-only")
     import termios
 
     _, _, cflag, _, ispeed, ospeed, cc = termios.tcgetattr(fd)
-    # IUTF8 governs how a multibyte character erases and is Linux-specific;
-    # typeshed does not declare it, so it is read defensively rather than
-    # named directly.
-    iflag = termios.ICRNL | getattr(termios, "IUTF8", 0)
+    # IUTF8 governs how a multibyte character erases and is Linux-specific.
+    # Supplied by this module rather than read from `termios`, because the
+    # constant does not exist before Python 3.13 — see :data:`_IUTF8`. The
+    # comment this replaces called that a typing workaround; it was a
+    # runtime one, and reading it defensively left the flag off on 3.12.
+    iflag = termios.ICRNL | _IUTF8
     oflag = termios.OPOST | termios.ONLCR
-    lflag = termios.ISIG | termios.ICANON | termios.ECHO | termios.ECHOE
+    lflag = (
+        termios.ISIG
+        | termios.ICANON
+        | termios.ECHO
+        | termios.ECHOE
+        | termios.ECHOK
+        | termios.ECHOKE
+    )
     control = list(cc)
     for name, value in (
         ("VINTR", 3),  # ^C
@@ -382,17 +472,43 @@ def _status_pipe() -> tuple[int, int]:  # coverage: exclude-windows - POSIX-only
 
 
 def _read_exec_status(  # coverage: exclude-windows - POSIX-only helper
-    status_read: int,
+    status_read: int, *, timeout: float = _EXEC_STATUS_WAIT_S
 ) -> str | None:
     """Return the trampoline's failure text, or ``None`` if it exec'd.
 
-    Blocks until the write end is gone, which the exec itself does: the
+    Waits until the write end is gone, which the exec itself does: the
     trampoline marks it close-on-exec, so end-of-file *is* the success
-    signal. The wait is bounded by the trampoline's own length — an
-    ``ioctl`` and an ``execv`` — not by anything the subject does.
+    signal. What that costs is a fresh interpreter starting — the price
+    :data:`_TRAMPOLINE` documents — and then an ``ioctl`` and an ``execv``;
+    nothing the subject does is in the wait, because the subject does not
+    exist until the ``execv`` that ends it.
+
+    Bounded anyway. Every other wait in this module is either bounded or
+    escapable through the wake pipe, and this one is neither: no binding
+    exists yet, so there is nothing to signal it. Nothing but the child
+    holds that write end, so a child that stalls *before* its exec — a host
+    too loaded to finish starting an interpreter, a process stopped by a
+    signal — would otherwise hang the spawn with no diagnostic. The budget
+    is generous by orders of magnitude against an interpreter startup,
+    because a timeout that can fire on a slow machine would be a worse
+    defect than the hang.
     """
+    if sys.platform == "win32":  # coverage: exclude-posix - POSIX-only path
+        raise AssertionError("the POSIX PTY path is POSIX-only")
     chunks: list[bytes] = []
+    deadline = time.monotonic() + timeout
+    poller = select.poll()
+    poller.register(status_read, select.POLLIN)
     while True:
+        remaining = deadline - time.monotonic()
+        # A non-positive budget must never reach `poll`, which reads a
+        # negative timeout as "wait forever" — spending the bound and then
+        # discarding it.
+        if remaining <= 0 or not poller.poll(remaining * 1000):
+            raise OSError(
+                "the subject's exec status did not arrive within"
+                f" {timeout:g}s; the child stalled before its exec"
+            )
         chunk = os.read(status_read, 512)
         if not chunk:
             break
@@ -425,6 +541,41 @@ def _wait_until_ready(  # coverage: exclude-windows - POSIX-only helper
     return any(ready == wake for ready, _events in poller.poll())
 
 
+def _abandon_spawned_child(  # coverage: exclude-windows - POSIX-only helper
+    process: subprocess.Popen[bytes],
+) -> None:
+    """End and reap a child whose spawn is being unwound.
+
+    The **group**, not the pid. ``start_new_session=True`` puts the child in
+    a session of its own before the exec, so a subject that already reached
+    ``execv`` and forked has descendants that signalling the pid alone would
+    not reach — and every one of them holds the pty slave open, which is
+    what *stops* the master reporting the hangup. The end-of-stream that
+    would otherwise be the only sign anything survived arrives when the last
+    slave closes, so a survivor suppresses exactly the evidence of itself.
+    ``ESRCH`` from ``killpg`` means there is no such group — the child has
+    not reached its ``setsid`` yet, or is already gone — and the pid covers
+    both, so the second signal is sent unconditionally rather than behind a
+    test for it.
+
+    **Best effort, unlike :meth:`PosixPtyChild._terminate_session`.** There
+    the kill *is* the operation and its failure is what the caller needs to
+    learn, so an ``EPERM`` propagates. Here the caller is already unwinding
+    some other failure, and replacing it with this one would report the
+    cleanup instead of the cause. The kill and the reap are suppressed
+    separately: sharing one handler let a refused kill skip the ``wait``
+    and leave a zombie.
+    """
+    if sys.platform == "win32":  # coverage: exclude-posix - POSIX-only path
+        raise AssertionError("the POSIX PTY path is POSIX-only")
+    with _suppress_os_errors():
+        os.killpg(process.pid, FORCED_TERMINATION_SIGNAL)
+    with _suppress_os_errors():
+        process.kill()
+    with suppress(OSError, subprocess.TimeoutExpired):
+        process.wait(timeout=_CHILD_EXIT_WAIT_S)
+
+
 class _suppress_os_errors:  # coverage: exclude-windows - POSIX paths only
     """Context manager: teardown ignores already-gone descriptors."""
 
@@ -449,7 +600,11 @@ class PosixPtyChild:
     def __init__(  # coverage: exclude-windows - reachable only via spawn
         self, process: subprocess.Popen[bytes], master_fd: int
     ) -> None:
-        self._process: subprocess.Popen[bytes] | None = process
+        # Not optional: nothing ever clears it, and typing it as though
+        # something might made five branches permanently unreachable in a
+        # module that deliberately joined the coverage ratchet. A binding
+        # exists only for a process that was spawned.
+        self._process: subprocess.Popen[bytes] = process
         self._pid = process.pid
         self._master_fd = master_fd
         self._lock = threading.Lock()
@@ -481,17 +636,43 @@ class PosixPtyChild:
 
         The wake pipe comes before any state the caller can observe, so a
         failure here leaves nothing half-built for the caller to unwind.
-        It is not the only fallible call — ``os.set_blocking`` can raise
-        too, and would strand the pipe — which is why ``spawn``'s handler
-        releases what it can rather than assuming a single failure point.
+        ``os.pipe`` is not the only fallible call: ``os.set_blocking`` can
+        raise too, and ``spawn``'s handler releases the *master* only — so
+        this method releases what this method opened, and the two together
+        leave no descriptor behind. The master is deliberately not closed
+        here; it is the caller's, and closing it from both places is how a
+        descriptor number gets freed twice.
 
         Both ends are non-blocking: a close signalling a full wake pipe
         would be a teardown blocking on its own interruption.
         """
-        self._wake_read, self._wake_write = os.pipe()
-        os.set_blocking(self._wake_write, False)
-        os.set_blocking(self._wake_read, False)
-        os.set_blocking(self._master_fd, False)
+        # Bound to locals, published once everything has succeeded — so the
+        # attributes are either both set or both ``-1``, and the handler
+        # below has exactly one shape to unwind.
+        #
+        # Not for the reason first given here, which was measured false and
+        # is recorded because the measurement is the useful part: assigning
+        # the tuple straight to the attributes does compile to two adjacent
+        # ``STORE_ATTR``s, but CPython does **not** check for signals
+        # between them. The eval breaker runs at ``RESUME`` and backward
+        # jumps, not at every bytecode boundary, so a ``KeyboardInterrupt``
+        # cannot land mid-pair in straight-line code — ~20,000 interrupts
+        # delivered at 1 ms into exactly that store pair produced zero
+        # half-assigned observations on 3.12 and 3.13 alike. The window this
+        # comment used to claim does not exist.
+        read_fd, write_fd = os.pipe()
+        try:
+            os.set_blocking(write_fd, False)
+            os.set_blocking(read_fd, False)
+            os.set_blocking(self._master_fd, False)
+            self._wake_read, self._wake_write = read_fd, write_fd
+        except BaseException:
+            for fd in (read_fd, write_fd):
+                with _suppress_os_errors():
+                    os.close(fd)
+            self._wake_read = -1
+            self._wake_write = -1
+            raise
 
     @classmethod
     def spawn(
@@ -591,16 +772,22 @@ class PosixPtyChild:
         try:
             failure = _read_exec_status(status_read)
         except BaseException:
-            # Reachable by a KeyboardInterrupt inside the blocking read.
-            # Every other failure point on this path has a handler; before
-            # the round-2 review this one did not, so a Ctrl-C during a
-            # spawn orphaned the subject on a pty with no binding left to
-            # close it.
-            with _suppress_os_errors():
-                process.kill()
-            with suppress(OSError, subprocess.TimeoutExpired):
-                process.wait(timeout=_CHILD_EXIT_WAIT_S)
-            os.close(master_fd)
+            # Two ways in, and the second is this slice's own doing: a
+            # ``KeyboardInterrupt`` inside the wait, and the ``OSError``
+            # ``_read_exec_status`` now raises when its bound expires
+            # against a child that stalled before its ``execv``. Before the
+            # round-2 review of #267 this path had no handler at all, so a
+            # Ctrl-C during a spawn orphaned the subject on a pty with no
+            # binding left to close it.
+            try:
+                _abandon_spawned_child(process)
+            finally:
+                # In a `finally`, for the reason the adoption handler below
+                # states: a second interrupt during the reap must not be
+                # able to skip the master's release. This is the site that
+                # handler was copied from, and the copy was the stronger of
+                # the two until this review.
+                os.close(master_fd)
             raise
         finally:
             os.close(status_read)
@@ -608,28 +795,47 @@ class PosixPtyChild:
             # The child never became the subject. Reap it and fail the
             # spawn naming the command, instead of handing back a binding
             # whose first read would return a Python traceback.
-            with _suppress_os_errors():
-                process.kill()
-            with suppress(OSError, subprocess.TimeoutExpired):
-                process.wait(timeout=_CHILD_EXIT_WAIT_S)
-            os.close(master_fd)
+            try:
+                _abandon_spawned_child(process)
+            finally:
+                os.close(master_fd)
             raise OSError(
                 f"the subject could not be started: {arguments[0]} ({failure})"
             )
         try:
             return cls(process, master_fd)
-        except OSError as error:
-            # Construction calls `os.pipe`, which fails on EMFILE/ENFILE.
-            # Fail closed rather than leaking a live child and the master:
-            # no child outlives a failed spawn.
+        except BaseException as error:
+            # Construction calls `os.pipe` and `os.set_blocking`, which fail
+            # on EMFILE/ENFILE. Fail closed rather than leaking a live child
+            # and the master. What that delivers, stated at its real
+            # strength: no child *this process can signal* outlives a failed
+            # spawn. `_abandon_spawned_child` suppresses the kill's own
+            # failures, so a subject that changed uid and refuses `EPERM`
+            # survives — the case `_terminate_session` deliberately
+            # propagates, and the one place these paths cannot, because the
+            # caller is already unwinding a different failure.
+            #
+            # `BaseException`, not `OSError`, and the difference is a real
+            # defect this caught: adoption releases its *own* wake pipe on
+            # any exception, so an `OSError` narrowing here left the master
+            # and a live session-leader child to whatever raised. A
+            # `KeyboardInterrupt` between the spawn and the adoption is the
+            # reachable case — the same one the status-read handler above
+            # exists for, and it was repaired there and not here.
             try:
-                process.kill()
-                process.wait(timeout=_CHILD_EXIT_WAIT_S)
-            except (OSError, subprocess.TimeoutExpired):
-                pass
+                # The shared helper, like the two handlers above: it signals
+                # the group rather than the pid, and suppresses the kill and
+                # the reap separately. Written inline here, one `except`
+                # covered both, so a kill refused with `EPERM` skipped the
+                # `wait` and left a zombie.
+                _abandon_spawned_child(process)
             finally:
                 with _suppress_os_errors():
                     os.close(master_fd)
+            if not isinstance(error, OSError):
+                # A Ctrl-C stays a Ctrl-C. Only a descriptor failure is
+                # re-dressed as the spawn failure that names the child.
+                raise
             raise OSError(
                 f"failed to adopt the pty descriptors for child {process.pid}"
             ) from error
@@ -651,8 +857,6 @@ class PosixPtyChild:
             if self._exit_status is not None:
                 return self._exit_status
             process = self._process
-        if process is None:
-            return None
         status = process.poll()
         if status is None:
             return None
@@ -663,7 +867,7 @@ class PosixPtyChild:
     def is_alive(self) -> bool:  # coverage: exclude-windows
         with self._lock:
             process = self._process
-        return process is not None and process.poll() is None
+        return process.poll() is None
 
     def read(self) -> str:  # coverage: exclude-windows - POSIX-only leg
         """Read one decoded chunk of subject output.
@@ -779,10 +983,14 @@ class PosixPtyChild:
         unrelated file. Trading a hang for silent corruption is strictly
         worse than the hang.
 
-        Failure modes, stated because the layer above classifies them:
-        :class:`PosixPtyClosedError` when the binding is closed or a close
-        interrupts the write; :class:`PosixPtyConcurrentIOError` for a
-        violated single-flight contract; and a bare ``OSError`` with
+        Failure modes, stated because the layer above classifies them, in
+        the order they fire: ``TypeError`` for a non-``str`` payload, which
+        is checked before anything is locked or encoded because a caller
+        handing bytes to a text port has a defect no amount of terminal
+        state can explain; :class:`PosixPtyClosedError` when the binding is
+        closed or a close interrupts the write;
+        :class:`PosixPtyConcurrentIOError` for a violated single-flight
+        contract; and a bare ``OSError`` with
         ``errno.EIO`` when the subject is gone — a master whose last slave
         has closed reports that rather than a broken pipe. The binding does
         not translate ``EIO`` here into an end-of-stream signal: on the read
@@ -848,28 +1056,35 @@ class PosixPtyChild:
         Ordering is the invariant ``_jsonl_pipe.py`` records and pays for:
         **signal the wake-up before terminating anything or touching any
         descriptor.** A blocked read or write is woken first, its delivery
-        is waited for, and only then does the master descriptor go — so no
-        syscall is ever left holding a descriptor number this method has
-        already freed.
+        is waited for, and only then does the master descriptor go.
+
+        That ordering is what stops a syscall being left holding a
+        descriptor number this method has already freed — within the bound
+        it can enforce, which is stated rather than implied: each delivery
+        wait is capped at :data:`_IO_DELIVERY_WAIT_S`, and the release runs
+        when it expires. A read or write still inside the kernel after five
+        seconds of having been woken is not something a teardown can wait
+        out without becoming the hang it exists to prevent, so the trade is
+        made deliberately and in one direction only. What such a call
+        observes is a closed wake pipe, which
+        :meth:`_interrupted_by_close` reads as "a close reached this read".
         """
-        process: subprocess.Popen[bytes] | None = None
-        wake = -1
         with self._lock:
             already_closed = self._closed
+            process = self._process
+            wake = self._wake_write
             if not already_closed:
-                process = self._process
                 # Liveness is decided inline rather than through
                 # `is_alive`: the lock is not reentrant, and calling a
                 # method that takes it from inside the critical section
                 # would deadlock the teardown this method exists to
                 # guarantee.
-                if not force and process is not None and process.poll() is None:
-                    raise RuntimeError(
+                if not force and process.poll() is None:
+                    raise PosixPtyLiveChildError(
                         "a release-only close of a live pty child would abandon"
                         " it; use force=True"
                     )
                 self._closed = True
-                wake = self._wake_write
         if already_closed:
             # Another thread owns this teardown, or one already finished.
             # Wait for it rather than returning into a half-closed binding
@@ -889,15 +1104,13 @@ class PosixPtyChild:
             return
         failure: BaseException | None = None
         try:
-            if wake >= 0:
-                with _suppress_os_errors():
-                    os.write(wake, b"\x00")
+            with _suppress_os_errors():
+                os.write(wake, b"\x00")
             self._interrupted_read.wait(_IO_DELIVERY_WAIT_S)
             self._interrupted_write.wait(_IO_DELIVERY_WAIT_S)
-            if process is not None:
-                if force:
-                    self._terminate_session(process)
-                self._capture_exit_status_after_close(process)
+            if force:
+                self._terminate_session(process)
+            self._capture_exit_status_after_close(process)
         except BaseException as error:
             # Recorded so the *other* callers of close learn it too. A
             # teardown that failed to kill anything must not read as a
@@ -986,8 +1199,6 @@ class PosixPtyChild:
             if self._exit_status is not None:
                 return
             process = self._process
-        if process is None:
-            return
         try:
             status = int(process.wait(timeout=_CHILD_EXIT_WAIT_S))
         except subprocess.TimeoutExpired:
@@ -1001,9 +1212,12 @@ class PosixPtyChild:
         self._master_fd = -1
         # The wake pipe goes last: an I/O call woken by it may still be
         # unwinding, and this method has already waited for that delivery.
+        # No `fd >= 0` guard: only the leader reaches this, exactly once,
+        # and `_adopt_wake_pipe` either produced both descriptors or raised
+        # before any caller could hold the binding. An already-gone
+        # descriptor is what `_suppress_os_errors` is for.
         for fd in (self._wake_read, self._wake_write):
-            if fd >= 0:
-                with _suppress_os_errors():
-                    os.close(fd)
+            with _suppress_os_errors():
+                os.close(fd)
         self._wake_read = -1
         self._wake_write = -1
