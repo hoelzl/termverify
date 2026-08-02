@@ -149,12 +149,14 @@ _READ_CHUNK_BYTES: Final = 65536
 #:
 #: The value is the one Linux's ``asm-generic/termbits.h`` defines, which is
 #: what every architecture this project's CI runs on uses. That assumption is
-#: checked wherever it can be:
+#: checked wherever it can be, and where that is deserves stating precisely:
 #: :func:`test_the_supplied_iutf8_constant_matches_the_interpreters_own`
-#: compares it against ``termios.IUTF8`` on 3.13 and 3.14, both operating
-#: systems — so an architecture whose termios bits differ from the generic
-#: ones fails there rather than silently naming the wrong bit. It cannot be
-#: checked on 3.12, which is the whole reason this constant exists.
+#: compares it against ``termios.IUTF8``, so it needs both a Linux host and
+#: an interpreter that has the constant — **two of the six matrix legs**
+#: (Ubuntu on 3.13 and 3.14), which is two of the three that can run this
+#: binding at all. An architecture whose termios bits differ from the generic
+#: ones fails there rather than silently naming the wrong bit; on 3.12,
+#: nothing checks it, and 3.12 is the whole reason this constant exists.
 _IUTF8: Final = 0x4000
 
 #: The trampoline. It runs in a fresh interpreter that has just been
@@ -233,9 +235,13 @@ class PosixPtyLiveChildError(RuntimeError):
 
     Its own type because the alternatives are all wrong in the same
     direction. A bare ``RuntimeError`` — what this path raised before — is
-    the *supertype* of three of the four kinds above, so ``except
-    RuntimeError`` written for this refusal silently swallowed a closed
-    binding, a single-flight violation and an unsupported host as well; and
+    the *supertype* of three of this module's four other error types
+    (:class:`PosixPtyUnsupportedError`, :class:`PosixPtyClosedError` and
+    :class:`PosixPtyConcurrentIOError`; the fourth,
+    :class:`PosixPtyEndOfStreamError`, is defined below and derives from
+    ``Exception``). So ``except RuntimeError`` written for this refusal
+    silently swallowed a closed binding, a single-flight violation and an
+    unsupported host as well; and
     :class:`PosixPtyClosedError` would mean the opposite of what happened,
     since the binding is still open and the child still running.
 
@@ -743,10 +749,18 @@ class PosixPtyChild:
             )
         try:
             return cls(process, master_fd)
-        except OSError as error:
-            # Construction calls `os.pipe`, which fails on EMFILE/ENFILE.
-            # Fail closed rather than leaking a live child and the master:
-            # no child outlives a failed spawn.
+        except BaseException as error:
+            # Construction calls `os.pipe` and `os.set_blocking`, which fail
+            # on EMFILE/ENFILE. Fail closed rather than leaking a live child
+            # and the master: no child outlives a failed spawn.
+            #
+            # `BaseException`, not `OSError`, and the difference is a real
+            # defect this caught: adoption releases its *own* wake pipe on
+            # any exception, so an `OSError` narrowing here left the master
+            # and a live session-leader child to whatever raised. A
+            # `KeyboardInterrupt` between the spawn and the adoption is the
+            # reachable case — the same one the status-read handler above
+            # exists for, and it was repaired there and not here.
             try:
                 process.kill()
                 process.wait(timeout=_CHILD_EXIT_WAIT_S)
@@ -755,6 +769,10 @@ class PosixPtyChild:
             finally:
                 with _suppress_os_errors():
                     os.close(master_fd)
+            if not isinstance(error, OSError):
+                # A Ctrl-C stays a Ctrl-C. Only a descriptor failure is
+                # re-dressed as the spawn failure that names the child.
+                raise
             raise OSError(
                 f"failed to adopt the pty descriptors for child {process.pid}"
             ) from error

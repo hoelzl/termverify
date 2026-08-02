@@ -43,6 +43,13 @@ from termverify._posix_pty import (
     PosixPtyConcurrentIOError,
     PosixPtyEndOfStreamError,
 )
+from termverify._terminal_binding import (
+    TerminalClosedError,
+    TerminalConcurrentIOError,
+    TerminalEndOfStreamError,
+    TerminalGeometryMismatchError,
+    TerminalUnsupportedError,
+)
 
 _LINUX_ONLY = pytest.mark.skipif(
     not sys.platform.startswith("linux"),
@@ -67,12 +74,22 @@ def _read_until(
 ) -> str:
     """Collect decoded output until ``needle`` appears, or fail loudly.
 
-    The deadline bounds the *reads*, not merely the gaps between them.
-    ``child.read()`` blocks in a ``poll`` with no timeout by design — the
-    wake byte a close writes is what ends it — so checking the clock only
-    between reads left this helper with no bound at all against a child that
-    goes silent, which is what
+    The deadline bounds the *wait before* each read, not merely the gaps
+    between reads. ``child.read()`` blocks in a ``poll`` with no timeout by
+    design — the wake byte a close writes is what ends it — so checking the
+    clock only between reads left this helper with no bound at all against a
+    child that goes silent, which is what
     :func:`test_read_until_fails_loudly_when_the_child_goes_silent` pins.
+
+    Bounded in practice rather than absolutely, and the gap is worth
+    knowing: once inside ``child.read()``, losing readability between the
+    poll and the ``os.read`` sends ``_read_chunk`` back into
+    ``_wait_until_ready``, which polls with no timeout of its own. Only a
+    close ends that one. It is the same race
+    :func:`test_a_read_retries_when_readability_is_lost_after_the_poll`
+    injects deliberately, so it is real — but nothing else can consume this
+    pty's bytes, which is why one wait here is enough in every case the
+    suite produces.
 
     Waiting on the master descriptor here rather than giving ``read`` a
     timeout keeps the binding's own read path exactly as the adapter drives
@@ -274,11 +291,14 @@ def test_configuring_the_line_discipline_is_idempotent_and_measured() -> None:
 
 
 #: Flag names, by word, resolved against the running kernel's ``termios``.
-#: Only single-bit flags: the delay masks in ``oflag`` (``NLDLY``, ``CRDLY``,
-#: ``TABDLY``, ``BSDLY``, ``VTDLY``, ``FFDLY``) are multi-bit fields whose
-#: zero value is a legitimate setting, so naming a *changed bit* through them
-#: would report nonsense. The coverage assertion below is what stops that
-#: exclusion from hiding a real change.
+#: Only single-bit flags, and the delay masks were measured rather than
+#: assumed to be otherwise: on Linux ``NLDLY`` (0x100), ``BSDLY`` (0x2000),
+#: ``VTDLY`` (0x4000) and ``FFDLY`` (0x8000) are single bits and are listed
+#: like any other, while ``CRDLY`` (0x600) and ``TABDLY`` (0x1800) are the
+#: two genuinely multi-bit fields — a *changed bit* named through those would
+#: report nonsense, since their zero value is a legitimate setting. The
+#: coverage assertion below is what stops that pair's exclusion from hiding a
+#: real change.
 _FLAG_NAMES: dict[str, tuple[str, ...]] = {
     "iflag": (
         "IGNBRK",
@@ -306,6 +326,10 @@ _FLAG_NAMES: dict[str, tuple[str, ...]] = {
         "ONLRET",
         "OFILL",
         "OFDEL",
+        "NLDLY",
+        "BSDLY",
+        "VTDLY",
+        "FFDLY",
     ),
     "lflag": (
         "ISIG",
@@ -376,13 +400,18 @@ def test_the_configured_discipline_deviates_from_the_default_only_as_stated() ->
     """Every deviation from the kernel default is named, or this fails.
 
     The function's own rule is that a choice which costs something is named
-    rather than left to be discovered, and its docstring names three. It
-    made five: ``ECHOK`` and ``ECHOKE`` were also turned off, unremarked,
-    and nothing pinned them — ``_TERMIOS_CHILD`` checks nine flags and none
-    of these. With both off, the ``^U`` this module explicitly installs as
-    ``cc[VKILL]`` kills the line and echoes nothing, where the default
-    erases it, so a harness-written kill produced different transcript bytes
-    for a reason no reader could find.
+    rather than left to be discovered, and its docstring named three. It
+    made **six** on 3.13 and later: ``ECHOK`` off, ``ECHOKE`` off and
+    ``IUTF8`` on were unremarked, and nothing pinned them —
+    ``_TERMIOS_CHILD`` checked nine flags and none of these. On 3.12 it made
+    five, of which two were unnamed, because ``termios.IUTF8`` does not
+    exist there and the flag was not being set at all; that discrepancy was
+    itself the defect ``_IUTF8`` now removes.
+
+    With ``ECHOK`` and ``ECHOKE`` off, the ``^U`` this module explicitly
+    installs as ``cc[VKILL]`` killed the line and echoed nothing, where the
+    default erases it — so a harness-written kill produced different
+    transcript bytes for a reason no reader could find.
 
     The deviation set is *measured against the running kernel* rather than
     spelled out here. Hardcoding the expected words would restate the
@@ -430,12 +459,15 @@ def test_the_supplied_iutf8_constant_matches_the_interpreters_own() -> None:
     one assumption in exchange: that the bit is the one Linux's
     ``asm-generic/termbits.h`` defines.
 
-    This is where that assumption is paid for. It runs on 3.13 and 3.14,
-    both operating systems — so an architecture whose termios bits differ
-    from the generic ones fails here rather than silently naming a
-    different bit. It cannot run on 3.12, which is precisely the leg the
-    constant exists for, and that gap is real: the check is four of the six
-    matrix legs, not all of them.
+    This is where that assumption is paid for, and the coverage is narrower
+    than it first looks. The comparison needs a Linux host *and* an
+    interpreter that has the constant, so it runs on Ubuntu 3.13 and Ubuntu
+    3.14 — **two of the six matrix legs**, two of the three that can run
+    this binding at all. It is skipped on Windows by the marker (there is
+    no ``termios`` to compare against) and on 3.12 by the guard below,
+    which is precisely the leg the constant exists for. An architecture
+    whose termios bits differ from the generic ones fails here; an
+    architecture that only ever runs 3.12 does not.
     """
     import termios
 
@@ -722,6 +754,23 @@ def test_the_live_child_refusal_catches_nothing_else() -> None:
         "the breadth that made a bare RuntimeError wrong has changed; the"
         " refusal's type needs re-deciding rather than re-asserting"
     )
+    # The other direction, and the loop above cannot see it: the assertions
+    # there hold trivially while this type is a leaf, so making it derive
+    # from a *neutral* kind passes all of them. `TerminalClosedError` is the
+    # one that matters — `terminal.py` catches it, so the refusal would
+    # become adapter-classified evidence, which is exactly what this type
+    # exists to prevent and what `_terminal_binding.py` states it is not.
+    for kind in (
+        TerminalClosedError,
+        TerminalConcurrentIOError,
+        TerminalEndOfStreamError,
+        TerminalGeometryMismatchError,
+        TerminalUnsupportedError,
+    ):
+        assert not issubclass(_posix_pty.PosixPtyLiveChildError, kind), (
+            f"the refusal derives from {kind.__name__}, so the adapter would"
+            f" classify it as evidence about the subject"
+        )
 
 
 @_LINUX_ONLY
@@ -874,6 +923,52 @@ def test_a_wake_pipe_that_cannot_be_configured_is_released(
 
 
 @_LINUX_ONLY
+def test_an_interrupted_adoption_leaves_no_child_and_no_descriptor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The half of the pair that owns the master must run for *any* failure.
+
+    Adoption releases its own wake pipe on any exception, but the caller
+    that owns the master and the child caught only ``OSError`` — so an
+    interruption between the spawn and the adoption leaked the master and
+    left a live session-leader child on a pty with no binding to close it.
+    That is verbatim the defect the status-read handler one call earlier was
+    written to fix; it was repaired there and not here.
+
+    ``KeyboardInterrupt`` is the reachable case and is asserted to stay
+    itself: only a descriptor failure is re-dressed as the spawn error that
+    names the child.
+    """
+    spawned: list[subprocess.Popen[bytes]] = []
+    real_popen = subprocess.Popen
+
+    def recording(*args: object, **kwargs: object) -> subprocess.Popen[bytes]:
+        process = real_popen(*args, **kwargs)  # type: ignore[call-overload]
+        spawned.append(process)
+        return process  # type: ignore[no-any-return]
+
+    def interrupt(fd: int, blocking: bool) -> None:
+        raise KeyboardInterrupt("simulated Ctrl-C inside adoption")
+
+    before = len(os.listdir("/proc/self/fd"))
+    monkeypatch.setattr(subprocess, "Popen", recording)
+    monkeypatch.setattr(os, "set_blocking", interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        _spawn("import time; time.sleep(300)")
+    monkeypatch.undo()
+    assert spawned, "the fault fired before a child existed"
+    deadline = time.monotonic() + _TIMEOUT_S
+    while spawned[0].poll() is None:
+        assert time.monotonic() < deadline, (
+            f"child {spawned[0].pid} outlived the spawn that could not adopt it"
+        )
+        time.sleep(0.01)
+    assert len(os.listdir("/proc/self/fd")) == before, (
+        "the master outlived the spawn that could not adopt it"
+    )
+
+
+@_LINUX_ONLY
 def test_the_wait_for_the_exec_status_is_bounded() -> None:
     """The spawn's one blocking call had no bound of any kind.
 
@@ -894,16 +989,59 @@ def test_the_wait_for_the_exec_status_is_bounded() -> None:
     unpinned and deleting it would cost nothing: the wait would then hand a
     negative timeout to ``poll``, which blocks indefinitely, and the bound
     would be spent and then discarded.
+
+    **Both calls run on a worker, and that is the point of this test's
+    shape.** An inline version *hangs* when either bound is removed rather
+    than failing, and there is no per-test timeout configured — so a
+    regression would stop CI with no diagnostic, which is precisely the
+    failure mode this PR exists to remove. It must fail, not hang. The write
+    end is closed before the join so a worker still inside the call is woken
+    by the hangup instead of being left blocked on a descriptor number this
+    test is about to free.
+
+    The elapsed time is asserted because the budget's *units* are otherwise
+    unpinned: `poll` takes milliseconds, and dropping the conversion turns a
+    60-second bound into a 60-millisecond one with every test still green —
+    a budget that fires on a slow machine, which is the failure the constant
+    was sized to avoid.
     """
     read_fd, write_fd = os.pipe()
+    outcome: list[BaseException] = []
+    elapsed: list[float] = []
+    finished = threading.Event()
+    budget = 0.5
+
+    def wait_for_a_status_that_never_comes() -> None:
+        for timeout in (budget, -1.0):
+            started = time.monotonic()
+            try:
+                _posix_pty._read_exec_status(read_fd, timeout=timeout)
+            except BaseException as error:  # noqa: BLE001 - recorded for the assert
+                outcome.append(error)
+            elapsed.append(time.monotonic() - started)
+        finished.set()
+
+    worker = threading.Thread(target=wait_for_a_status_that_never_comes, daemon=True)
+    worker.start()
     try:
-        with pytest.raises(OSError, match="exec status"):
-            _posix_pty._read_exec_status(read_fd, timeout=0.2)
-        with pytest.raises(OSError, match="exec status"):
-            _posix_pty._read_exec_status(read_fd, timeout=-1.0)
+        assert finished.wait(_TIMEOUT_S), (
+            "_read_exec_status never returned against a write end nobody"
+            " closes: the wait is unbounded"
+        )
+        assert len(outcome) == 2, f"a call returned instead of failing: {outcome}"
+        for error in outcome:
+            assert isinstance(error, OSError), error
+            assert "exec status" in str(error), error
+        assert elapsed[0] >= budget, (
+            f"the budget expired after {elapsed[0]:.3f}s of a {budget}s bound;"
+            f" the timeout is not being passed in the units poll takes"
+        )
     finally:
-        os.close(read_fd)
+        # Before the join: a hangup wakes a worker still inside the call,
+        # where closing the read end would leave it polling a freed number.
         os.close(write_fd)
+        worker.join(_TIMEOUT_S)
+        os.close(read_fd)
 
 
 @_LINUX_ONLY
@@ -1309,9 +1447,10 @@ def test_the_status_pipe_write_end_is_kept_clear_of_the_stdio_range() -> None:
 # --------------------------------------------------------------------------
 # The helper every evidence test leans on
 #
-# Seven tests read through `_read_until`, so a defect in it is a defect in all
-# of them at once — and the failure mode it had was the one that costs the
-# most to diagnose: not a wrong answer, but no answer at all.
+# Eight tests read through `_read_until` before this slice and ten do now, so
+# a defect in it is a defect in all of them at once — and the failure mode it
+# had was the one that costs the most to diagnose: not a wrong answer, but no
+# answer at all.
 # --------------------------------------------------------------------------
 
 
@@ -1400,10 +1539,17 @@ def test_read_until_fails_loudly_when_the_child_never_says_the_needle() -> None:
 def test_an_exhausted_budget_is_never_handed_to_poll_as_wait_forever() -> None:
     """The guard the two tests above reach only by accident, pinned directly.
 
-    Both of them fail while the remaining budget is still a small *positive*
-    number — the wait times out before the clock crosses the deadline — so
-    neither one enters the branch that matters, and deleting it left both
-    green. Measured rather than reasoned: ``poll`` blocks indefinitely on a
+    They normally fail while the remaining budget is still a small
+    *positive* number — the wait times out before the clock crosses the
+    deadline — so the branch that matters goes unentered and deleting it
+    left both green. "Normally" is measured, not assumed: instrumenting the
+    two showed the silent case never reaching a non-positive budget, and
+    the chatty case reaching one in roughly **one run in eight**, when the
+    scheduler happens to overshoot the deadline between a poll and the next
+    iteration. A branch covered one run in eight is not pinned by those
+    tests; it is occasionally visited by them.
+
+    Also measured rather than reasoned: ``poll`` blocks indefinitely on a
     negative timeout, so an exhausted budget handed through would wait
     forever for the child that has already outlived its deadline.
 

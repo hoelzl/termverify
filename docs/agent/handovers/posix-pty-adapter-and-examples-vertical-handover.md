@@ -258,6 +258,23 @@ Windows `.venv` is untouched. That turns a ~6-minute CI round trip into a
 loop fast enough for real TDD. CI stays the authority — it is the matrix the
 claims are made about — but it no longer has to be the *first* red.
 
+Two traps in that recipe, both of which produced a **false green** during
+#274 and cost a round each:
+
+- **The venv is pinned to one worktree.** `uv sync` installs the project
+  editable, so the venv's `.pth` names the `src/` of whatever worktree
+  created it. Run the same command from a *different* worktree — which the
+  mandated fresh-context review does by design — and pytest imports the
+  other worktree's source and reports green no matter what you changed.
+  Either give each worktree its own `UV_PROJECT_ENVIRONMENT`, or prefix the
+  command with `PYTHONPATH=$PWD/src` and confirm `termverify.__file__`
+  points where you think it does.
+- **One venv is one interpreter; the matrix is three.** A 3.13 venv cannot
+  see a 3.12 failure, and #274 shipped one to CI that way —
+  `termios.IUTF8` does not exist before 3.13. Keep a second environment
+  (`--python 3.12`) and run both before pushing anything that touches the
+  stdlib surface.
+
 ## 6. Key files & architecture
 
 Existing files this initiative reads or changes:
