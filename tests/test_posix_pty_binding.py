@@ -26,6 +26,7 @@ from __future__ import annotations
 import contextlib
 import errno
 import os
+import select
 import subprocess
 import sys
 import threading
@@ -63,15 +64,44 @@ def _spawn(
 def _read_until(
     child: PosixPtyChild, needle: str, *, timeout: float = _TIMEOUT_S
 ) -> str:
-    """Collect decoded output until ``needle`` appears, or fail loudly."""
+    """Collect decoded output until ``needle`` appears, or fail loudly.
+
+    The deadline bounds the *reads*, not merely the gaps between them.
+    ``child.read()`` blocks in a ``poll`` with no timeout by design — the
+    wake byte a close writes is what ends it — so checking the clock only
+    between reads left this helper with no bound at all against a child that
+    goes silent, which is what
+    :func:`test_read_until_fails_loudly_when_the_child_goes_silent` pins.
+
+    Waiting on the master descriptor here rather than giving ``read`` a
+    timeout keeps the binding's own read path exactly as the adapter drives
+    it: a timeout parameter used by nothing but tests is a second code path
+    the evidence tests would then be measuring instead of the real one.
+    """
     collected = ""
     deadline = time.monotonic() + timeout
     while needle not in collected:
-        assert time.monotonic() < deadline, (
+        assert _readable_within(child, deadline - time.monotonic()), (
             f"timed out waiting for {needle!r}; collected so far: {collected!r}"
         )
         collected += child.read()
     return collected
+
+
+def _readable_within(child: PosixPtyChild, seconds: float) -> bool:
+    """Report whether the child's master descriptor becomes readable in time.
+
+    A non-positive budget is reported as "not readable" without a syscall.
+    ``poll`` reads a negative timeout as *wait forever* — measured here, not
+    assumed — so passing an exhausted budget straight through would spend
+    the bound and then discard it, which is the failure this helper exists
+    to prevent.
+    """
+    if seconds <= 0:
+        return False
+    poller = select.poll()  # type: ignore[attr-defined,unused-ignore]
+    poller.register(child._master_fd, select.POLLIN)  # type: ignore[attr-defined,unused-ignore]
+    return bool(poller.poll(seconds * 1000))
 
 
 # --------------------------------------------------------------------------
@@ -379,6 +409,17 @@ def test_a_blocked_read_is_woken_by_a_forced_close() -> None:
 
     A close must not depend on reaching whoever holds the other end — the
     finding (R4) that shaped the JSONL binding's POSIX path.
+
+    **Both halves of the arrangement are load-bearing, and the earlier form
+    had neither.** It slept 0.2s and asserted only the exception *type*. If
+    the reader had not reached the read when the close landed, the read was
+    rejected by the top guard with ``PosixPtyClosedError("the POSIX PTY
+    binding is closed")`` — the same type, from a path that never touches
+    the self-pipe this test is named for. So the test passed either way and
+    a machine under load quietly stopped testing the guarantee. The spin
+    below is the deterministic form the sibling concurrency test already
+    uses, and the message is what tells the two paths apart: only an
+    interrupted read says "closed *during* a read".
     """
     child = _spawn("import sys; sys.stdin.readline()")
     woken = threading.Event()
@@ -394,10 +435,17 @@ def test_a_blocked_read_is_woken_by_a_forced_close() -> None:
 
     reader = threading.Thread(target=blocked_read, daemon=True)
     reader.start()
-    time.sleep(0.2)  # arrangement, not evidence: let the read reach `poll`
+    deadline = time.monotonic() + _TIMEOUT_S
+    while not child._read_in_flight:
+        assert time.monotonic() < deadline, "the reader never reached the read"
+        time.sleep(0.01)
     child.close(force=True)
     assert woken.wait(_TIMEOUT_S), "the blocked read was never woken"
     assert failures and isinstance(failures[0], PosixPtyClosedError)
+    assert "closed during a read" in str(failures[0]), (
+        f"the read was rejected before it began, so the self-pipe was never"
+        f" exercised: {failures[0]!r}"
+    )
 
 
 @_LINUX_ONLY
@@ -935,6 +983,123 @@ def test_the_status_pipe_write_end_is_kept_clear_of_the_stdio_range() -> None:
     finally:
         os.dup2(spare, 0)
         os.close(spare)
+
+
+# --------------------------------------------------------------------------
+# The helper every evidence test leans on
+#
+# Seven tests read through `_read_until`, so a defect in it is a defect in all
+# of them at once — and the failure mode it had was the one that costs the
+# most to diagnose: not a wrong answer, but no answer at all.
+# --------------------------------------------------------------------------
+
+
+@_LINUX_ONLY
+def test_read_until_fails_loudly_when_the_child_goes_silent() -> None:
+    """The helper's own docstring promised this and it did not hold.
+
+    The deadline was evaluated only *between* reads, and ``child.read()``
+    blocks in a ``poll`` with no timeout by design — the wake pipe a close
+    writes is what ends it. So against a child that goes silent without
+    producing the needle, the helper had no bound at all: the only thing
+    that ended the leg was CI's ``timeout-minutes: 30``, which kills the job
+    with no diagnostic and no collected output.
+
+    The assertion is run on a worker so that a regression *fails* here
+    instead of hanging the suite the way the defect did.
+    """
+    child = _spawn("import time; time.sleep(300)")
+    outcome: list[BaseException] = []
+    finished = threading.Event()
+
+    def wait_for_a_needle_that_never_comes() -> None:
+        try:
+            _read_until(child, "NEVER ARRIVES", timeout=0.5)
+        except BaseException as error:  # noqa: BLE001 - recorded for the assert
+            outcome.append(error)
+        finally:
+            finished.set()
+
+    watcher = threading.Thread(target=wait_for_a_needle_that_never_comes, daemon=True)
+    watcher.start()
+    try:
+        assert finished.wait(_TIMEOUT_S), (
+            "_read_until never returned against a silent child: it is unbounded"
+        )
+        assert outcome, "_read_until returned instead of failing"
+        assert isinstance(outcome[0], AssertionError), outcome[0]
+        assert "timed out waiting for" in str(outcome[0]), outcome[0]
+    finally:
+        child.close(force=True)
+
+
+@_LINUX_ONLY
+def test_read_until_fails_loudly_when_the_child_never_says_the_needle() -> None:
+    """The other half of the bound: the budget is a deadline, not a timeout.
+
+    A silent child leaves the helper waiting; a *chatty* one keeps it
+    working, and that is the case a per-read timeout would never end. Each
+    read here returns promptly and the loop goes round again, so a helper
+    that gave every wait the full timeout afresh would collect output for as
+    long as the child produced it — forever, against a child that simply
+    never says the needle. What bounds this run is that each wait gets only
+    the time *remaining* against one deadline.
+    """
+    child = _spawn(
+        "import time\nwhile True:\n    print('NOISE')\n    time.sleep(0.005)\n"
+    )
+    outcome: list[BaseException] = []
+    finished = threading.Event()
+
+    def wait_for_a_needle_that_never_comes() -> None:
+        try:
+            _read_until(child, "NEVER ARRIVES", timeout=0.5)
+        except BaseException as error:  # noqa: BLE001 - recorded for the assert
+            outcome.append(error)
+        finally:
+            finished.set()
+
+    watcher = threading.Thread(target=wait_for_a_needle_that_never_comes, daemon=True)
+    watcher.start()
+    try:
+        assert finished.wait(_TIMEOUT_S), (
+            "_read_until never returned against a chatty child: its spent"
+            " budget was discarded rather than enforced"
+        )
+        assert outcome, "_read_until returned instead of failing"
+        assert isinstance(outcome[0], AssertionError), outcome[0]
+        assert "NOISE" in str(outcome[0]), (
+            f"the failure must carry what was collected: {outcome[0]}"
+        )
+    finally:
+        child.close(force=True)
+
+
+@_LINUX_ONLY
+def test_an_exhausted_budget_is_never_handed_to_poll_as_wait_forever() -> None:
+    """The guard the two tests above reach only by accident, pinned directly.
+
+    Both of them fail while the remaining budget is still a small *positive*
+    number — the wait times out before the clock crosses the deadline — so
+    neither one enters the branch that matters, and deleting it left both
+    green. Measured rather than reasoned: ``poll`` blocks indefinitely on a
+    negative timeout, so an exhausted budget handed through would wait
+    forever for the child that has already outlived its deadline.
+
+    Arranged against a child with output *pending*, which is what makes the
+    assertion able to fail without hanging: an unguarded ``poll`` returns
+    that readiness immediately and answers True, where the guard answers
+    False without a syscall.
+    """
+    child = _spawn("print('PENDING')")
+    try:
+        assert _readable_within(child, _TIMEOUT_S), "the child produced nothing"
+        # Same descriptor, same pending bytes, only the budget differs.
+        assert _readable_within(child, 0) is False
+        assert _readable_within(child, -0.5) is False
+        assert _readable_within(child, _TIMEOUT_S) is True
+    finally:
+        child.close(force=True)
 
 
 @_LINUX_ONLY
