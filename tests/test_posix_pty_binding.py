@@ -26,6 +26,7 @@ from __future__ import annotations
 import contextlib
 import errno
 import os
+import pathlib
 import select
 import subprocess
 import sys
@@ -792,6 +793,72 @@ def test_a_failed_construction_kills_the_child_it_cannot_adopt(
 
 
 @_LINUX_ONLY
+def test_a_wake_pipe_that_cannot_be_configured_is_released(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``os.pipe`` is not the only fallible call in adoption.
+
+    ``_adopt_wake_pipe`` creates the pipe and then makes three descriptors
+    non-blocking, and its docstring pointed at ``spawn``'s handler for that
+    second failure — but that handler releases the *master* only, so a
+    failing ``os.set_blocking`` stranded both wake descriptors. The method
+    that opened them releases them.
+
+    The assertion cannot pass for the wrong reason: if the injected fault
+    fired somewhere earlier, the spawn would fail with a different message
+    and the ``match`` below would not hold.
+    """
+    reached: list[int] = []
+
+    def refuse(fd: int, blocking: bool) -> None:
+        reached.append(fd)
+        raise OSError(errno.EMFILE, "injected")
+
+    before = len(os.listdir("/proc/self/fd"))
+    monkeypatch.setattr(os, "set_blocking", refuse)
+    with pytest.raises(OSError, match="failed to adopt the pty descriptors"):
+        _spawn("import time; time.sleep(300)")
+    monkeypatch.undo()
+    assert reached, "the fault was never reached"
+    assert len(os.listdir("/proc/self/fd")) == before, (
+        "the wake pipe outlived the adoption that opened it"
+    )
+
+
+@_LINUX_ONLY
+def test_the_wait_for_the_exec_status_is_bounded() -> None:
+    """The spawn's one blocking call had no bound of any kind.
+
+    Every other wait in this module is bounded or escapable by the wake
+    pipe; this one blocked until the trampoline's write end was gone, which
+    is normally the exec itself. "Normally" is the problem: nothing here
+    holds that end but the child, so a child that stalls before its exec —
+    a machine so loaded the interpreter never finishes starting, a stopped
+    process — hung the spawn with no diagnostic and no child to kill.
+
+    Exercised on a pipe this test holds open, which is exactly the state a
+    stalled trampoline leaves behind.
+
+    The second call passes a budget that has *already* expired — the state
+    the loop reaches after a read leaves nothing left — because that is the
+    only way to enter the non-positive branch deterministically. A positive
+    budget always times out inside ``poll`` first, so the branch would be
+    unpinned and deleting it would cost nothing: the wait would then hand a
+    negative timeout to ``poll``, which blocks indefinitely, and the bound
+    would be spent and then discarded.
+    """
+    read_fd, write_fd = os.pipe()
+    try:
+        with pytest.raises(OSError, match="exec status"):
+            _posix_pty._read_exec_status(read_fd, timeout=0.2)
+        with pytest.raises(OSError, match="exec status"):
+            _posix_pty._read_exec_status(read_fd, timeout=-1.0)
+    finally:
+        os.close(read_fd)
+        os.close(write_fd)
+
+
+@_LINUX_ONLY
 def test_exit_status_is_observed_without_a_close() -> None:
     """The property reports a real exit the moment the OS has one."""
     child = _spawn("pass")
@@ -986,16 +1053,24 @@ def test_a_close_that_cannot_signal_says_so_rather_than_returning(
         def refused(pgid: int, signal_number: int) -> None:
             raise PermissionError(errno.EPERM, "not permitted")
 
+        # Only `os.killpg` is patched. `EPERM` is not `ESRCH`, so it
+        # propagates out of `_terminate_session` and the `process.kill()`
+        # fallback below it is never reached — a patch on `Popen.kill` here
+        # would be arranging for a call that cannot happen, which reads as
+        # coverage of a path this test does not exercise.
         monkeypatch.setattr(os, "killpg", refused)
-        monkeypatch.setattr(subprocess.Popen, "kill", refused)
         with pytest.raises(PermissionError):
             child.close(force=True)
     finally:
         # The close was refused the signal, so the child is still running:
-        # this test owns ending it.
+        # this test owns ending it, *and* reaping it. Without the wait the
+        # stubbed kill leaves a zombie for the rest of the session, because
+        # nothing else calls `wait` on a child whose teardown raised.
         monkeypatch.undo()
         with contextlib.suppress(OSError):
             os.killpg(pid, FORCED_TERMINATION_SIGNAL)  # type: ignore[attr-defined,unused-ignore]
+        with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+            child._process.wait(timeout=_TIMEOUT_S)
 
 
 @_LINUX_ONLY
@@ -1042,7 +1117,7 @@ def test_a_second_close_waits_for_the_first_to_capture_the_exit_record() -> None
         # Reap it: _terminate_session was stubbed, so nothing else does,
         # and an unreaped child is a zombie for the rest of the session.
         with contextlib.suppress(OSError, subprocess.TimeoutExpired):
-            child._process.wait(timeout=_TIMEOUT_S)  # type: ignore[union-attr]
+            child._process.wait(timeout=_TIMEOUT_S)
     assert observed == [-FORCED_TERMINATION_SIGNAL], (
         f"the second close returned before the exit record existed: {observed}"
     )
@@ -1066,8 +1141,11 @@ def test_a_second_close_learns_that_the_first_could_not_kill(
     def refused(*args: object) -> None:
         raise PermissionError(errno.EPERM, "not permitted")
 
+    # `Popen.kill` is deliberately not patched: `EPERM` propagates out of
+    # `_terminate_session` before the pid fallback, so patching it would
+    # arrange for a call that cannot happen. Same reason as its sibling
+    # above.
     monkeypatch.setattr(os, "killpg", refused)
-    monkeypatch.setattr(subprocess.Popen, "kill", refused)
     try:
         with pytest.raises(PermissionError):
             child.close(force=True)
@@ -1079,7 +1157,7 @@ def test_a_second_close_learns_that_the_first_could_not_kill(
         with contextlib.suppress(OSError):
             os.killpg(pid, FORCED_TERMINATION_SIGNAL)  # type: ignore[attr-defined,unused-ignore]
         with contextlib.suppress(OSError, subprocess.TimeoutExpired):
-            child._process.wait(timeout=_TIMEOUT_S)  # type: ignore[union-attr]
+            child._process.wait(timeout=_TIMEOUT_S)
 
 
 def _fail_read_with(
@@ -1298,7 +1376,9 @@ def test_an_exhausted_budget_is_never_handed_to_poll_as_wait_forever() -> None:
 
 
 @_LINUX_ONLY
-def test_a_subject_that_cannot_be_executed_fails_the_spawn(tmp_path: object) -> None:
+def test_a_subject_that_cannot_be_executed_fails_the_spawn(
+    tmp_path: pathlib.Path,
+) -> None:
     """A pre-exec failure must not become subject evidence.
 
     The trampoline's fds 0/1/2 are the pty slave, so an unhandled failure
@@ -1307,9 +1387,7 @@ def test_a_subject_that_cannot_be_executed_fails_the_spawn(tmp_path: object) -> 
     ``shutil.which`` does not prevent this: a script with no shebang is
     executable and still cannot be ``execv``'d.
     """
-    import pathlib
-
-    script = pathlib.Path(str(tmp_path)) / "no-shebang"
+    script = tmp_path / "no-shebang"
     script.write_bytes(b"echo this file has no shebang\n")
     script.chmod(0o755)
     with pytest.raises(OSError, match="the subject could not be started") as caught:
