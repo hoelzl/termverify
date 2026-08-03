@@ -9,8 +9,8 @@
   slices below in order.
 - **Owner:** project maintainer
 - **Created:** 2026-07-31
-- **Updated:** 2026-08-02 (Phases 1 and 2 merged; §4 and §5 brought current;
-  #274 in flight)
+- **Updated:** 2026-08-03 (Phases 1 and 2 merged; #274 merged; #279 in
+  flight as PR #280)
 - **Review required:** yes. Every slice that changes runtime behavior, the
   public API, or a platform claim needs TDD evidence, the full validation
   gate, and an independent fresh-context adversarial review. **The review
@@ -212,15 +212,63 @@ moratorium, recorded under `docs/agent/design/`.
   the README, the architecture page and the adapter's own docstring all say so
   explicitly.
 - **Two issues were deferred out of Phase 1.** **#274** (POSIX binding
-  residue) is being cleared *before* Phase 3 rather than alongside it: two of
-  its findings sit directly under the slice that comes next — `_read_until`
+  residue) was cleared *before* Phase 3 rather than alongside it, because two
+  of its findings sat directly under the slice that comes next — `_read_until`
   hung instead of failing, bounded only by CI's 30-minute job timeout, and
   Phase 3 is a CI-driven slice that leans on that helper for every read.
-  **#273** (pty `ECHO` puts harness input in the subject's output stream,
-  where the marker scanner reads) stays open and becomes answerable inside
-  #269, which is the first slice with a real subject on a pty. Phase 2
+  **Merged 2026-08-02 as PR #276**, squash `659c49a`, after three adversarial
+  rounds. **#273** (pty `ECHO` puts harness input in the subject's output
+  stream, where the marker scanner reads) stays open and becomes answerable
+  inside #269, which is the first slice with a real subject on a pty. Phase 2
   touched neither: a pure-refactor slice is the wrong place to change what
   the scanner honours.
+- **Three issues came out of #274's review rounds.** **#277** (JSONL's
+  bare-`RuntimeError` twin of the refusal type #274 fixed) and **#278** (four
+  correct-but-unpinned teardown invariants) are open and unscheduled; neither
+  blocks Phase 3. **#279** is in flight as PR #280 and is the one worth
+  reading before Phase 3, because it changes what reaches a transcript: the
+  POSIX binding discarded whatever its UTF-8 decoder held at end-of-stream,
+  so a subject that stopped part-way through a multibyte character produced
+  a transcript asserting it wrote only the bytes before it. It now flushes,
+  matching the ConPTY binding and a contract now stated on
+  `TerminalEndOfStreamError`.
+
+  **The issue's own premise was measured false, and the correction is the
+  durable part.** #279 reported the ConPTY binding already surfacing the
+  replacement, making the two bindings unequal. It does not: the console host
+  decodes upstream of the binding, holds an incomplete trailing sequence and
+  discards it, so both bindings lost the same bytes for different reasons.
+  Closing the POSIX loss is therefore what *opens* a divergence, deliberately
+  — recorded as the third in `_terminal_binding.py`, and bounded: it is
+  the set of trailing byte strings Python's decoder is still *holding* at end
+  of stream. **Do not restate that as a rule** — four attempts were made
+  during review and every one was measured false, the last two by reviewers.
+  The whole measurement is executable data in
+  `tests/_end_of_stream_tails.py`, parametrized by both bindings' suites;
+  read it rather than any prose restatement, this one included. Divergences
+  outside that set predate #279 and are **issue #282**.
+
+  **Phase 3 will meet this, and with more than a trailing `U+FFFD`.** Expect
+  that character from any subject that stops mid-character — and expect
+  `adapter-runtime-failed` with **no exit record** from one that stops
+  mid-character *while also* mid-escape-sequence, because `vt.py` is
+  fail-closed and rejects a replacement arriving inside an unterminated
+  sequence. That path predates #279 (a `\xff` tail reaches it with no flush
+  involved) but #279 widens what gets there. It is **issue #283**, filed
+  against this initiative rather than fixed in #280, and it is worth
+  settling *before* Phase 3 starts asserting on real POSIX subjects — the
+  interaction is pinned at the normalizer in `tests/test_vt.py`, but nothing
+  yet drives it end to end, which is Phase 3's own job.
+
+  **#284 is the other one to read first.** The flush's contract defers the
+  end-of-stream by one call, and a close landing in that gap drops it — so a
+  run that had ended reports a failure instead. A latch was prototyped in #280
+  and **reverted by owner decision**, because it changed how the adapter
+  attributes a run whose abort deadline expired (an observed end of stream
+  began overriding the expiry, against the policy `terminal.py` states inline)
+  and it bypassed the single-flight guard. That is an abort-contract decision,
+  not a decoder one, and it lands squarely in Phase 3's territory. Every
+  measurement is on the issue.
 - **The closing-keyword trap is a merge-time check, not a writing-time one.**
   #273 was closed by accident on 2026-08-01: PR #272's squash message put a
   closing keyword immediately before the issue reference, and GitHub's linker
@@ -244,12 +292,18 @@ moratorium, recorded under `docs/agent/design/`.
    squash `ceb7bb3`), after three adversarial rounds.
 3. ~~Phase 2 (#268), the platform-neutral terminal adapter~~ **merged
    2026-08-01** (PR #275, squash `85c7a65`), after three adversarial rounds.
-4. **Clear #274 first** — the Phase 1 residue, in flight. It is not a
-   blocker for Phase 3 but it is underneath it: the read helper every
-   evidence test uses had no bound, and Phase 3 adds more tests to that same
-   helper on the same CI legs.
-5. **Then Phase 3 (#269)**, the adapter-level POSIX evidence, and #270 after
+4. ~~Clear #274 first, the Phase 1 residue~~ **merged 2026-08-02** (PR #276,
+   squash `659c49a`), after three adversarial rounds. It was not a blocker
+   for Phase 3 but it was underneath it: the read helper every evidence test
+   uses had no bound, and Phase 3 adds more tests to that same helper on the
+   same CI legs.
+5. **#279 (PR #280), in flight** — the truncated-tail flush, taken before
+   Phase 3 for the same reason #274 was: it changes what a POSIX subject's
+   evidence contains, and Phase 3 is the slice that starts asserting on it.
+6. **Then Phase 3 (#269)**, the adapter-level POSIX evidence, and #270 after
    it — each consumes its predecessor. Prepare #271 once they have landed.
+   **#277 and #278** (both from #274's review) stay open and unscheduled;
+   neither blocks Phase 3.
 
 A note on how to get a red for this work, learned on #274 and worth keeping:
 **a local WSL Ubuntu runs the POSIX suite in ~33s**, against the same

@@ -1,4 +1,15 @@
-"""Platform-neutral failure taxonomy for the terminal binding port.
+r"""Platform-neutral failure taxonomy for the terminal binding port.
+
+**This docstring is raw**, and must stay so. It names byte sequences —
+``\xe2\x82``, ``\xc0``, ``\x82`` — and in a cooked string Python interprets
+every one of them. While the divergence measurement was still tabulated here,
+the lone-continuation row rendered as an invisible C1 control character at
+runtime while reading correctly in the source. Nothing catches that on its
+own: those are *valid* escapes, so ruff's ``W605`` stays silent, and ``ruff``,
+``ruff format`` and ``mypy`` were all green with the table mangled. Found by
+the round-2 adversarial review of issue #279, which read ``__doc__`` rather
+than the file, and now guarded for the whole package by
+``tests/test_docstring_escapes.py``.
 
 The terminal adapter (``termverify.terminal``) classifies a binding failure
 into evidence: an end-of-stream ends the run truthfully from the observed exit
@@ -82,6 +93,81 @@ third binding would be written against, and "close(force=False) on a live
 child" is exactly the kind of question its author would otherwise have to
 answer by reading two implementations.
 
+**A third, and it is not one the bindings choose.** Both honour the
+end-of-stream flush stated at :class:`TerminalEndOfStreamError`; what differs
+is what reaches them to be flushed. A pty decodes nothing, so a subject that
+stops part-way through a multibyte character hands its unfinished bytes to
+the POSIX binding, which surfaces them as ``U+FFFD``. The Windows console
+host is itself a UTF-8 decoder, so those bytes are consumed and discarded
+before the ConPTY binding sees any of them — the binding still receives the
+rest of the subject's output, just nothing of that sequence.
+
+**The divergence is defined operationally, and deliberately so.** It is the
+set of trailing byte strings for which *Python's decoder is still holding
+bytes at end of stream* — because those, and only those, are what the flush
+can report. That is a property to be measured, not a rule to be reasoned
+about, and four successive attempts to give it a tidy characterisation were
+each measured false: "a bad trailing byte" (too wide), "otherwise the two
+bindings agree" (too narrow), and twice "an incomplete but *valid* prefix",
+which sounds exact and is not — CPython holds ``b"\xed\xa0"``, a surrogate
+lead that can never become a valid character, and flushes it as **two**
+replacements. Do not restate this as a rule; read the column.
+
+**The row data is not repeated here.** It lives once, as executable data, in
+``tests/_end_of_stream_tails.py``, where both bindings' suites parametrize
+over it — ``test_the_end_of_stream_tail_table_holds_on_this_host`` asserts the
+ConPTY column on Windows and the POSIX column on Linux, so every row is
+measured on both platforms on every CI run. Three review rounds of issue #279
+found this table restated in prose and stale; the third found eight of its
+rows pinned by nothing at all. A table that is data cannot go stale against
+itself, and a row cannot be added without obliging both platforms.
+
+**What the rows show**, as orientation rather than as a rule to apply. Two
+decoders are involved and they hold different things:
+
+- The Windows console host decodes **structurally**: it reads the lead byte,
+  learns how many continuation bytes to expect, and goes on waiting until a
+  byte arrives that cannot structurally continue the sequence. It waits on
+  ``\xc0`` and on the overlong ``\xe0\x80`` for that reason. Whatever it is
+  still waiting on at end of stream is discarded.
+- Python's incremental decoder, which is what a pty binding has, holds a
+  different set — overlapping, neither contained in the other. It rejects
+  ``\xc0`` at once and holds ``\xed\xa0``, which the host also holds.
+
+Where **both** hold is what #279 opened: the host drops those bytes and the
+pty hands them over for the flush to report. Where they differ, the two
+bindings diverged already, before #279 and unchanged by it, because Python
+held nothing for the flush to find. Which byte string falls where is the
+``opened_by_279`` column's job to say, and it is the only trustworthy answer:
+the two decoders' rules are not ours, and every prose summary of them written
+in this PR has been measured false.
+
+Everything outside the both-hold region is issue #282. None of it is the
+flush's doing and none of it changed here; it is recorded because bounding
+this change's divergence is what measured it.
+
+Nothing false is recorded either way — at end of stream each binding accounts
+for every byte it received, and the ConPTY binding cannot account for bytes
+the host destroyed upstream of it. *Accounts for*, not *reports*: the flush
+emits a single ``U+FFFD`` however many bytes were held, so a one-byte and a
+three-byte truncation are indistinguishable in the transcript. The claim is
+that nothing is silently dropped, not that the tail is recoverable. (At end
+of stream, and only there: a read interrupted by a close reports nothing
+held, on both, for the reason :class:`TerminalEndOfStreamError` gives.)
+
+Issue #279 predicted this divergence with the platforms the other way round —
+ConPTY surfacing the replacement, POSIX dropping it — and filed the fix as a
+way to *close* a gap. Measured on both hosts, the prediction was false and the
+bindings agreed: they lost the same two bytes for different reasons. Closing
+the POSIX side's loss is therefore what *opened* this divergence, deliberately.
+The alternative was parity bought by continuing to discard evidence one side
+actually has, which is the wrong direction for a project whose thesis is that
+a transcript states only what was observed. Every row of the measurement is
+pinned on both platforms by
+``test_the_end_of_stream_tail_table_holds_on_this_host`` over the data in
+``tests/_end_of_stream_tails.py``, so a console host that changes its mind
+fails a test rather than silently re-converging the two.
+
 These names are private on purpose. They are the *binding author's* contract,
 not the harness caller's: nothing a host writes against
 ``termverify.terminal`` needs them, so exporting them would widen the public
@@ -131,7 +217,7 @@ class TerminalConcurrentIOError(RuntimeError):
 
 
 class TerminalEndOfStreamError(Exception):
-    """Raised by ``read`` when the terminal reports end of stream.
+    r"""Raised by ``read`` when the terminal reports end of stream.
 
     Deliberately not a subclass of :class:`TerminalClosedError` or of
     ``OSError``: this is the one binding failure that is *not* a failure —
@@ -141,6 +227,54 @@ class TerminalEndOfStreamError(Exception):
 
     Raised only while the binding is open; a read interrupted by ``close``
     raises :class:`TerminalClosedError` instead.
+
+    **The decoder is flushed before this is raised.** A binding decodes the
+    bytes it receives, so at end of stream it may still hold an incomplete
+    sequence that nothing can now complete. Those bytes are returned as
+    replacement text by the read that *meets* end of stream, and this error
+    is raised by the read after it — never delivered alongside text. One
+    ``U+FFFD`` does not necessarily stand for the whole held sequence: the
+    number of replacements is the decoder's business, and ``b"\xed\xa0"``
+    flushes as two.
+
+    The deferral is **conditional, not unconditional**, and a third binding
+    should implement it that way: only a read with something to flush returns
+    text instead of raising. When the decoder is empty — the ordinary case,
+    every run whose output ends on a complete character — this is raised by
+    the very read that meets end of stream, with no extra call. Both shipped
+    bindings behave so.
+
+    **A close in the deferral gap does drop it, and neither binding prevents
+    that.** The deferral opens a window between the read that returned the
+    flushed text and the read that owes the raise. A ``close`` landing there
+    answers :class:`TerminalClosedError`, so the end of stream is lost and the
+    run is reported as a failure although it had ended with its exit record
+    already captured. Measured on the POSIX binding by the round-2 adversarial
+    review of issue #279.
+
+    Latching the end of stream would close it, and a prototype that did was
+    reverted: it changed how the adapter attributes a run whose abort deadline
+    expired, which is a policy question about the abort contract rather than
+    about decoding, and it bypassed the single-flight guard. Both belong to
+    their own slice. **Issue #284** carries the hazard, the measurements, and
+    the design question; a third binding should read it before deciding what
+    to do here.
+
+    The asymmetry with ``close`` is the reason the flush is honest. At end of
+    stream an incomplete tail is evidence that the stream really did end
+    mid-sequence; after a close it is evidence of nothing, because the close
+    may have abandoned output the child had already written. So a read
+    interrupted by a close raises :class:`TerminalClosedError` with the
+    decoder untouched. Whether "the stream ended mid-sequence" also means
+    "the *subject* truncated its output" is a question about what sits
+    between the subject and the binding, and the two platforms answer it
+    differently — see the module docstring.
+
+    Both shipped bindings owe this, and one did not pay it until issue #279:
+    the POSIX binding discarded whatever the decoder held, so a subject that
+    exited mid-codepoint left a transcript asserting it produced only the
+    bytes before it. What the two platforms then put *in front of* that
+    contract still differs, which the module docstring records.
     """
 
 

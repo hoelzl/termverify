@@ -1386,8 +1386,18 @@ class ConptyChild:
         self._pending_io = 0
         # One decoder per child, fed every native chunk in stream order, so a
         # read that lands between two bytes of one codepoint heals on the next
-        # read instead of losing the character. ``replace`` therefore only
-        # ever fires on bytes the child genuinely emitted as invalid UTF-8.
+        # read instead of losing the character. ``replace`` therefore never
+        # fires on a split this binding introduced — and, measured, it has not
+        # been observed to fire at all through a real console host. Both of
+        # its remaining causes need the conout stream to carry something the
+        # host did not already resolve: bytes that are not valid UTF-8, or a
+        # pipe that ends mid-sequence (flushed by ``read``). Instrumenting the
+        # decoder against seven adversarial tails for issue #279 found the
+        # conout bytes valid UTF-8 every time, with the host's own U+FFFD
+        # already encoded as EF BF BD. The host decodes upstream of here, so
+        # this handler is defence for a stream that has not been seen to need
+        # it — kept because the port contract requires it, not because a
+        # cause is known.
         self._decoder = codecs.getincrementaldecoder("utf-8")("replace")
 
     @classmethod
@@ -1511,8 +1521,22 @@ class ConptyChild:
         two bytes of one codepoint therefore heals on the following read
         rather than losing the character to a replacement. At a genuine
         end-of-stream any bytes the decoder still holds are a sequence the
-        child truly left unfinished: they are flushed as replacement text on
-        this call, and the end-of-stream is raised by the next one.
+        **conout pipe** left unfinished: they are flushed as replacement text
+        on this call, and the end-of-stream is raised by the next one.
+
+        That used to say "a sequence the child truly left unfinished", and
+        issue #279 measured it false. The console host is itself a UTF-8
+        decoder: a subject that exits mid-codepoint leaves the host holding
+        the incomplete sequence, and the host discards it rather than
+        emitting anything, so nothing reaches this binding to flush
+        (measured — ``START`` and no replacement, with and without a linger
+        before the exit; pinned by
+        ``test_a_truncated_trailing_codepoint_never_reaches_this_binding``).
+        The flush is a correct property of the pipe this method reads, and
+        no real console host has been observed to end that pipe
+        mid-codepoint. Where the same flush *does* produce evidence is the
+        POSIX binding, whose pty decodes nothing and hands the subject's
+        unfinished bytes straight over.
         """
         pty = self._begin_io()
         try:

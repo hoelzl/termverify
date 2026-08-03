@@ -677,3 +677,98 @@ def test_window_manipulation_with_colon_parameter_fails_closed() -> None:
     normalizer = _normalizer()
     with pytest.raises(VtNormalizationError):
         normalizer.feed(f"{ESC}[1:2t")
+
+
+# --- what the end-of-stream decoder flush hands this normalizer (#279) -----
+#
+# The POSIX binding now flushes its incremental UTF-8 decoder at end of
+# stream, so a subject that stops part-way through a multibyte character
+# delivers one extra `U+FFFD` chunk after everything else it wrote. Where
+# that character lands is not the binding's choice, and this normalizer is
+# fail-closed in three parser states.
+#
+# Measured by the round-2 adversarial review of #279, and pinned here
+# because the consequence is a *run outcome*, not just an output character:
+# `_feed` wraps a rejection as an epoch failure, so the run is reported
+# `adapter-runtime-failed` and its exit record — already captured — is
+# discarded.
+#
+# The failure mode is NOT new. A trailing byte that can never be valid, such
+# as `\xff`, is resolved by the decoder on arrival and produced the same
+# rejection before #279; the parametrization below pins both, so the delta
+# the flush introduces is the difference between the two lists rather than a
+# claim in prose. End-to-end adapter evidence on a real pty belongs to the
+# POSIX integration slice (#269); what is pinned here is the mechanism.
+
+#: Chunk sequences the flush can produce where the normalizer accepts them.
+_FLUSH_ACCEPTED = [
+    ["START", "\ufffd"],
+    ["done\r\n", "\ufffd"],
+    [f"{ESC}[31mred{ESC}[0m", "\ufffd"],
+]
+
+#: Chunk sequences where it fail-closes, because the flushed character lands
+#: inside a sequence the subject left unterminated.
+_FLUSH_REJECTED = [
+    [f"START{ESC}[3", "\ufffd"],  # mid CSI parameter
+    [f"START{ESC}", "\ufffd"],  # immediately after ESC
+    [f"START{ESC}]0;t{ESC}", "\ufffd"],  # OSC awaiting its string terminator
+]
+
+
+@pytest.mark.parametrize("chunks", _FLUSH_ACCEPTED, ids=lambda c: repr(c[0])[:24])
+def test_a_flushed_replacement_after_settled_output_is_accepted(
+    chunks: list[str],
+) -> None:
+    normalizer = _normalizer(rows=4, columns=16)
+    for chunk in chunks:
+        normalizer.feed(chunk)
+    assert "\ufffd" in "".join(normalizer.snapshot().frame.lines)
+
+
+@pytest.mark.parametrize("chunks", _FLUSH_REJECTED, ids=lambda c: repr(c[0])[:24])
+def test_a_flushed_replacement_inside_an_unterminated_sequence_fails_closed(
+    chunks: list[str],
+) -> None:
+    """Fail-closed is this normalizer's design; the cost is stated at #279.
+
+    A subject that truncates mid-codepoint *and* mid-escape-sequence turns a
+    run that would previously have finished into `adapter-runtime-failed`.
+    That is disclosed rather than defended: whether a normalizer rejection at
+    end of stream should still surrender the child's exit record is issue
+    #283, not something this test settles.
+    """
+    normalizer = _normalizer(rows=4, columns=16)
+    with pytest.raises(VtNormalizationError):
+        for chunk in chunks:
+            normalizer.feed(chunk)
+
+
+@pytest.mark.parametrize("chunks", _FLUSH_REJECTED, ids=lambda c: repr(c[0])[:24])
+def test_the_same_prefix_without_the_flush_is_accepted(chunks: list[str]) -> None:
+    """The control that makes the pair above a measurement of the delta.
+
+    Without it, the rejections could be blamed on the unterminated sequence
+    alone, and the flush would be carrying someone else's defect.
+    """
+    normalizer = _normalizer(rows=4, columns=16)
+    normalizer.feed(chunks[0])
+    assert normalizer.snapshot().frame is not None
+
+
+def test_an_undecodable_trailing_byte_was_already_rejected_before_the_flush() -> None:
+    r"""The failure mode predates #279; the flush only widens its input class.
+
+    `\xff` can never be valid UTF-8, so the incremental decoder resolves it
+    the moment it arrives — with or without a flush — and the replacement
+    reaches this normalizer inside the same unterminated CSI. Measured on
+    `main` as well as here.
+    """
+    import codecs
+
+    decoder = codecs.getincrementaldecoder("utf-8")("replace")
+    without_flush = decoder.decode(b"START\x1b[3\xff")
+    assert without_flush == f"START{ESC}[3\ufffd"
+    normalizer = _normalizer(rows=4, columns=16)
+    with pytest.raises(VtNormalizationError):
+        normalizer.feed(without_flush)
