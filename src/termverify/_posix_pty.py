@@ -1,4 +1,10 @@
-"""Real POSIX pseudoterminal binding for the terminal adapter (issue #267).
+r"""Real POSIX pseudoterminal binding for the terminal adapter (issue #267).
+
+Raw, and it has to be: this docstring names ``\x03`` below, and in a cooked
+string that is an ETX control character in the shipped ``__doc__`` rather than
+the four characters a reader is meant to see. It shipped that way from #267
+until the ratchet in ``tests/test_docstring_escapes.py`` — written for the
+same defect in ``_terminal_binding.py`` (issue #279) — found it here too.
 
 This module is the POSIX sibling of ``_conpty.py``: the thin native
 ownership layer that turns a real pseudoterminal into the child surface the
@@ -633,6 +639,10 @@ class PosixPtyChild:
         self._interrupted_read.set()
         self._interrupted_write.set()
         self._decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        # Latched once the pseudoterminal has reported end-of-stream. A stream
+        # that ended cannot un-end, so a close arriving afterwards must not
+        # overwrite that answer with a closed-binding error — see `read`.
+        self._end_of_stream_seen = False
         self._wake_read = -1
         self._wake_write = -1
         self._adopt_wake_pipe()
@@ -897,8 +907,13 @@ class PosixPtyChild:
         subject did.
 
         End-of-stream does say something, **on this binding specifically**. A
-        pty decodes nothing, so bytes held here are bytes the subject wrote
-        and did not finish. That inference is the pty's to offer and not the
+        pty decodes nothing, so bytes held here are bytes the *master
+        delivered* and did not finish — which is not quite "bytes the subject
+        wrote", because ``ECHO`` and ``ICANON`` stay on and the line
+        discipline echoes harness input into the same stream (issue #273,
+        which carries that question to the adapter). What can be said without
+        qualification is that nothing between the subject and this decoder
+        re-encodes anything. That inference is the pty's to offer and not the
         port's: the ConPTY binding's console host decodes upstream of it, so
         the same held bytes there would be the pipe's rather than the child's
         — the distinction issue #279 measured, recorded at
@@ -906,16 +921,30 @@ class PosixPtyChild:
         that module's docstring.
         """
         with self._lock:
-            if self._closed:
-                raise PosixPtyClosedError("the POSIX PTY binding is closed")
-            if self._read_in_flight:
-                raise PosixPtyConcurrentIOError(
-                    "the POSIX PTY binding allows one in-flight read"
-                )
-            self._read_in_flight = True
-            self._interrupted_read.clear()
-            fd = self._master_fd
-            wake = self._wake_read
+            ended = self._end_of_stream_seen
+            if not ended:
+                if self._closed:
+                    raise PosixPtyClosedError("the POSIX PTY binding is closed")
+                if self._read_in_flight:
+                    raise PosixPtyConcurrentIOError(
+                        "the POSIX PTY binding allows one in-flight read"
+                    )
+                self._read_in_flight = True
+                self._interrupted_read.clear()
+                fd = self._master_fd
+                wake = self._wake_read
+        if ended:
+            # The stream already ended on an earlier call, and the deferral
+            # means this may be the call that owes the caller the raise. A
+            # close in between does not un-end the stream, so it must not be
+            # reported instead: that would turn a run which finished — with
+            # its exit record already captured — into a binding-closed
+            # failure. No descriptor is touched on this path, so it is safe
+            # after teardown.
+            truncated = self._decoder.decode(b"", final=True)
+            if truncated:
+                return truncated
+            raise self._end_of_stream()
         try:
             try:
                 chunk = self._read_chunk(fd, wake)
@@ -1009,6 +1038,11 @@ class PosixPtyChild:
 
     def _end_of_stream(self) -> PosixPtyEndOfStreamError:  # coverage: exclude-windows
         self._capture_exit_status_after_eos()
+        # The single funnel through which this binding decides the stream has
+        # ended, which is why the latch is set here rather than at each call
+        # site: `_read_chunk` has two of them and `read` a third.
+        with self._lock:
+            self._end_of_stream_seen = True
         return PosixPtyEndOfStreamError("the pseudoterminal reported end-of-stream")
 
     def write(self, text: str) -> None:  # coverage: exclude-windows

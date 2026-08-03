@@ -1387,13 +1387,21 @@ class ConptyChild:
         # One decoder per child, fed every native chunk in stream order, so a
         # read that lands between two bytes of one codepoint heals on the next
         # read instead of losing the character. ``replace`` therefore never
-        # fires on a split this binding introduced. It fires on two things it
-        # did not: bytes the pseudoconsole emitted that are not valid UTF-8 —
-        # which for a real subject means the console host already resolved
-        # them that way, since the host decodes upstream of here — and a
-        # conout pipe that ends mid-sequence, flushed by ``read``. Issue #279
-        # measured that the second has no observed cause through a real host.
+        # fires on a split this binding introduced — and, measured, it has not
+        # been observed to fire at all through a real console host. Both of
+        # its remaining causes need the conout stream to carry something the
+        # host did not already resolve: bytes that are not valid UTF-8, or a
+        # pipe that ends mid-sequence (flushed by ``read``). Instrumenting the
+        # decoder against seven adversarial tails for issue #279 found the
+        # conout bytes valid UTF-8 every time, with the host's own U+FFFD
+        # already encoded as EF BF BD. The host decodes upstream of here, so
+        # this handler is defence for a stream that has not been seen to need
+        # it — kept because the port contract requires it, not because a
+        # cause is known.
         self._decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        # Latched once the native pipe has reported end-of-stream, so a close
+        # cannot overwrite that answer during the flush's one-call deferral.
+        self._end_of_stream_seen = False
 
     @classmethod
     def spawn(
@@ -1533,6 +1541,24 @@ class ConptyChild:
         POSIX binding, whose pty decodes nothing and hands the subject's
         unfinished bytes straight over.
         """
+        with self._lock:
+            ended = self._end_of_stream_seen
+        if ended:
+            # The stream already ended, and the flush defers the raise by one
+            # call — so a close arriving in that gap must not be reported
+            # instead. A stream that ended cannot un-end, and turning a run
+            # that finished into a closed-binding failure would discard the
+            # exit record already captured for it. Touches no native handle,
+            # so it is safe after teardown. Latched for the POSIX binding
+            # first (issue #279), where the gap is reachable; here it is not,
+            # because no real console host has been observed to end the conout
+            # pipe mid-sequence — but the port contract is the same one.
+            truncated = self._decoder.decode(b"", final=True)
+            if truncated:
+                return truncated
+            raise ConptyEndOfStreamError(
+                "the native ConPTY output pipe reported end-of-stream"
+            )
         pty = self._begin_io()
         try:
             chunk = pty.read_bytes()
@@ -1545,6 +1571,8 @@ class ConptyChild:
             if replacement is None:
                 raise
             if type(replacement) is ConptyEndOfStreamError:
+                with self._lock:
+                    self._end_of_stream_seen = True
                 truncated = self._decoder.decode(b"", final=True)
                 if truncated:
                     return truncated

@@ -240,10 +240,26 @@ moratorium, recorded under `docs/agent/design/`.
   discards it, so both bindings lost the same bytes for different reasons.
   Closing the POSIX loss is therefore what *opens* a divergence, deliberately
   — recorded as the third in `_terminal_binding.py`, and bounded: it is
-  exactly the incomplete-but-*valid* prefix. A byte that can never be valid
-  is resolved on arrival by both sides, which agree. Phase 3 asserts on
-  adapter-level POSIX evidence and will meet the flushed replacement, so
-  expect a trailing `U+FFFD` from any subject that stops mid-character.
+  exactly the incomplete-but-*valid* prefix — the case where **both**
+  decoders are still waiting. Do not carry forward the tempting summary that
+  the two otherwise agree: they already disagreed, before #279 and unchanged
+  by it, wherever the console host waits *structurally* on a sequence Python
+  rejects on sight (`\xc0`, the overlong `\xe0\x80`). That is **issue #282**.
+  The whole measurement is executable data in
+  `tests/_end_of_stream_tails.py`, parametrized by both bindings' suites;
+  read it rather than any prose restatement, this one included.
+
+  **Phase 3 will meet this, and with more than a trailing `U+FFFD`.** Expect
+  that character from any subject that stops mid-character — and expect
+  `adapter-runtime-failed` with **no exit record** from one that stops
+  mid-character *while also* mid-escape-sequence, because `vt.py` is
+  fail-closed and rejects a replacement arriving inside an unterminated
+  sequence. That path predates #279 (a `\xff` tail reaches it with no flush
+  involved) but #279 widens what gets there. It is **issue #283**, filed
+  against this initiative rather than fixed in #280, and it is worth
+  settling *before* Phase 3 starts asserting on real POSIX subjects — the
+  interaction is pinned at the normalizer in `tests/test_vt.py`, but nothing
+  yet drives it end to end, which is Phase 3's own job.
 - **The closing-keyword trap is a merge-time check, not a writing-time one.**
   #273 was closed by accident on 2026-08-01: PR #272's squash message put a
   closing keyword immediately before the issue reference, and GitHub's linker

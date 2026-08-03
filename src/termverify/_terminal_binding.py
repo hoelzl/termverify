@@ -1,4 +1,15 @@
-"""Platform-neutral failure taxonomy for the terminal binding port.
+r"""Platform-neutral failure taxonomy for the terminal binding port.
+
+**This docstring is raw**, and must stay so. It names byte sequences —
+``\xe2\x82``, ``\xc0``, ``\x82`` — and in a cooked string Python interprets
+every one of them. While the divergence measurement was still tabulated here,
+the lone-continuation row rendered as an invisible C1 control character at
+runtime while reading correctly in the source. Nothing catches that on its
+own: those are *valid* escapes, so ruff's ``W605`` stays silent, and ``ruff``,
+``ruff format`` and ``mypy`` were all green with the table mangled. Found by
+the round-2 adversarial review of issue #279, which read ``__doc__`` rather
+than the file, and now guarded for the whole package by
+``tests/test_docstring_escapes.py``.
 
 The terminal adapter (``termverify.terminal``) classifies a binding failure
 into evidence: an end-of-stream ends the run truthfully from the observed exit
@@ -92,48 +103,51 @@ before the ConPTY binding sees any of them — the binding still receives the
 rest of the subject's output, just nothing of that sequence.
 
 The divergence **this change opens** is exactly the incomplete-but-valid
-prefix, and the width matters because the obvious phrasings on either side of
-it are both false. Measured, with the subject writing ``START`` and then one
-tail before exiting:
+prefix. The width matters because the obvious phrasings on either side of it
+are both false, and each was written here and measured false in turn: "a bad
+trailing byte" is too wide, and "otherwise the two agree" is too narrow.
 
-=============================  =============  ==============  ==============
-tail at end of stream          ConPTY         POSIX           opened by #279
-=============================  =============  ==============  ==============
-``\xc2`` / ``\xe0`` / ``\xf0`` ``START``      ``START�``      yes
-``\xe2\x82`` (2 of 3)          ``START``      ``START�``      yes
-``\xf0\x9f\x98`` (3 of 4)      ``START``      ``START�``      yes
-``\x82`` (lone continuation)   ``START�``     ``START�``      — they agree
-``\xff`` (never valid)         ``START�``     ``START�``      — they agree
-``\xe2\x28`` (lead, then ASCII) ``START�(``   ``START�(``     — they agree
-``\xc0`` (lead, never valid)   ``START``      ``START�``      no, pre-existing
-``\xe0\x80`` (overlong)        ``START``      ``START��``     no, pre-existing
-``\xed\xa0\x80`` (surrogate)   ``START��``    ``START���``    no, pre-existing
-=============================  =============  ==============  ==============
+**The row data is not repeated here.** It lives once, as executable data, in
+``tests/_end_of_stream_tails.py``, where both bindings' suites parametrize
+over it — ``test_the_end_of_stream_tail_table_holds_on_this_host`` asserts the
+ConPTY column on Windows and the POSIX column on Linux, so every row is
+measured on both platforms on every CI run. Three review rounds of issue #279
+found this table restated in prose and stale; the third found eight of its
+rows pinned by nothing at all. A table that is data cannot go stale against
+itself, and a row cannot be added without obliging both platforms.
 
-Two different things are in that table and only the first is this change's.
+**The rule those rows measure**, which is what belongs in this module:
 
-**What #279 opened**: the six rows where the byte stream ends part-way through
-a sequence that *is* a valid prefix. The pty hands those bytes over and the
-flush reports them; the host holds them, waits for a byte that never comes,
-and drops them. Before this change POSIX dropped them too, so the two agreed.
+- The Windows console host decodes **structurally**. It reads the lead byte,
+  learns how many continuation bytes to expect, and resolves the sequence only
+  when a byte arrives that cannot structurally continue it. Whatever it is
+  still waiting on at end of stream is discarded.
+- Python's incremental decoder, which is what a pty binding has, **validates
+  as well as counts**: it holds only a genuine prefix of a valid character and
+  rejects anything else on sight.
 
-**What already differed**: the last three rows, where the *decoders* disagree
-about what is invalid rather than about what is unfinished. The console host
-resolves a byte only when it cannot even structurally continue what the lead
-announced, so it goes on waiting through ``\xc0`` and ``\xe0\x80`` — both of
-which Python's decoder rejects on sight — and it renders a surrogate with a
-different number of replacement characters. None of that is the flush's doing
-and none of it changed here; it is recorded because bounding this change's
-divergence measured it, and because the tempting summary "otherwise the two
-agree" is what the measurement disproved. Whether the two decoders *should*
-agree on a complete-but-invalid sequence is issue #282, filed rather than
-answered here.
+Three regions follow. **Both waiting** — a valid prefix — is the one #279
+opened: the host drops those bytes, and the pty hands them over for the flush
+to report. **The host waiting alone** — ``\xc0``, which can never legally lead,
+and the overlong ``\xe0\x80`` — diverges too, and diverged before #279, because
+Python held nothing there and no flush is involved. **Neither waiting** is
+agreement, except that a complete-but-invalid sequence can still draw a
+different *number* of replacement characters, which the surrogate row shows.
 
-Nothing false is recorded either way — at end of stream each binding reports
-every byte it received, and the ConPTY binding cannot report bytes the host
-destroyed upstream of it. (At end of stream, and only there: a read
-interrupted by a close reports nothing held, on both, for the reason
-:class:`TerminalEndOfStreamError` gives.)
+So two different things are recorded, and only the first is this change's.
+Everything outside region one is issue #282: the two decoders disagreeing
+about which *complete* byte sequences are invalid, rather than about which are
+unfinished. None of that is the flush's doing and none of it changed here; it
+is recorded because bounding this change's divergence is what measured it.
+
+Nothing false is recorded either way — at end of stream each binding accounts
+for every byte it received, and the ConPTY binding cannot account for bytes
+the host destroyed upstream of it. *Accounts for*, not *reports*: the flush
+emits a single ``U+FFFD`` however many bytes were held, so a one-byte and a
+three-byte truncation are indistinguishable in the transcript. The claim is
+that nothing is silently dropped, not that the tail is recoverable. (At end
+of stream, and only there: a read interrupted by a close reports nothing
+held, on both, for the reason :class:`TerminalEndOfStreamError` gives.)
 
 Issue #279 predicted this divergence with the platforms the other way round —
 ConPTY surfacing the replacement, POSIX dropping it — and filed the fix as a
@@ -142,11 +156,11 @@ bindings agreed: they lost the same two bytes for different reasons. Closing
 the POSIX side's loss is therefore what *opened* this divergence, deliberately.
 The alternative was parity bought by continuing to discard evidence one side
 actually has, which is the wrong direction for a project whose thesis is that
-a transcript states only what was observed. Pinned on each side by
-``test_a_truncated_trailing_codepoint_surfaces_rather_than_vanishing`` and
-``test_a_truncated_trailing_codepoint_never_reaches_this_binding``, so a
-console host that changes its mind fails a test rather than silently
-re-converging the two.
+a transcript states only what was observed. Every row of the measurement is
+pinned on both platforms by
+``test_the_end_of_stream_tail_table_holds_on_this_host`` over the data in
+``tests/_end_of_stream_tails.py``, so a console host that changes its mind
+fails a test rather than silently re-converging the two.
 
 These names are private on purpose. They are the *binding author's* contract,
 not the harness caller's: nothing a host writes against
@@ -221,6 +235,20 @@ class TerminalEndOfStreamError(Exception):
     every run whose output ends on a complete character — this is raised by
     the very read that meets end of stream, with no extra call. Both shipped
     bindings behave so.
+
+    **"Never dropped" costs a latch, and a binding that skips it will drop
+    it.** The deferral opens a gap between the read that returned the flushed
+    text and the read that owes the raise, and a ``close`` landing in that gap
+    would otherwise answer :class:`TerminalClosedError` — which the adapter
+    classifies as a failure, so a run that had already ended, with its exit
+    record captured, is reported as a binding closed outside the abort
+    deadline instead of finishing. The adapter's watchdog expiry *is* such a
+    close, so this is reachable rather than theoretical; it was measured on
+    the POSIX binding by the round-2 adversarial review of issue #279. Once
+    end of stream has been observed a binding must latch it: a stream that
+    ended cannot un-end, and a later close does not overwrite that answer.
+    Both shipped bindings latch, and touch no descriptor or handle on that
+    path, so it is safe after teardown.
 
     The asymmetry with ``close`` is the reason the flush is honest. At end of
     stream an incomplete tail is evidence that the stream really did end

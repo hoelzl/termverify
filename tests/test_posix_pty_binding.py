@@ -51,6 +51,9 @@ from termverify._terminal_binding import (
     TerminalUnsupportedError,
 )
 
+from ._end_of_stream_tails import TAILS as _TAILS
+from ._end_of_stream_tails import Tail, subject_script
+
 _LINUX_ONLY = pytest.mark.skipif(
     not sys.platform.startswith("linux"),
     reason="POSIX PTY binding evidence (claimed on Linux only, decision 2)",
@@ -606,77 +609,75 @@ def test_a_truncated_trailing_codepoint_surfaces_rather_than_vanishing() -> None
         child.close(force=True)
 
 
-#: A byte that can neither begin nor continue a sequence, at end of stream.
-#: The incremental decoder resolves it the moment it arrives, so no flush is
-#: involved — which is exactly why it belongs here.
-_UNDECODABLE_TAIL_CHILD = (
-    "import sys\n"
-    "sys.stdout.buffer.write(b'START')\n"
-    "sys.stdout.buffer.write(b'\\xff')\n"
-    "sys.stdout.buffer.flush()\n"
-)
-
-
-#: ``\xc0`` is in the lead-byte range but can never appear in valid UTF-8.
-#: Python's decoder rejects it on sight where the console host waits on it
-#: structurally — a divergence that predates #279 and is not the flush's.
-_STRUCTURAL_ONLY_LEAD_CHILD = (
-    "import sys\n"
-    "sys.stdout.buffer.write(b'START')\n"
-    "sys.stdout.buffer.write(b'\\xc0')\n"
-    "sys.stdout.buffer.flush()\n"
-)
-
-
 @_LINUX_ONLY
-def test_a_tail_that_can_never_be_valid_needs_no_flush_and_matches_conpty() -> None:
-    """The other side of where the #279 divergence stops.
+@pytest.mark.parametrize("row", _TAILS, ids=lambda row: row.name)
+def test_the_end_of_stream_tail_table_holds_on_this_host(row: Tail) -> None:
+    """Every row of the divergence table, measured against a real pty.
 
-    The Windows twin of this
-    (``tests/test_conpty_binding.py::test_a_tail_the_host_can_reject_without_waiting_is_replaced``)
-    measures the console host emitting its own replacement for this byte,
-    because there is nothing to wait for. This side reaches the same text by
-    a different route — the incremental decoder resolves ``\\xff`` on arrival
-    and holds nothing — so the two bindings agree here.
-
-    It also held *before* #279, which is the point: this text is not what the
-    flush produces, and a change that made it look like the flush's doing
-    would be widening the divergence rather than describing it.
+    The Windows twin of this is
+    ``tests/test_conpty_binding.py::test_the_end_of_stream_tail_table_holds_on_this_host``,
+    and both parametrize over the same data in
+    ``tests/_end_of_stream_tails.py``, which is also where the rule the table
+    measures is written down. Only some of these rows are #279's doing — the
+    ``opened_by_279`` column says which, and the ones that are not are issue
+    #282 — but all of them are stated in ``_terminal_binding.py``, and the
+    round-2 review of #279 found eight rows stated and pinned by nothing.
     """
-    child = _spawn(_UNDECODABLE_TAIL_CHILD)
+    child = _spawn(subject_script(row.tail))
     try:
         collected = _read_until(child, "START")
         with pytest.raises(PosixPtyEndOfStreamError):
             for _ in range(100):
                 collected += child.read()
-        assert collected == "START�"
+        assert collected == row.posix, (
+            f"the pty binding rendered {row.name} ({row.tail!r}) as"
+            f" {collected!r}, not {row.posix!r}. The divergence table in"
+            f" _terminal_binding.py was written on the old measurement."
+        )
         assert child.exit_status == 0
     finally:
         child.close(force=True)
 
 
 @_LINUX_ONLY
-def test_a_lead_byte_that_can_never_be_valid_is_replaced_without_waiting() -> None:
-    """The POSIX half of a divergence #279 did **not** open.
+def test_a_close_in_the_flush_gap_cannot_lose_the_end_of_stream() -> None:
+    """The hazard the one-call deferral creates, and the latch that closes it.
 
-    ``\\xc0`` announces a two-byte sequence and can never legally begin one.
-    Python's decoder knows that and replaces it the moment it arrives, so
-    nothing is held and the flush is not involved — this text was produced
-    before #279 and is unchanged by it. The console host instead waits for
-    the announced second byte and then drops the lot, so it renders
-    ``START``; the twin above pins that side.
+    Deferring the end-of-stream by one call opens a gap: the read that met it
+    returned text, and the read that would raise it has not happened yet. A
+    close landing in that gap used to turn the run's ending into
+    :class:`PosixPtyClosedError`, which the adapter classifies as a *failure*
+    — so a subject that exited 0 and whose exit record had already been
+    captured would be reported as a binding closed outside the abort
+    deadline. The watchdog's expiry is exactly such a close, so this is
+    reachable rather than theoretical, and it was measured by the round-2
+    adversarial review of #279.
 
-    Together the two stop the summary "outside the valid-prefix case the
-    bindings agree" from being written down, which is what bounding #279's
-    divergence disproved.
+    A stream that has ended cannot un-end, so the binding latches it: once
+    end-of-stream has been observed, a later close does not overwrite it and
+    ``read`` keeps reporting the truth. That is also what makes the
+    "never dropped" half of
+    :class:`~termverify._terminal_binding.TerminalEndOfStreamError`'s
+    contract true rather than aspirational.
     """
-    child = _spawn(_STRUCTURAL_ONLY_LEAD_CHILD)
+    child = _spawn(_TRUNCATED_TAIL_CHILD)
     try:
         collected = _read_until(child, "START")
-        with pytest.raises(PosixPtyEndOfStreamError):
-            for _ in range(100):
-                collected += child.read()
+        # Read to exactly the flush — the moment the gap opens.
+        deadline = time.monotonic() + _TIMEOUT_S
+        while "�" not in collected:
+            assert time.monotonic() < deadline, (
+                f"the flush never arrived; collected {collected!r}"
+            )
+            collected += child.read()
         assert collected == "START�"
+        assert child.exit_status == 0
+
+        # The close lands in the gap, exactly as the watchdog's would.
+        child.close(force=True)
+
+        with pytest.raises(PosixPtyEndOfStreamError):
+            child.read()
         assert child.exit_status == 0
     finally:
         child.close(force=True)

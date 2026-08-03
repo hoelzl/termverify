@@ -18,9 +18,23 @@
   The replacement goes into the ordinary output channel, so it is not
   distinguishable from a `U+FFFD` the subject itself emitted — the same trade
   the ConPTY binding has made since #197, recorded here rather than implied.
+  One `U+FFFD` stands for the whole held sequence, so a one-byte and a
+  three-byte truncation look the same in the transcript.
 
-  The only way to reach the held bytes is for the subject not to have written
-  the rest of them — being killed inside a `write`, or writing an incomplete
+  **For one class of subject it changes the run's outcome, not just its
+  output.** `vt.py` is fail-closed, so a replacement character arriving while
+  its parser is mid-sequence is rejected and the run reports
+  `adapter-runtime-failed` with no exit record — a subject that truncates
+  mid-character *while also* mid-escape-sequence now takes that path where it
+  previously finished. The failure mode is not new: a trailing byte that can
+  never be valid, such as `\xff`, is resolved by the decoder on arrival and
+  reached the same rejection before this change. What is new is the class of
+  input that reaches it. Whether a normalizer rejection should surrender the
+  child's observed exit record is issue #283; the interaction itself is pinned
+  in `tests/test_vt.py`.
+
+  Reaching the held bytes requires the subject not to have written the rest of
+  them — by being killed inside a `write`, or by writing an incomplete
   sequence deliberately. Issue #279 also named a pty splitting the subject's
   final character across reads; that cause is **wrong**, because the master
   reports end-of-stream only once its buffer is drained and the last slave is
@@ -38,20 +52,20 @@
   `_terminal_binding.py` beside the two already there.
 
   The divergence this opens is narrower than it first reads, and the boundary
-  is measured: it is exactly an incomplete but *valid* multibyte prefix. A
-  trailing byte that can neither begin nor continue a sequence — `\xff`, or a
-  lone continuation byte — is resolved on arrival by the console host and by
-  the pty binding's decoder alike, so both record a replacement and the two
-  agree. Each case is pinned by a real-subject test on its own platform, so a
-  console host that changes its mind fails a test rather than silently
-  re-converging the two.
+  is measured: it is exactly an incomplete but *valid* multibyte prefix — the
+  case where **both** decoders are still waiting for a byte that never comes.
 
-  Bounding it also turned up divergences that are **not** this change's and
-  are recorded rather than fixed: the console host resolves a byte only when
-  it cannot structurally continue what the lead announced, so it waits on
-  `\xc0` and on the overlong `\xe0\x80` where Python's decoder rejects both on
-  sight, and it renders a surrogate with a different number of replacement
-  characters. Those differences predate this release and are unchanged by it.
+  Bounding it turned up divergences that are **not** this change's and are
+  recorded rather than fixed. The console host decodes structurally: it
+  resolves a byte only when that byte cannot continue what the lead announced,
+  so it goes on waiting through `\xc0` and the overlong `\xe0\x80`, both of
+  which Python's decoder rejects on sight — and it renders a surrogate with a
+  different number of replacement characters. Those differences predate this
+  release and are unchanged by it; they are tracked as a separate issue.
+
+  Every row of the measurement — twelve trailing byte sequences, both columns
+  — is executable data parametrized by each binding's own test suite, so it is
+  checked on both platforms on every run rather than restated in prose.
 
   Filed as a fix rather than a change: the Python API and the transcript
   protocol are both untouched, and a run that previously under-reported its
