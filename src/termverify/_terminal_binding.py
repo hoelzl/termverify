@@ -102,10 +102,16 @@ host is itself a UTF-8 decoder, so those bytes are consumed and discarded
 before the ConPTY binding sees any of them — the binding still receives the
 rest of the subject's output, just nothing of that sequence.
 
-The divergence **this change opens** is exactly the incomplete-but-valid
-prefix. The width matters because the obvious phrasings on either side of it
-are both false, and each was written here and measured false in turn: "a bad
-trailing byte" is too wide, and "otherwise the two agree" is too narrow.
+**The divergence is defined operationally, and deliberately so.** It is the
+set of trailing byte strings for which *Python's decoder is still holding
+bytes at end of stream* — because those, and only those, are what the flush
+can report. That is a property to be measured, not a rule to be reasoned
+about, and four successive attempts to give it a tidy characterisation were
+each measured false: "a bad trailing byte" (too wide), "otherwise the two
+bindings agree" (too narrow), and twice "an incomplete but *valid* prefix",
+which sounds exact and is not — CPython holds ``b"\xed\xa0"``, a surrogate
+lead that can never become a valid character, and flushes it as **two**
+replacements. Do not restate this as a rule; read the column.
 
 **The row data is not repeated here.** It lives once, as executable data, in
 ``tests/_end_of_stream_tails.py``, where both bindings' suites parametrize
@@ -116,29 +122,29 @@ found this table restated in prose and stale; the third found eight of its
 rows pinned by nothing at all. A table that is data cannot go stale against
 itself, and a row cannot be added without obliging both platforms.
 
-**The rule those rows measure**, which is what belongs in this module:
+**What the rows show**, as orientation rather than as a rule to apply. Two
+decoders are involved and they hold different things:
 
-- The Windows console host decodes **structurally**. It reads the lead byte,
-  learns how many continuation bytes to expect, and resolves the sequence only
-  when a byte arrives that cannot structurally continue it. Whatever it is
+- The Windows console host decodes **structurally**: it reads the lead byte,
+  learns how many continuation bytes to expect, and goes on waiting until a
+  byte arrives that cannot structurally continue the sequence. It waits on
+  ``\xc0`` and on the overlong ``\xe0\x80`` for that reason. Whatever it is
   still waiting on at end of stream is discarded.
-- Python's incremental decoder, which is what a pty binding has, **validates
-  as well as counts**: it holds only a genuine prefix of a valid character and
-  rejects anything else on sight.
+- Python's incremental decoder, which is what a pty binding has, holds a
+  different set — overlapping, neither contained in the other. It rejects
+  ``\xc0`` at once and holds ``\xed\xa0``, which the host also holds.
 
-Three regions follow. **Both waiting** — a valid prefix — is the one #279
-opened: the host drops those bytes, and the pty hands them over for the flush
-to report. **The host waiting alone** — ``\xc0``, which can never legally lead,
-and the overlong ``\xe0\x80`` — diverges too, and diverged before #279, because
-Python held nothing there and no flush is involved. **Neither waiting** is
-agreement, except that a complete-but-invalid sequence can still draw a
-different *number* of replacement characters, which the surrogate row shows.
+Where **both** hold is what #279 opened: the host drops those bytes and the
+pty hands them over for the flush to report. Where they differ, the two
+bindings diverged already, before #279 and unchanged by it, because Python
+held nothing for the flush to find. Which byte string falls where is the
+``opened_by_279`` column's job to say, and it is the only trustworthy answer:
+the two decoders' rules are not ours, and every prose summary of them written
+in this PR has been measured false.
 
-So two different things are recorded, and only the first is this change's.
-Everything outside region one is issue #282: the two decoders disagreeing
-about which *complete* byte sequences are invalid, rather than about which are
-unfinished. None of that is the flush's doing and none of it changed here; it
-is recorded because bounding this change's divergence is what measured it.
+Everything outside the both-hold region is issue #282. None of it is the
+flush's doing and none of it changed here; it is recorded because bounding
+this change's divergence is what measured it.
 
 Nothing false is recorded either way — at end of stream each binding accounts
 for every byte it received, and the ConPTY binding cannot account for bytes
@@ -211,7 +217,7 @@ class TerminalConcurrentIOError(RuntimeError):
 
 
 class TerminalEndOfStreamError(Exception):
-    """Raised by ``read`` when the terminal reports end of stream.
+    r"""Raised by ``read`` when the terminal reports end of stream.
 
     Deliberately not a subclass of :class:`TerminalClosedError` or of
     ``OSError``: this is the one binding failure that is *not* a failure —
@@ -226,8 +232,10 @@ class TerminalEndOfStreamError(Exception):
     bytes it receives, so at end of stream it may still hold an incomplete
     sequence that nothing can now complete. Those bytes are returned as
     replacement text by the read that *meets* end of stream, and this error
-    is raised by the read after it — never delivered alongside text and never
-    dropped.
+    is raised by the read after it — never delivered alongside text. One
+    ``U+FFFD`` does not necessarily stand for the whole held sequence: the
+    number of replacements is the decoder's business, and ``b"\xed\xa0"``
+    flushes as two.
 
     The deferral is **conditional, not unconditional**, and a third binding
     should implement it that way: only a read with something to flush returns
@@ -236,19 +244,21 @@ class TerminalEndOfStreamError(Exception):
     the very read that meets end of stream, with no extra call. Both shipped
     bindings behave so.
 
-    **"Never dropped" costs a latch, and a binding that skips it will drop
-    it.** The deferral opens a gap between the read that returned the flushed
-    text and the read that owes the raise, and a ``close`` landing in that gap
-    would otherwise answer :class:`TerminalClosedError` — which the adapter
-    classifies as a failure, so a run that had already ended, with its exit
-    record captured, is reported as a binding closed outside the abort
-    deadline instead of finishing. The adapter's watchdog expiry *is* such a
-    close, so this is reachable rather than theoretical; it was measured on
-    the POSIX binding by the round-2 adversarial review of issue #279. Once
-    end of stream has been observed a binding must latch it: a stream that
-    ended cannot un-end, and a later close does not overwrite that answer.
-    Both shipped bindings latch, and touch no descriptor or handle on that
-    path, so it is safe after teardown.
+    **A close in the deferral gap does drop it, and neither binding prevents
+    that.** The deferral opens a window between the read that returned the
+    flushed text and the read that owes the raise. A ``close`` landing there
+    answers :class:`TerminalClosedError`, so the end of stream is lost and the
+    run is reported as a failure although it had ended with its exit record
+    already captured. Measured on the POSIX binding by the round-2 adversarial
+    review of issue #279.
+
+    Latching the end of stream would close it, and a prototype that did was
+    reverted: it changed how the adapter attributes a run whose abort deadline
+    expired, which is a policy question about the abort contract rather than
+    about decoding, and it bypassed the single-flight guard. Both belong to
+    their own slice. **Issue #284** carries the hazard, the measurements, and
+    the design question; a third binding should read it before deciding what
+    to do here.
 
     The asymmetry with ``close`` is the reason the flush is honest. At end of
     stream an incomplete tail is evidence that the stream really did end

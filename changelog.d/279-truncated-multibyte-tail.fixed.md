@@ -18,8 +18,9 @@
   The replacement goes into the ordinary output channel, so it is not
   distinguishable from a `U+FFFD` the subject itself emitted — the same trade
   the ConPTY binding has made since #197, recorded here rather than implied.
-  One `U+FFFD` stands for the whole held sequence, so a one-byte and a
-  three-byte truncation look the same in the transcript.
+  How many replacements a held sequence flushes as is the decoder's business
+  and not a fixed one: two of the three bytes of a euro sign give one, and a
+  surrogate lead plus a continuation gives two.
 
   **For one class of subject it changes the run's outcome, not just its
   output.** `vt.py` is fail-closed, so a replacement character arriving while
@@ -51,9 +52,12 @@
   is what *creates* the divergence, deliberately, and it is recorded in
   `_terminal_binding.py` beside the two already there.
 
-  The divergence this opens is narrower than it first reads, and the boundary
-  is measured: it is exactly an incomplete but *valid* multibyte prefix — the
-  case where **both** decoders are still waiting for a byte that never comes.
+  The divergence this opens is narrower than it first reads, and its boundary
+  is measured rather than reasoned: it is the set of trailing byte strings
+  Python's decoder is still *holding* at end of stream, because those and only
+  those are what a flush can report. Four attempts to summarise that set by a
+  rule were each measured false during review, so it is recorded as a table of
+  measurements and not as a sentence.
 
   Bounding it turned up divergences that are **not** this change's and are
   recorded rather than fixed. The console host decodes structurally: it
@@ -63,9 +67,10 @@
   different number of replacement characters. Those differences predate this
   release and are unchanged by it; they are tracked as a separate issue.
 
-  Every row of the measurement — twelve trailing byte sequences, both columns
-  — is executable data parametrized by each binding's own test suite, so it is
-  checked on both platforms on every run rather than restated in prose.
+  Every row of the measurement — eighteen trailing byte sequences, both
+  columns — is executable data parametrized by each binding's own test suite,
+  so it is checked on both platforms on every run rather than restated in
+  prose.
 
   Filed as a fix rather than a change: the Python API and the transcript
   protocol are both untouched, and a run that previously under-reported its

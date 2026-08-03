@@ -240,14 +240,13 @@ moratorium, recorded under `docs/agent/design/`.
   discards it, so both bindings lost the same bytes for different reasons.
   Closing the POSIX loss is therefore what *opens* a divergence, deliberately
   — recorded as the third in `_terminal_binding.py`, and bounded: it is
-  exactly the incomplete-but-*valid* prefix — the case where **both**
-  decoders are still waiting. Do not carry forward the tempting summary that
-  the two otherwise agree: they already disagreed, before #279 and unchanged
-  by it, wherever the console host waits *structurally* on a sequence Python
-  rejects on sight (`\xc0`, the overlong `\xe0\x80`). That is **issue #282**.
+  the set of trailing byte strings Python's decoder is still *holding* at end
+  of stream. **Do not restate that as a rule** — four attempts were made
+  during review and every one was measured false, the last two by reviewers.
   The whole measurement is executable data in
   `tests/_end_of_stream_tails.py`, parametrized by both bindings' suites;
-  read it rather than any prose restatement, this one included.
+  read it rather than any prose restatement, this one included. Divergences
+  outside that set predate #279 and are **issue #282**.
 
   **Phase 3 will meet this, and with more than a trailing `U+FFFD`.** Expect
   that character from any subject that stops mid-character — and expect
@@ -260,6 +259,16 @@ moratorium, recorded under `docs/agent/design/`.
   settling *before* Phase 3 starts asserting on real POSIX subjects — the
   interaction is pinned at the normalizer in `tests/test_vt.py`, but nothing
   yet drives it end to end, which is Phase 3's own job.
+
+  **#284 is the other one to read first.** The flush's contract defers the
+  end-of-stream by one call, and a close landing in that gap drops it — so a
+  run that had ended reports a failure instead. A latch was prototyped in #280
+  and **reverted by owner decision**, because it changed how the adapter
+  attributes a run whose abort deadline expired (an observed end of stream
+  began overriding the expiry, against the policy `terminal.py` states inline)
+  and it bypassed the single-flight guard. That is an abort-contract decision,
+  not a decoder one, and it lands squarely in Phase 3's territory. Every
+  measurement is on the issue.
 - **The closing-keyword trap is a merge-time check, not a writing-time one.**
   #273 was closed by accident on 2026-08-01: PR #272's squash message put a
   closing keyword immediately before the issue reference, and GitHub's linker

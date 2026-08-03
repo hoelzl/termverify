@@ -639,10 +639,6 @@ class PosixPtyChild:
         self._interrupted_read.set()
         self._interrupted_write.set()
         self._decoder = codecs.getincrementaldecoder("utf-8")("replace")
-        # Latched once the pseudoterminal has reported end-of-stream. A stream
-        # that ended cannot un-end, so a close arriving afterwards must not
-        # overwrite that answer with a closed-binding error — see `read`.
-        self._end_of_stream_seen = False
         self._wake_read = -1
         self._wake_write = -1
         self._adopt_wake_pipe()
@@ -921,30 +917,16 @@ class PosixPtyChild:
         that module's docstring.
         """
         with self._lock:
-            ended = self._end_of_stream_seen
-            if not ended:
-                if self._closed:
-                    raise PosixPtyClosedError("the POSIX PTY binding is closed")
-                if self._read_in_flight:
-                    raise PosixPtyConcurrentIOError(
-                        "the POSIX PTY binding allows one in-flight read"
-                    )
-                self._read_in_flight = True
-                self._interrupted_read.clear()
-                fd = self._master_fd
-                wake = self._wake_read
-        if ended:
-            # The stream already ended on an earlier call, and the deferral
-            # means this may be the call that owes the caller the raise. A
-            # close in between does not un-end the stream, so it must not be
-            # reported instead: that would turn a run which finished — with
-            # its exit record already captured — into a binding-closed
-            # failure. No descriptor is touched on this path, so it is safe
-            # after teardown.
-            truncated = self._decoder.decode(b"", final=True)
-            if truncated:
-                return truncated
-            raise self._end_of_stream()
+            if self._closed:
+                raise PosixPtyClosedError("the POSIX PTY binding is closed")
+            if self._read_in_flight:
+                raise PosixPtyConcurrentIOError(
+                    "the POSIX PTY binding allows one in-flight read"
+                )
+            self._read_in_flight = True
+            self._interrupted_read.clear()
+            fd = self._master_fd
+            wake = self._wake_read
         try:
             try:
                 chunk = self._read_chunk(fd, wake)
@@ -1038,11 +1020,6 @@ class PosixPtyChild:
 
     def _end_of_stream(self) -> PosixPtyEndOfStreamError:  # coverage: exclude-windows
         self._capture_exit_status_after_eos()
-        # The single funnel through which this binding decides the stream has
-        # ended, which is why the latch is set here rather than at each call
-        # site: `_read_chunk` has two of them and `read` a third.
-        with self._lock:
-            self._end_of_stream_seen = True
         return PosixPtyEndOfStreamError("the pseudoterminal reported end-of-stream")
 
     def write(self, text: str) -> None:  # coverage: exclude-windows

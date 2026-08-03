@@ -757,7 +757,7 @@ def test_the_same_prefix_without_the_flush_is_accepted(chunks: list[str]) -> Non
 
 
 def test_an_undecodable_trailing_byte_was_already_rejected_before_the_flush() -> None:
-    """The failure mode predates #279; the flush only widens its input class.
+    r"""The failure mode predates #279; the flush only widens its input class.
 
     `\xff` can never be valid UTF-8, so the incremental decoder resolves it
     the moment it arrives — with or without a flush — and the replacement

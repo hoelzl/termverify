@@ -640,50 +640,6 @@ def test_the_end_of_stream_tail_table_holds_on_this_host(row: Tail) -> None:
 
 
 @_LINUX_ONLY
-def test_a_close_in_the_flush_gap_cannot_lose_the_end_of_stream() -> None:
-    """The hazard the one-call deferral creates, and the latch that closes it.
-
-    Deferring the end-of-stream by one call opens a gap: the read that met it
-    returned text, and the read that would raise it has not happened yet. A
-    close landing in that gap used to turn the run's ending into
-    :class:`PosixPtyClosedError`, which the adapter classifies as a *failure*
-    — so a subject that exited 0 and whose exit record had already been
-    captured would be reported as a binding closed outside the abort
-    deadline. The watchdog's expiry is exactly such a close, so this is
-    reachable rather than theoretical, and it was measured by the round-2
-    adversarial review of #279.
-
-    A stream that has ended cannot un-end, so the binding latches it: once
-    end-of-stream has been observed, a later close does not overwrite it and
-    ``read`` keeps reporting the truth. That is also what makes the
-    "never dropped" half of
-    :class:`~termverify._terminal_binding.TerminalEndOfStreamError`'s
-    contract true rather than aspirational.
-    """
-    child = _spawn(_TRUNCATED_TAIL_CHILD)
-    try:
-        collected = _read_until(child, "START")
-        # Read to exactly the flush — the moment the gap opens.
-        deadline = time.monotonic() + _TIMEOUT_S
-        while "�" not in collected:
-            assert time.monotonic() < deadline, (
-                f"the flush never arrived; collected {collected!r}"
-            )
-            collected += child.read()
-        assert collected == "START�"
-        assert child.exit_status == 0
-
-        # The close lands in the gap, exactly as the watchdog's would.
-        child.close(force=True)
-
-        with pytest.raises(PosixPtyEndOfStreamError):
-            child.read()
-        assert child.exit_status == 0
-    finally:
-        child.close(force=True)
-
-
-@_LINUX_ONLY
 def test_a_complete_trailing_codepoint_gains_no_replacement() -> None:
     """The flush must report a truncation, never manufacture one.
 

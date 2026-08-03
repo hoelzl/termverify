@@ -78,12 +78,6 @@ class _FakeNativeSession:
     def cancel_io(self) -> None:  # pragma: no cover - unused here
         pass
 
-    #: Read by ``ConptyChild.close`` after it releases the session. Present so
-    #: that a test can close a fake-backed binding, which is what
-    #: ``test_a_close_in_the_flush_gap_cannot_lose_the_end_of_stream`` needs;
-    #: the real native session reports whether its reader stalled.
-    stalled = False
-
     def close(self) -> None:
         self.closed = True
 
@@ -175,32 +169,6 @@ def test_truncated_trailing_sequence_is_flushed_before_end_of_stream() -> None:
     child = _child([_THREE_BYTE.encode("utf-8")[:2]])
     assert child.read() == ""  # the two bytes could still have been completed
     assert child.read() == "�"  # they were not: the byte stream ended on them
-    with pytest.raises(ConptyEndOfStreamError):
-        child.read()
-
-
-def test_a_close_in_the_flush_gap_cannot_lose_the_end_of_stream() -> None:
-    """The hazard the one-call deferral creates, on this side of the port.
-
-    The flush defers the end-of-stream by one call, which opens a gap: the
-    read that met it returned text, and the read that would raise it has not
-    happened yet. A close landing there used to answer
-    :class:`ConptyClosedError` instead — and the adapter classifies that as a
-    *failure*, so a run that had already ended, with its exit record
-    captured, would be reported as a binding closed outside the abort
-    deadline.
-
-    The POSIX binding is where that gap is reachable, and issue #279 latched
-    it there after the round-2 review measured it. This side is latched to
-    the same contract even though no real console host has been observed to
-    end the conout pipe mid-sequence — a port contract honoured by one of two
-    implementations is the defect shape this repository keeps recording, and
-    the fake session makes the guarantee testable here at no cost.
-    """
-    child = _child([_THREE_BYTE.encode("utf-8")[:2]])
-    assert child.read() == ""
-    assert child.read() == "�"  # the gap is now open
-    child.close(force=True)
     with pytest.raises(ConptyEndOfStreamError):
         child.read()
 

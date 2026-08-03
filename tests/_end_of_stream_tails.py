@@ -17,29 +17,24 @@ from the other's idea of which tails exist.
 Not importable as a test module by pytest — the leading underscore keeps it
 out of collection.
 
-**The rule the table measures**, stated once here and referenced rather than
-paraphrased elsewhere:
+**``opened_by_279`` is an operational column, not a rule.** It is true where
+Python's decoder is *still holding bytes* at end of stream, because those and
+only those are what the flush can report. Resist the urge to summarise it —
+four attempts were made during #280's review rounds and every one was
+measured false. The last and most plausible, "an incomplete but *valid*
+prefix", is falsified by ``b"\xed\xa0"``: CPython holds it, so the flush
+reports it, yet UTF-8 can never encode a surrogate so it is a prefix of
+nothing valid. It also flushes as *two* replacement characters, which
+falsified "one ``U+FFFD`` however many bytes were held".
 
-- The Windows console host decodes **structurally**. It reads the lead byte,
-  learns how many continuation bytes to expect, and resolves the sequence
-  only when a byte arrives that cannot structurally continue it. At end of
-  stream anything it is still waiting on is discarded.
-- Python's incremental decoder **validates as well as counts**. It holds only
-  what is a genuine prefix of a valid character, and rejects on sight
-  anything that cannot become one.
-
-Three regions follow, and they are what the ``opened_by_279`` column records:
-
-1. **Both wait** — a valid prefix. The host drops it; the pty hands it over
-   and the flush reports it. This is the divergence #279 opened.
-2. **The host waits, Python does not** — ``\xc0`` (never a legal lead) and
-   ``\xe0\x80`` (legal-shaped continuation, illegal range). Divergent, and
-   divergent before #279: no flush is involved, because Python held nothing.
-3. **Neither waits** — the tail is resolved on arrival by both. They agree,
-   except that a complete-but-invalid sequence can still draw a different
-   *number* of replacement characters, which is the surrogate row.
-
-Regions 2 and 3's inequalities are issue #282; region 1 is #279's.
+As orientation only, two decoders are involved and they hold overlapping but
+different sets. The console host decodes **structurally**: it reads the lead
+byte, learns how many continuations to expect, and waits until something
+cannot structurally continue — so it waits on ``\xc0`` and on the overlong
+``\xe0\x80``. Python rejects those two at once, and holds ``\xed\xa0``, which
+the host also holds. Where both hold is #279's divergence; where they differ
+the bindings diverged already, before #279 and unchanged by it, because
+Python held nothing for a flush to find. Those are issue #282.
 """
 
 from __future__ import annotations
@@ -76,13 +71,25 @@ TAILS: Final[tuple[Tail, ...]] = (
     Tail("valid-prefix-2of3", b"\xe2\x82", "START", "START�", True),
     Tail("valid-prefix-2of4", b"\xf0\x9f", "START", "START�", True),
     Tail("valid-prefix-3of4", b"\xf0\x9f\x98", "START", "START�", True),
+    # A surrogate *lead* plus one continuation. Both decoders hold it, so the
+    # flush reports it and this is #279's — but it is not a prefix of any
+    # valid character, because UTF-8 cannot encode surrogates. It is the row
+    # that falsified four attempts to characterise this set by a rule, and it
+    # flushes as TWO replacements, which falsified "one U+FFFD however many
+    # bytes were held". Found by the round-3 adversarial review.
+    Tail("surrogate-prefix", b"\xed\xa0", "START", "START��", True),
+    Tail("four-byte-lead-alone", b"\xf4", "START", "START�", True),
     # -- region 2: the host waits structurally, Python rejects on sight ----
     Tail("never-valid-lead", b"\xc0", "START", "START�", False),
     Tail("overlong-continuation", b"\xe0\x80", "START", "START��", False),
+    Tail("overlong-four-byte", b"\xf0\x80", "START", "START��", False),
+    Tail("above-max-codepoint", b"\xf4\x90", "START", "START��", False),
     # -- region 3: neither waits -------------------------------------------
     Tail("lone-continuation", b"\x82", "START�", "START�", False),
     Tail("never-valid-byte", b"\xff", "START�", "START�", False),
     Tail("lead-then-ascii", b"\xe2\x28", "START�(", "START�(", False),
+    Tail("five-byte-lead", b"\xf8", "START�", "START�", False),
+    Tail("never-valid-fe", b"\xfe", "START�", "START�", False),
     Tail(
         "surrogate-complete",
         b"\xed\xa0\x80",

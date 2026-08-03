@@ -53,17 +53,23 @@ round's.** Four rounds running:
    that is a behavioural no-op catching nothing — inside the very test
    written to stop claiming unguarded guarantees.
 3. The divergence stated as "exactly the incomplete-but-valid prefix, and
-   otherwise they agree". The first clause survived; the second was measured
-   false by `\xc0` and `\xe0\x80`, where the console host waits *structurally*
-   on sequences Python rejects on sight.
+   otherwise they agree". Both clauses fell in the end: the second to `\xc0`
+   and `\xe0\x80`, where the console host waits *structurally* on sequences
+   Python rejects on sight; then the first to `\xed\xa0`, a surrogate lead
+   CPython holds and flushes as *two* replacements — in the set the flush
+   reports, while being a prefix of nothing valid.
 4. That correction landed in `_terminal_binding.py`, the changelog and both
    test files — and was left verbatim in the handover and the PR body.
 
 Two structural changes came out of it, and they are the transferable part:
 
 - **The measurement is executable data, not prose.**
-  `tests/_end_of_stream_tails.py` holds twelve trailing byte sequences with
+  `tests/_end_of_stream_tails.py` holds eighteen trailing byte sequences with
   both platforms' expected text; each binding's suite parametrizes over it.
+  The column saying which rows this change opened is defined *operationally* —
+  where the decoder still holds bytes — after four attempts to characterise it
+  by a rule were each measured false. Some facts are only available as
+  measurements, and writing them up as rules is how they go wrong.
   A table that is data cannot go stale against itself, and a row cannot be
   added without obliging both platforms. Round 2 found eight of the table's
   rows pinned by nothing while the commit that wrote them said "an unpinned
@@ -72,10 +78,12 @@ Two structural changes came out of it, and they are the transferable part:
   stale, not the rule. `_terminal_binding.py` now carries the rule and names
   the tests; the handover and changelog point at it instead of restating it.
 
-The method that actually caught defect 3 before a reviewer did is worth
-keeping: **stress the boundary of your own claim, not the claim itself.**
-Twelve tail shapes on two real hosts falsified a sentence that four readings
-of the code would not have.
+The method that caught half of defect 3 before a reviewer did is worth
+keeping: **stress the boundary of your own claim, not the claim itself.** A
+dozen tail shapes run against two real hosts falsified a sentence that four
+readings of the code would not have. It is also worth noting what that method
+did *not* catch — the replacement clause it produced was falsified in turn, by
+a reviewer, which is why the column is now operational rather than described.
 
 ## Other findings fixed in the round they were raised
 
@@ -86,26 +94,46 @@ of the code would not have.
   source. `ruff`, `ruff format` and `mypy` were all green with it in the tree,
   and `W605` cannot fire because those escapes are *valid*. Two reviewers read
   the file and saw correct source; the third read `__doc__`.
-  `tests/test_docstring_escapes.py` now scans every rendered docstring in the
-  package for characters no docstring writes on purpose — a check on the
-  output, not on the spelling — and it immediately found a **pre-existing**
-  instance of the same bug in `_posix_pty.py`, shipped since #267.
-- **The one-call deferral could lose the end of stream.** A close landing
-  between the read that returned the flushed text and the read that owes the
-  raise answered `TerminalClosedError`, which the adapter classifies as a
-  failure — so a run that had already ended, exit record captured, would be
-  reported as a binding closed outside the abort deadline. The watchdog's
-  expiry *is* such a close. Both bindings now latch end of stream; the ConPTY
-  side is pinned over its fake session even though its flush is unreachable
-  through a real host, because a port contract honoured by one of two
-  implementations is this repository's recurring defect.
+  `tests/test_docstring_escapes.py` guards it, and its own first version is a
+  fresh instance of the #199 lesson that **a ratchet's parser is itself an
+  attack surface**. That version scanned `src/` only and looked for control
+  characters in the *rendered* text, so round 3 walked a cooked `\xff` past it
+  in a `tests/` docstring — `\xff` renders as an ordinary lowercase letter,
+  and the original defect was caught only because `\x82` happens to land in
+  the C1 range. It now reads the source literal as well, across both trees.
+  Between them the two nets found a **pre-existing** instance in
+  `_posix_pty.py` shipped since #267, and one introduced minutes earlier in
+  this slice, in the docstring that warns about the defect.
+- **The one-call deferral can lose the end of stream**, and the attempt to fix
+  it inside this slice is the clearest lesson of the whole pass. A close
+  landing between the read that returned the flushed text and the read that
+  owes the raise answers `TerminalClosedError`, so a run that had already
+  ended, exit record captured, is reported as a failure. A latch was
+  prototyped on both bindings and pinned on both.
+
+  Round 3 then measured three things about it: the *mechanism* the PR gave was
+  wrong (a watchdog close produces a deadline abort, not the failure named);
+  the latch silently changed **abort attribution**, letting a run whose
+  deadline expired be reported `RunFinished`, against a policy `terminal.py`
+  states inline; and it bypassed the single-flight guard, so a widened race
+  delivered the flushed tail to the wrong caller.
+
+  **Reverted by owner decision.** The hazard is real, but latching it is a
+  decision about the abort contract rather than about decoding, and it does
+  not belong in a slice that fixes a decoder. `TerminalEndOfStreamError` now
+  states the limitation instead of promising "never dropped", and **#284**
+  carries the hazard with all of the measurements. The general shape is worth
+  keeping: *a fix that answers a review finding but reaches into a contract
+  the slice does not own is a new slice, not a smaller one.*
 - **Two unpinned adjacent paths**, both measured surviving by reviewers: the
   flush hoisted above `read`'s closed-binding guard, and the flush placed
   inside it before the raise.
 - Numerous prose corrections: whose truncation the held bytes represent, the
-  `ECHO` caveat on "bytes the subject wrote" (#273), "reports every byte" vs
-  the single `U+FFFD` that stands for N bytes, and stale pass counts quoted
-  from a run that predated the last test.
+  `ECHO` caveat on "bytes the subject wrote" (#273), "reports every byte" when
+  a flush emits replacements rather than bytes — and then "one `U+FFFD`
+  however many bytes were held", which round 3 falsified with `\xed\xa0`
+  flushing as two — and stale pass counts quoted from a run that predated the
+  last test.
 
 ## Residue filed
 
@@ -117,6 +145,10 @@ of the code would not have.
   while bounding this change's divergence.
 - **#283** — a normalizer rejection at end of stream discards the child's
   exit record. Pre-existing; widened by this change.
+- **#284** — a close in the flush's one-call deferral gap drops the
+  end-of-stream. Introduced by this change's own contract; the latch that
+  would close it was prototyped here and reverted, with every measurement
+  carried over.
 
 ## Deliberately not changed
 
