@@ -206,10 +206,11 @@ moratorium, recorded under `docs/agent/design/`.
   | 4 | #270 | Synthetic TUI and `examples/` walkthrough |
   | 5 | #271 | Recorded reassessment (decision request, not a slice) |
 
-- **Next actionable work is #281**, followed by #278, #283, and #284 before
-  Phase 3 (#269). Tracking issue #285 records the accepted evidence-first
-  sequence: pin the binding evidence the vertical consumes, settle the two
-  end-of-stream policy questions, then make the adapter-level POSIX claims.
+- **The prerequisite chain begins with #281**, followed by #278, #283, and
+  #284 before Phase 3 (#269). Tracking issue #285 records the accepted
+  evidence-first sequence: pin the binding evidence the vertical consumes,
+  settle the two end-of-stream policy questions, then make the adapter-level
+  POSIX claims.
   Until #269 lands, the README, the architecture page and the adapter's own
   docstring all continue to say the POSIX path is not proven end to end.
 - **Two issues were deferred out of Phase 1.** **#274** (POSIX binding

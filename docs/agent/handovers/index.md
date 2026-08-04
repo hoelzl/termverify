@@ -7,6 +7,10 @@ source of truth for volatile work state.
 
 ## Active
 
+- [Issue 281 — POSIX EOS exit-capture handover](issue-281-eos-exit-capture-handover.md)
+  — **blocked**; the complete local candidate cannot pass its required push
+  gate while the Windows host is under known heavy load. Resume on an idle
+  host, then push, review, and merge without weakening or bypassing the gate.
 - [POSIX PTY adapter and examples vertical handover](posix-pty-adapter-and-examples-vertical-handover.md)
   — **active**; the vertical tracked by issue #204, authorized by the accepted
   [vertical boundary decision](../design/posix-pty-adapter-and-examples-vertical-boundary.md)
