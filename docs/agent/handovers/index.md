@@ -7,9 +7,9 @@ source of truth for volatile work state.
 
 ## Active
 
-- [Issue 281 — POSIX EOS exit-capture handover](issue-281-eos-exit-capture-handover.md)
-  — **PR review**; [PR #301](https://github.com/hoelzl/termverify/pull/301) is
-  green, with documentation corrections pending delta review.
+- [Issue 278 — POSIX teardown evidence handover](issue-278-posix-teardown-evidence-handover.md)
+  — **implementation candidate**; seven deterministic probes pin teardown
+  ordering, failure cleanup, containment, refusal, and concurrent close.
 - [POSIX PTY adapter and examples vertical handover](posix-pty-adapter-and-examples-vertical-handover.md)
   — **active**; the vertical tracked by issue #204, authorized by the accepted
   [vertical boundary decision](../design/posix-pty-adapter-and-examples-vertical-boundary.md)
@@ -29,6 +29,10 @@ None.
 
 ## Archive
 
+- [Issue 281 — POSIX EOS exit-capture handover](archive/issue-281-eos-exit-capture-handover.md)
+  — **complete** (retired 2026-08-13); PR #301 pinned delayed EOS exit capture,
+  removed the uninformative 30-second test cost, and handed the prerequisite
+  sequence to issue #278.
 - [Adversarial review 2026-07-24 remediation handover](archive/adversarial-review-2026-07-24-remediation-handover.md)
   — **complete** (retired 2026-07-31); every finding in the
   [2026-07-24 adversarial review](../reviews/adversarial-review-2026-07-24.md)

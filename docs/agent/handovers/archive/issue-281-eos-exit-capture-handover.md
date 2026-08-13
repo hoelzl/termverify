@@ -2,13 +2,13 @@
 
 ## Handover metadata
 
-- **Status:** PR review — [#301](https://github.com/hoelzl/termverify/pull/301)
-  is open with all required CI checks green; the first adversarial review found
-  two documentation inaccuracies that are being reconciled before delta review.
+- **Status:** complete — [PR #301](https://github.com/hoelzl/termverify/pull/301)
+  merged as `643157a` on 2026-08-13 after green CI and clean delta review;
+  issue #281 is closed.
 - **Issue:** [#281](https://github.com/hoelzl/termverify/issues/281)
 - **Tracking:** [#285](https://github.com/hoelzl/termverify/issues/285)
 - **Created:** 2026-08-04
-- **Owner:** next TermVerify implementation session
+- **Owner:** none
 - **Review required:** yes — fresh-context adversarial review must cover the
   exact PR head before merge.
 - **Completion:** #281 is merged with its Linux/Python CI legs green, the issue
@@ -127,21 +127,13 @@ On 2026-08-13, after merging PR #300 and refreshing this branch to `b2c23cc`:
 - the formerly blocking ConPTY test passed in 0.75 seconds; and
 - the exact pre-push stage passed, including the complete test suite.
 
-## Current completion sequence
+## Completion
 
-The candidate has been inspected, mutation-tested, fully gated, pushed, and
-opened as draft PR #301. All required CI legs are green. The first fresh-context
-review confirmed the executable evidence and requested only the documentation
-corrections now present in the candidate.
-
-1. Push the documentation corrections through the normal hook.
-2. Wait for CI on the new exact head and obtain a clean delta review.
-3. Verify GitHub's closing references still name exactly #281, mark PR #301
-   ready, and merge with a merge commit.
-4. Confirm #281 closed, update tracker #285 and the active vertical handover so
-   #278 is the next actionable issue, archive this handover, update the handover
-   index, pull `main`, and remove the issue worktree/local branch only after
-   verifying the merge.
+The candidate was mutation-tested, fully gated, pushed, and merged through PR
+#301. The exact merged head passed all required CI legs. Fresh-context review
+confirmed the executable evidence; a delta review approved the corrected EOS
+wording and current-state handover at exact head `80e728a`. GitHub closed only
+#281. Issue #278 is the accepted next prerequisite in tracker #285.
 
 ## Risks and non-negotiables
 
@@ -158,7 +150,5 @@ corrections now present in the candidate.
 
 ## Transition
 
-- **PR review:** push the documentation corrections, wait for refreshed CI,
-  and obtain clean delta review against the exact head before merge.
-- **Become complete and archive** only after #281 merges and the tracker,
-  active vertical handover, worktree, and branches are reconciled.
+- **Complete and archived.** Successor: issue #278, which pins the remaining
+  POSIX teardown/refusal/concurrent-close invariants before adapter evidence.
