@@ -357,12 +357,13 @@ mutating *through* it:
 ```python
 class Doc(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True)
-    data: JsonValue          # pydantic's own built-in JSON type
+    data: JsonValue  # pydantic's own built-in JSON type
+
 
 d = Doc(data={"a": [1, {"deep": "value"}]})
-d.data = {}                           # rebind field   -> REJECTED ValidationError
-d.data["a"].append("INJECTED")        # mutate through -> ACCEPTED
-d.data["a"][1]["deep"] = "MUTATED"    # mutate through -> ACCEPTED
+d.data = {}  # rebind field   -> REJECTED ValidationError
+d.data["a"].append("INJECTED")  # mutate through -> ACCEPTED
+d.data["a"][1]["deep"] = "MUTATED"  # mutate through -> ACCEPTED
 # d.data == {'a': [1, {'deep': 'MUTATED'}, 'INJECTED']}
 ```
 
