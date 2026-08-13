@@ -9,8 +9,7 @@
   slices below in order.
 - **Owner:** project maintainer
 - **Created:** 2026-07-31
-- **Updated:** 2026-08-04 (PR #280 merged; evidence-first prerequisite
-  sequence accepted in tracking issue #285)
+- **Updated:** 2026-08-13 (PR #301 merged; #281 complete and #278 active)
 - **Review required:** yes. Every slice that changes runtime behavior, the
   public API, or a platform claim needs TDD evidence, the full validation
   gate, and an independent fresh-context adversarial review. **The review
@@ -206,8 +205,10 @@ moratorium, recorded under `docs/agent/design/`.
   | 4 | #270 | Synthetic TUI and `examples/` walkthrough |
   | 5 | #271 | Recorded reassessment (decision request, not a slice) |
 
-- **The prerequisite chain begins with #281**, followed by #278, #283, and
-  #284 before Phase 3 (#269). Tracking issue #285 records the accepted
+- **The prerequisite chain is active at #278.** #281 merged as PR #301 on
+  2026-08-13 after pinning delayed EOS exit capture and removing the 30-second
+  uninformative test cost. #278 is followed by #283 and #284 before Phase 3
+  (#269). Tracking issue #285 records the accepted
   evidence-first sequence: pin the binding evidence the vertical consumes,
   settle the two end-of-stream policy questions, then make the adapter-level
   POSIX claims.
@@ -302,7 +303,7 @@ moratorium, recorded under `docs/agent/design/`.
    same CI legs.
 5. ~~#279 (PR #280), the truncated-tail flush~~ **merged 2026-08-03** — taken
    before Phase 3 because it changes what a POSIX subject's evidence contains.
-6. **Pin the evidence Phase 3 consumes:** #281's delayed exit capture, then
+6. ~~Pin #281's delayed exit capture~~ **merged 2026-08-13** (PR #301). Now pin
    #278's teardown/refusal/concurrent-close invariants.
 7. **Settle #283 and #284's end-of-stream policies** before real-subject
    evidence codifies either classification accidentally.
