@@ -1401,11 +1401,28 @@ def test_forced_close_waits_out_in_flight_write(
     release_write = threading.Event()
     cancel_entered = threading.Event()
     release_first_cancel = threading.Event()
+    release_second_cancel = threading.Event()
     cancel_retried = threading.Event()
     native_close_called = threading.Event()
     write_errors: list[BaseException] = []
     close_errors: list[BaseException] = []
     barrier_timeout = 5.0
+
+    class PendingProbe:
+        """Record the wait loop's decisions around the real frame decrement."""
+
+        def __init__(self) -> None:
+            self.value = 1
+            self.zero_observations: list[bool] = []
+
+        def __eq__(self, other: object) -> bool:
+            result = other == 0 and self.value == 0
+            self.zero_observations.append(result)
+            return result
+
+        def __isub__(self, amount: int) -> PendingProbe:
+            self.value -= amount
+            return self
 
     session = child._pty
     assert session is not None
@@ -1428,6 +1445,9 @@ def test_forced_close_waits_out_in_flight_write(
             )
         else:
             cancel_retried.set()
+            assert release_second_cancel.wait(barrier_timeout), (
+                "test did not release the second cancellation attempt"
+            )
         real_cancel_io(current)
 
     def observed_close(current: Any) -> None:
@@ -1459,6 +1479,9 @@ def test_forced_close_waits_out_in_flight_write(
         _read_until(child, "TV_READY", collected)
         writer.start()
         assert write_entered.wait(barrier_timeout), "write never became in-flight"
+        pending_probe = PendingProbe()
+        native_child: Any = child
+        native_child._pending_io = pending_probe
         closer.start()
         assert cancel_entered.wait(barrier_timeout), "close never observed pending I/O"
 
@@ -1486,11 +1509,19 @@ def test_forced_close_waits_out_in_flight_write(
             "close released native handles under an in-flight write"
         )
 
+        # Keep the second cancellation call on a barrier while the real write
+        # frame returns and decrements the instrumented pending count. Only
+        # then may close continue: the correct loop reads the new zero and
+        # returns, whereas a fixed two-shot implementation never observes it.
         release_write.set()
         writer.join(barrier_timeout)
+        assert not writer.is_alive()
+        assert pending_probe.value == 0
+        release_second_cancel.set()
         closer.join(barrier_timeout)
     finally:
         release_first_cancel.set()
+        release_second_cancel.set()
         release_write.set()
         child.close(force=True)
 
@@ -1499,6 +1530,7 @@ def test_forced_close_waits_out_in_flight_write(
     assert not write_errors, write_errors
     assert not close_errors, close_errors
     assert native_close_called.is_set()
+    assert pending_probe.zero_observations == [False, False, True]
     assert child.exit_status == FORCED_TERMINATION_EXIT_CODE
     with pytest.raises(ConptyClosedError):
         child.write("late\r\n")
