@@ -1,0 +1,1 @@
+- Pin the POSIX PTY binding's teardown ordering, failure cleanup, process-group containment, release-only refusal, and concurrent-close evidence with deterministic regression probes.

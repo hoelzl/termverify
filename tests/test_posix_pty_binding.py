@@ -32,6 +32,7 @@ import subprocess
 import sys
 import threading
 import time
+from typing import Any
 
 import pytest
 
@@ -1007,6 +1008,134 @@ def test_a_write_that_cannot_proceed_watches_the_wake_pipe(
 
 
 @_LINUX_ONLY
+def test_close_waits_for_an_in_flight_write_before_releasing_descriptors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Close cannot free the master while a write frame still owns its number.
+
+    Scripted barriers separate the write frame, close's delivery wait, and
+    descriptor release. This pins ordering rather than latency: close must
+    enter the write-delivery wait, and descriptor release must remain
+    unreachable until the write frame returns and sets its delivery event.
+    """
+    child = _spawn("import time; time.sleep(300)")
+    write_entered = threading.Event()
+    release_write = threading.Event()
+    close_waiting = threading.Event()
+    write_returned = threading.Event()
+    descriptors_released = threading.Event()
+    writer_errors: list[BaseException] = []
+    close_errors: list[BaseException] = []
+    barrier_timeout = 5.0
+
+    class DeliveryBarrier:
+        def clear(self) -> None:
+            write_returned.clear()
+
+        def set(self) -> None:
+            write_returned.set()
+
+        def wait(self, timeout: float | None = None) -> bool:
+            close_waiting.set()
+            return write_returned.wait(barrier_timeout)
+
+    def blocked_write(self: PosixPtyChild, fd: int, wake: int, payload: bytes) -> None:
+        write_entered.set()
+        assert release_write.wait(barrier_timeout), (
+            "test did not release the write frame"
+        )
+
+    real_release = PosixPtyChild._release_descriptors
+
+    def observed_release(self: PosixPtyChild) -> None:
+        descriptors_released.set()
+        real_release(self)
+
+    monkeypatch.setattr(PosixPtyChild, "_write_all", blocked_write)
+    monkeypatch.setattr(PosixPtyChild, "_release_descriptors", observed_release)
+    native_child: Any = child
+    native_child._interrupted_write = DeliveryBarrier()
+
+    def write() -> None:
+        try:
+            child.write("blocked")
+        except BaseException as error:  # noqa: BLE001 - asserted below
+            writer_errors.append(error)
+
+    def close() -> None:
+        try:
+            child.close(force=True)
+        except BaseException as error:  # noqa: BLE001 - asserted below
+            close_errors.append(error)
+
+    writer = threading.Thread(target=write, name="tv-held-posix-write", daemon=True)
+    closer = threading.Thread(
+        target=close, name="tv-close-held-posix-write", daemon=True
+    )
+    try:
+        writer.start()
+        assert write_entered.wait(barrier_timeout), "write frame never became in-flight"
+        closer.start()
+        assert close_waiting.wait(barrier_timeout), (
+            "close skipped the write-delivery wait"
+        )
+        assert not descriptors_released.is_set(), (
+            "close released descriptors while the write frame still owned them"
+        )
+        assert closer.is_alive(), "close returned while the write frame was held"
+    finally:
+        release_write.set()
+        writer.join(barrier_timeout)
+        closer.join(barrier_timeout)
+        assert not writer.is_alive(), "write thread survived test cleanup"
+        assert not closer.is_alive(), "close thread survived test cleanup"
+
+    assert write_returned.is_set()
+    assert descriptors_released.is_set()
+    assert not writer_errors, writer_errors
+    assert not close_errors, close_errors
+
+
+@_LINUX_ONLY
+def test_forced_close_wakes_and_waits_for_io_before_terminating_the_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Wake and both delivery barriers precede forced termination."""
+    child = _spawn("import time; time.sleep(300)")
+    wake = child._wake_write
+    trace: list[str] = []
+    real_write = os.write
+    real_terminate = child._terminate_session
+
+    class ObservedDelivery:
+        def wait(self, timeout: float | None = None) -> bool:
+            trace.append("delivery")
+            return True
+
+    def observed_write(fd: int, payload: bytes) -> int:
+        if fd == wake:
+            trace.append("wake")
+        return real_write(fd, payload)
+
+    def observed_terminate(self: PosixPtyChild, process: object) -> None:
+        assert trace == ["wake", "delivery", "delivery"], (
+            f"session termination overtook close delivery: {trace}"
+        )
+        trace.append("terminate")
+        real_terminate(process)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(os, "write", observed_write)
+    monkeypatch.setattr(PosixPtyChild, "_terminate_session", observed_terminate)
+    native_child: Any = child
+    native_child._interrupted_read = ObservedDelivery()
+    native_child._interrupted_write = ObservedDelivery()
+
+    child.close(force=True)
+
+    assert trace == ["wake", "delivery", "delivery", "terminate"]
+
+
+@_LINUX_ONLY
 def test_a_forced_close_kills_the_session_and_records_the_real_exit() -> None:
     child = _spawn("import time; time.sleep(300)")
     pid = child.pid
@@ -1014,6 +1143,26 @@ def test_a_forced_close_kills_the_session_and_records_the_real_exit() -> None:
     assert child.exit_status == -FORCED_TERMINATION_SIGNAL
     with pytest.raises(OSError):
         os.kill(pid, 0)
+
+
+@_LINUX_ONLY
+def test_a_forced_close_targets_the_owned_process_group(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pid-only termination cannot satisfy the binding's containment claim."""
+    child = _spawn("import time; time.sleep(300)")
+    signalled_groups: list[tuple[int, int]] = []
+    real_killpg = os.killpg  # type: ignore[attr-defined,unused-ignore]
+
+    def observed_killpg(pgid: int, signal_number: int) -> None:
+        signalled_groups.append((pgid, signal_number))
+        real_killpg(pgid, signal_number)
+
+    monkeypatch.setattr(os, "killpg", observed_killpg)
+    child.close(force=True)
+
+    assert signalled_groups == [(child.pid, FORCED_TERMINATION_SIGNAL)]
+    assert child.exit_status == -FORCED_TERMINATION_SIGNAL
 
 
 @_LINUX_ONLY
@@ -1031,6 +1180,7 @@ def test_a_release_only_close_of_a_live_child_is_refused() -> None:
     :func:`test_the_live_child_refusal_catches_nothing_else`.
     """
     child = _spawn("import time; time.sleep(300)")
+    pid = child.pid
     try:
         with pytest.raises(_posix_pty.PosixPtyLiveChildError) as caught:
             child.close(force=False)
@@ -1038,8 +1188,14 @@ def test_a_release_only_close_of_a_live_child_is_refused() -> None:
         assert child.is_alive()
         # Still usable, not half-closed.
         child.resize(rows=10, columns=20)
-    finally:
         child.close(force=True)
+        assert child.exit_status == -FORCED_TERMINATION_SIGNAL
+    finally:
+        if child.is_alive():
+            with contextlib.suppress(OSError):
+                os.killpg(pid, FORCED_TERMINATION_SIGNAL)  # type: ignore[attr-defined,unused-ignore]
+            with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+                child._process.wait(timeout=_TIMEOUT_S)
 
 
 def test_the_live_child_refusal_catches_nothing_else() -> None:
@@ -1206,6 +1362,44 @@ def test_a_failed_construction_kills_the_child_it_cannot_adopt(
         except OSError:
             break
         assert time.monotonic() < deadline, f"child {orphan} outlived a failed spawn"
+
+
+@_LINUX_ONLY
+def test_abandoning_a_child_without_a_process_group_falls_back_to_its_pid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pre-``setsid`` child still has to die when spawn unwinds.
+
+    The group kill is forced to report ``ESRCH`` and the process object is a
+    scripted port, so only its pid fallback can change the observed state.
+    This isolates the helper's fallback from pty hangup and real process-group
+    timing.
+    """
+
+    class UnadoptedProcess:
+        pid = 424242
+
+        def __init__(self) -> None:
+            self.killed = False
+            self.waited = False
+
+        def kill(self) -> None:
+            self.killed = True
+
+        def wait(self, timeout: float | None = None) -> int:
+            self.waited = True
+            return -FORCED_TERMINATION_SIGNAL
+
+    process = UnadoptedProcess()
+
+    def no_group(pgid: int, signal_number: int) -> None:
+        raise ProcessLookupError(errno.ESRCH, "not a session leader yet")
+
+    monkeypatch.setattr(os, "killpg", no_group)
+    _posix_pty._abandon_spawned_child(process)  # type: ignore[arg-type]
+
+    assert process.killed, "the pid fallback did not terminate the child"
+    assert process.waited, "the abandoned child was not reaped"
 
 
 @_LINUX_ONLY
@@ -1781,6 +1975,38 @@ def test_a_close_that_cannot_signal_says_so_rather_than_returning(
 
 
 @_LINUX_ONLY
+def test_a_raising_close_still_releases_every_owned_descriptor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Descriptor release belongs to close's ``finally`` on a failed kill."""
+    child = _spawn("import time; time.sleep(300)")
+    pid = child.pid
+    master = child._master_fd
+    wake_read = child._wake_read
+    wake_write = child._wake_write
+
+    def refused(pgid: int, signal_number: int) -> None:
+        raise PermissionError(errno.EPERM, "not permitted")
+
+    monkeypatch.setattr(os, "killpg", refused)
+    try:
+        with pytest.raises(PermissionError):
+            child.close(force=True)
+        for fd in (master, wake_read, wake_write):
+            with pytest.raises(OSError):
+                os.fstat(fd)
+        assert child._master_fd == -1
+        assert child._wake_read == -1
+        assert child._wake_write == -1
+    finally:
+        monkeypatch.undo()
+        with contextlib.suppress(OSError):
+            os.killpg(pid, FORCED_TERMINATION_SIGNAL)  # type: ignore[attr-defined,unused-ignore]
+        with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+            child._process.wait(timeout=_TIMEOUT_S)
+
+
+@_LINUX_ONLY
 def test_a_second_close_waits_for_the_first_to_capture_the_exit_record() -> None:
     """A concurrent close must not hand back a half-closed binding.
 
@@ -1792,13 +2018,32 @@ def test_a_second_close_waits_for_the_first_to_capture_the_exit_record() -> None
     """
     child = _spawn("import time; time.sleep(300)")
     observed: list[int | None] = []
-    started = threading.Event()
+    capture_started = threading.Event()
+    release_capture = threading.Event()
+    follower_waiting = threading.Event()
+    close_finished = threading.Event()
+    barrier_timeout = 5.0
+    cleanup_timeout = 10.0
+
+    class CloseBarrier:
+        def set(self) -> None:
+            close_finished.set()
+
+        def wait(self, timeout: float | None = None) -> bool:
+            follower_waiting.set()
+            return close_finished.wait(barrier_timeout)
 
     def slow_capture(self: PosixPtyChild, process: object) -> None:
-        started.set()
-        time.sleep(0.5)  # arrangement, not evidence: widen the window
+        capture_started.set()
+        assert release_capture.wait(cleanup_timeout), (
+            "test did not release the leader's exit capture"
+        )
         with self._lock:
             self._exit_status = -FORCED_TERMINATION_SIGNAL
+
+    def follow_close() -> None:
+        child.close(force=True)
+        observed.append(child.exit_status)
 
     original_capture = PosixPtyChild._capture_exit_status_after_close
     original_terminate = PosixPtyChild._terminate_session
@@ -1809,14 +2054,22 @@ def test_a_second_close_waits_for_the_first_to_capture_the_exit_record() -> None
     # follower waited. Round 2 caught that; this is the deterministic form.
     PosixPtyChild._capture_exit_status_after_close = slow_capture  # type: ignore[method-assign]
     PosixPtyChild._terminate_session = lambda self, process: None  # type: ignore[method-assign]
+    native_child: Any = child
+    native_child._close_done = CloseBarrier()
+    first = threading.Thread(target=lambda: child.close(force=True), daemon=True)
+    second = threading.Thread(target=follow_close, daemon=True)
     try:
-        first = threading.Thread(target=lambda: child.close(force=True), daemon=True)
         first.start()
-        assert started.wait(_TIMEOUT_S)
-        child.close(force=True)
-        observed.append(child.exit_status)
-        first.join(_TIMEOUT_S)
+        assert capture_started.wait(barrier_timeout)
+        second.start()
+        assert follower_waiting.wait(barrier_timeout), (
+            "the second close returned instead of waiting for the leader"
+        )
+        assert not observed, "the follower observed exit evidence before capture"
     finally:
+        release_capture.set()
+        first.join(barrier_timeout)
+        second.join(barrier_timeout)
         PosixPtyChild._capture_exit_status_after_close = original_capture  # type: ignore[method-assign]
         PosixPtyChild._terminate_session = original_terminate  # type: ignore[method-assign]
         with contextlib.suppress(OSError):
@@ -1825,6 +2078,8 @@ def test_a_second_close_waits_for_the_first_to_capture_the_exit_record() -> None
         # and an unreaped child is a zombie for the rest of the session.
         with contextlib.suppress(OSError, subprocess.TimeoutExpired):
             child._process.wait(timeout=_TIMEOUT_S)
+        assert not first.is_alive(), "leader close thread survived test cleanup"
+        assert not second.is_alive(), "follower close thread survived test cleanup"
     assert observed == [-FORCED_TERMINATION_SIGNAL], (
         f"the second close returned before the exit record existed: {observed}"
     )
