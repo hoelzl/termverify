@@ -230,6 +230,18 @@ sys.stdout.write("TV_BEFORE" + {marker!r} + "TV_AFTER")
 sys.stdout.flush()
 """
 
+_NATURAL_EXIT_CHILD: Final = """\
+import sys
+
+sys.stdout.write("TV_READY\\r\\n")
+sys.stdout.flush()
+for line in sys.stdin:
+    if line.strip() == "exit":
+        sys.stdout.write("TV_EXIT\\r\\n")
+        sys.stdout.flush()
+        sys.exit(0)
+"""
+
 
 def _argv(script: str) -> list[str]:
     return [sys.executable, "-I", "-u", "-c", script]
@@ -387,6 +399,37 @@ def test_conpty_relays_a_printable_marker_in_stream_order() -> None:
     marker = combined.find(READINESS_MARKER_PREFIX_DEFAULT)
     after = combined.find("TV_AFTER")
     assert 0 <= before < marker < after, repr(combined[-300:])
+    assert child.exit_status == 0
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY integration evidence")
+def test_natural_child_exit_emits_host_mode_resets() -> None:
+    """Pin the host-owned teardown bytes excluded from repeat evidence (#297).
+
+    The child never writes either private-mode sequence. ConPTY emits them
+    when the console client exits naturally, and their ordering against the
+    child's final bytes is scheduler-dependent. This test claims presence,
+    not ordering; the repeat-run fixture below keeps this teardown outside
+    its compared epochs rather than teaching the exact comparator to ignore
+    arbitrary terminal output.
+    """
+    child = ConptyChild.spawn(
+        _argv(_NATURAL_EXIT_CHILD), rows=_WIDE_ROWS, columns=_WIDE_COLUMNS
+    )
+    chunks: list[str] = []
+    try:
+        child.write("exit\r\n")
+        while True:
+            chunks.append(child.read())
+    except ConptyEndOfStreamError:
+        pass
+    finally:
+        child.close(force=True)
+
+    output = "".join(chunks)
+    assert "TV_EXIT" in output
+    assert "\x1b[?9001l" in output
+    assert "\x1b[?1004l" in output
     assert child.exit_status == 0
 
 
@@ -815,6 +858,7 @@ def test_first_fully_successful_verified_run_with_cooperation_ports(
 # adapter's or recorder's, not the subject's.
 _REPEAT_ECHO_CHILD_TEMPLATE: Final = """\
 import sys
+import time
 
 MARKER_PREFIX = {prefix!r}
 MARKER_TERMINATOR = {terminator!r}
@@ -836,10 +880,9 @@ def emit(text):
 emit("TV_READY\\r\\n")
 for line in sys.stdin:
     command = line.strip()
-    if command == "exit":
-        sys.stdout.write("TV_EXIT\\r\\n")
-        sys.stdout.flush()
-        sys.exit(0)
+    if command == "final":
+        emit("TV_FINAL\\r\\n")
+        time.sleep(600)
     emit("TV_ECHO:" + command + "\\r\\n")
 """
 
@@ -863,14 +906,12 @@ def test_repeat_runs_reach_an_equivalent_comparator_verdict(tmp_path: Path) -> N
     under the exact comparator — the DirectAdapter repeat-run pattern
     promoted to the real ConPTY path.
 
-    Disclosed residual risk: coalescing merges only within one
-    observation. The epoch reader stops at the first readiness marker, so
-    bytes conhost flushes after the marker-bearing read belong to the
-    next epoch's chunks; if that flush timing ever differs across runs,
-    the same bytes land in different epochs and the comparator diverges
-    for a reason coalescing cannot mask. Not observed on the verified
-    matrix; if this test flakes with divergence at an epoch boundary,
-    suspect cross-epoch attribution, not chunk splits.
+    The fixture must keep process teardown outside the compared output. ConPTY
+    emits host-owned mode-reset sequences when the child exits, and their
+    position relative to the child's final bytes is scheduling-dependent.
+    A cooperative final marker followed by scripted ``Stop`` still exercises
+    two real input epochs and the forced-stop record, without claiming that
+    host teardown bytes are deterministic subject evidence (issue #297).
     """
 
     def one_run() -> bytes:
@@ -895,15 +936,31 @@ def test_repeat_runs_reach_an_equivalent_comparator_verdict(tmp_path: Path) -> N
                 _REPEAT_SUBJECT,
                 (
                     TextInput(ManualTime(0), "hello\r\n"),
-                    TextInput(ManualTime(0), "exit\r\n"),
+                    TextInput(ManualTime(0), "final\r\n"),
+                    Stop(ManualTime(0)),
                 ),
             )
         assert type(scripted.result) is TerminalResult, scripted.result
-        assert scripted.result.outcome == RunFinished(ExitStatus("code", 0))
+        assert scripted.result.outcome == RunFinished(
+            ExitStatus("code", FORCED_TERMINATION_EXIT_CODE)
+        )
         return scripted.transcript
 
     first = one_run()
     second = one_run()
+
+    for transcript in (first, second):
+        output = "".join(
+            event["data"]["chunk"]
+            for line in transcript.decode("utf-8").splitlines()
+            for record in (json.loads(line),)
+            if record["kind"] == "observation"
+            for event in record["payload"]["events"]
+            if event["type"] == "terminal.output"
+        )
+        assert "\x1b[?9001l" not in output
+        assert "\x1b[?1004l" not in output
+        assert "TV_FINAL" in output
 
     # Coalescing evidence on the real adapter: no observation retains
     # adjacent chunk events, whatever the native read boundaries were.

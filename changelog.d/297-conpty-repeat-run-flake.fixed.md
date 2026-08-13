@@ -1,0 +1,1 @@
+- Make the real-ConPTY repeat-run comparator evidence deterministic by keeping host-generated process-teardown mode resets outside the compared epochs. The fixture now completes a second cooperative input epoch before scripted forced stop, preserving the exact comparator and real adapter path without treating scheduling-dependent teardown bytes as subject evidence.
