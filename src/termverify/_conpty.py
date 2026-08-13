@@ -66,12 +66,11 @@ the write cannot be moved to another thread, and the deadline still cannot
 end it. Closing that boundary is #193's own work, deliberately not this
 slice's. The bound: if a subject stops draining conin and the console input
 buffer fills, ``write`` blocks and the adapter's abort deadline cannot end
-it. Measured on this matrix, conin sustains roughly 1 MiB/s — the console
-host turns every byte into input records — and the interactive inputs
-written here are far smaller than the measured workload. Throughput fell
-below that earlier rate under host contention (#286), so neither the rate nor
-the absence of backpressure is a product claim; a blocked write remains a
-disclosed theoretical failure mode outside the abort deadline.
+it. A bounded 4 MiB workload completed under hostile load on the verified
+matrix (#286), while larger workloads exposed substantial load-sensitive
+slowdown. That is progress evidence, not a throughput guarantee or proof that
+conin cannot backpressure; a blocked write remains a disclosed theoretical
+failure mode outside the abort deadline.
 
 Disclosed boundary — a close that cannot cancel in-flight native I/O leaks
 it (review 2026-07-24, section 4). Every ``close`` retries ``cancel_io``
