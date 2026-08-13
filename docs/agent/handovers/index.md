@@ -8,9 +8,9 @@ source of truth for volatile work state.
 ## Active
 
 - [Issue 281 — POSIX EOS exit-capture handover](issue-281-eos-exit-capture-handover.md)
-  — **active**; its unrelated ConPTY blocker is resolved, and the refreshed
-  candidate is proceeding through its required gate, CI, and fresh-context
-  adversarial review.
+  — **blocked**; its refreshed candidate is complete, but the exact pre-push
+  gate twice reproduced the unrelated order/load-sensitive ConPTY failure in
+  issue #299. No push or gate bypass is permitted.
 - [POSIX PTY adapter and examples vertical handover](posix-pty-adapter-and-examples-vertical-handover.md)
   — **active**; the vertical tracked by issue #204, authorized by the accepted
   [vertical boundary decision](../design/posix-pty-adapter-and-examples-vertical-boundary.md)

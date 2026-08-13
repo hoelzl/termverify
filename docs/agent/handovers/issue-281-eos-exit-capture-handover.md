@@ -2,9 +2,9 @@
 
 ## Handover metadata
 
-- **Status:** active — the unrelated ConPTY blocker was resolved by #286 and
-  #297; the candidate has been refreshed from current `main` and resumed
-  through its required gate, CI, and fresh-context review sequence.
+- **Status:** blocked — the refreshed candidate is complete, but the exact
+  pre-push gate twice reproduced the unrelated order/load-sensitive ConPTY
+  failure now tracked as #299. No push or gate bypass is permitted.
 - **Issue:** [#281](https://github.com/hoelzl/termverify/issues/281)
 - **Tracking:** [#285](https://github.com/hoelzl/termverify/issues/285)
 - **Created:** 2026-08-04
@@ -106,6 +106,15 @@ full POSIX binding file passed with 68 tests and 2 platform/interpreter skips in
 failed the focused oracle with `None != 0`. The mutation was reverted and the
 tree was clean before the wider gate.
 
+The exact pre-push stage then failed twice in succession at
+`test_forced_close_waits_out_in_flight_large_write`, while that test passed
+alone in 22.68 seconds. Both complete runs reached `_cancel_pending_io`'s
+production safety disclosure after pending native I/O did not clear, with
+2091 other tests passing and 70 skipped. This distinct order/load-sensitive
+contradiction is [#299](https://github.com/hoelzl/termverify/issues/299). Per the
+two-repeat stop rule, do not retry until lucky or bypass the hook; #299 must be
+settled first.
+
 After the UE5 rebuild and other heavy tasks have finished:
 
 1. Inspect the candidate before doing anything:
@@ -177,6 +186,6 @@ After the UE5 rebuild and other heavy tasks have finished:
 
 ## Transition
 
-- **Remain active** through the required gate, CI, and fresh-context review.
+- **Remain blocked** until #299 settles the repeated full-gate contradiction.
 - **Become complete and archive** only after #281 merges and the tracker,
   active vertical handover, worktree, and branches are reconciled.
