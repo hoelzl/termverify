@@ -8,8 +8,8 @@ source of truth for volatile work state.
 ## Active
 
 - [Issue 281 — POSIX EOS exit-capture handover](issue-281-eos-exit-capture-handover.md)
-  — **candidate ready**; issue #299 was resolved by merged PR #300, the branch
-  is refreshed, and its exact pre-push gate now passes.
+  — **PR review**; [PR #301](https://github.com/hoelzl/termverify/pull/301) is
+  green, with documentation corrections pending delta review.
 - [POSIX PTY adapter and examples vertical handover](posix-pty-adapter-and-examples-vertical-handover.md)
   — **active**; the vertical tracked by issue #204, authorized by the accepted
   [vertical boundary decision](../design/posix-pty-adapter-and-examples-vertical-boundary.md)

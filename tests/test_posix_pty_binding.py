@@ -536,9 +536,9 @@ def test_end_of_stream_is_reported_once_the_child_and_its_slave_are_gone(
     """Measured: Linux reports ``EIO``, not an empty read.
 
     The binding normalizes whatever the platform does into its own
-    end-of-stream signal, and the exit record is captured with it — the
-    child has exited by definition at that point, so the bounded wait is a
-    reaping delay and never a liveness guess.
+    end-of-stream signal. This short-lived subject is expected to exit as its
+    last slave closes, so the bounded capture can bridge the measured reaping
+    gap. PTY end-of-stream alone does not prove process exit.
     """
     child = _spawn("print('BYE')")
     try:

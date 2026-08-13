@@ -2,8 +2,9 @@
 
 ## Handover metadata
 
-- **Status:** candidate ready — #299 was resolved by merged PR #300, the branch
-  was refreshed onto that merge, and the exact pre-push gate now passes.
+- **Status:** PR review — [#301](https://github.com/hoelzl/termverify/pull/301)
+  is open with all required CI checks green; the first adversarial review found
+  two documentation inaccuracies that are being reconciled before delta review.
 - **Issue:** [#281](https://github.com/hoelzl/termverify/issues/281)
 - **Tracking:** [#285](https://github.com/hoelzl/termverify/issues/285)
 - **Created:** 2026-08-04
@@ -34,7 +35,8 @@ ConPTY write-flood contradiction filed as #286.
 - **Branch:** `fix/issue-281-pin-eos-exit-capture`
 - **Implementation commit:** `8a0518a test: pin POSIX EOS exit capture (#281)`
 - **Refreshed base:** `origin/main` at `b2c23cc`
-- **Remote branch:** pending the normal verified push.
+- **Remote branch:** `origin/fix/issue-281-pin-eos-exit-capture`
+- **Pull request:** [#301](https://github.com/hoelzl/termverify/pull/301)
 
 Do not recreate the worktree or branch. Begin by inspecting them. The branch is
 the only committed copy of the candidate.
@@ -125,61 +127,21 @@ On 2026-08-13, after merging PR #300 and refreshing this branch to `b2c23cc`:
 - the formerly blocking ConPTY test passed in 0.75 seconds; and
 - the exact pre-push stage passed, including the complete test suite.
 
-After the UE5 rebuild and other heavy tasks have finished:
+## Current completion sequence
 
-1. Inspect the candidate before doing anything:
+The candidate has been inspected, mutation-tested, fully gated, pushed, and
+opened as draft PR #301. All required CI legs are green. The first fresh-context
+review confirmed the executable evidence and requested only the documentation
+corrections now present in the candidate.
 
-   ```bash
-   git -C 'C:\Users\tc\Programming\Python\Worktrees\termverify\issue-281' status --short --branch
-   git -C 'C:\Users\tc\Programming\Python\Worktrees\termverify\issue-281' log -2 --oneline
-   git -C 'C:\Users\tc\Programming\Python\Projects\termverify' status --short --branch
-   ```
-
-   Expect a clean issue worktree ahead of `origin/main`, a clean primary
-   checkout on `main`, and no remote issue branch.
-
-2. Run the formerly failing ConPTY test once on the now-idle host:
-
-   ```bash
-   uv --no-config run pytest tests/test_conpty_binding.py::test_write_flood_against_non_reading_child_never_blocked -q
-   ```
-
-   Run from the issue worktree. If it still fails, stop #281 again and
-   investigate #286 as a separate issue; do not fold a Windows ConPTY change
-   into this test-only POSIX candidate. If it passes, continue.
-
-3. Re-run the focused POSIX pair in WSL and the exact pre-push stage. Confirm
-   `termverify.__file__` resolves to this worktree if reusing a Linux venv.
-
-4. Push normally — never with `--no-verify` — and verify the remote ref exists:
-
-   ```bash
-   git push -u origin fix/issue-281-pin-eos-exit-capture
-   git ls-remote --heads origin fix/issue-281-pin-eos-exit-capture
-   ```
-
-   Prefer a tracked background push because the hook takes several minutes.
-
-5. Open a **draft** PR from the primary checkout with explicit
-   `--base main --head fix/issue-281-pin-eos-exit-capture`. The body must include
-   `Closes #281`, the mutation RED, the restored GREEN, the before/after timing,
-   the full gates, and the reason no changelog fragment is needed (test evidence
-   and internal handover only; no user-visible behavior or API changed).
-
-6. Wait for every claimed Linux/Python CI leg. Then run a fresh-context,
-   read-only adversarial review against the exact PR head. The reviewer must
-   independently verify that bypassing the capture fails the test, that the
-   public `exit_status` oracle cannot self-heal through `poll()`, and that the
-   faster injected-EIO leg still distinguishes close-caused from genuine EOS.
-
-7. Resolve findings, re-gate substantive changes, mark the PR ready, and merge
-   with a merge commit only after the exact reviewed head and CI are green.
-   Verify GitHub's closing references name exactly #281 before merge.
-
-8. Confirm #281 closed, check the #281 item in #285, update the active vertical
-   handover to make #278 the next actionable issue if its wording is not already
-   transition-safe, archive this handover, update the handover index, pull main,
-   and remove the issue worktree/local branch only after verifying the merge.
+1. Push the documentation corrections through the normal hook.
+2. Wait for CI on the new exact head and obtain a clean delta review.
+3. Verify GitHub's closing references still name exactly #281, mark PR #301
+   ready, and merge with a merge commit.
+4. Confirm #281 closed, update tracker #285 and the active vertical handover so
+   #278 is the next actionable issue, archive this handover, update the handover
+   index, pull `main`, and remove the issue worktree/local branch only after
+   verifying the merge.
 
 ## Risks and non-negotiables
 
@@ -196,7 +158,7 @@ After the UE5 rebuild and other heavy tasks have finished:
 
 ## Transition
 
-- **Candidate ready:** push normally, open the draft PR, wait for CI, and run
-  fresh adversarial review against the exact head.
+- **PR review:** push the documentation corrections, wait for refreshed CI,
+  and obtain clean delta review against the exact head before merge.
 - **Become complete and archive** only after #281 merges and the tracker,
   active vertical handover, worktree, and branches are reconciled.
