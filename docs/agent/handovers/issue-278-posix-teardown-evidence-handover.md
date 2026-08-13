@@ -60,8 +60,8 @@ Production `src/termverify/_posix_pty.py` is byte-identical to `origin/main` aft
 
 ## Verification completed
 
-- seven focused probes: pass;
-- full POSIX binding file: 73 passed, 2 skipped in 3.85s;
+- eight focused behavior probes: pass;
+- full POSIX binding file: 74 passed, 2 skipped;
 - ten complete POSIX binding file repetitions: pass;
 - Linux-platform mypy over `src tests scripts`: pass;
 - Windows-host focused mypy/ruff/format checks: run during development; rerun after final formatting before commit.

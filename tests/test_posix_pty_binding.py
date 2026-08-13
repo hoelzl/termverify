@@ -1137,6 +1137,9 @@ def test_forced_close_wakes_and_waits_for_io_before_terminating_the_session(
 
         def wait(self, timeout: float | None = None) -> bool:
             self._waiting.set()
+            assert timeout == _posix_pty._IO_DELIVERY_WAIT_S, (
+                f"close used the wrong {self._label} budget: {timeout}"
+            )
             completed = self._release.wait(timeout)
             if completed:
                 self._delivered.set()
