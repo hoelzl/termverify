@@ -90,10 +90,13 @@ but never reached readiness.
 That covers reading, not writing. An input epoch writes to the pseudoconsole
 input buffer before the read phase begins, and that write is under no
 watchdog: if the buffer fills because the subject never reads its input, the
-write blocks and the abort deadline cannot end it. No backpressure was
-observed on the verified matrix, so this is a disclosed boundary rather than
-a measured one, and it closes only when TermVerify owns the conin handle —
-see the `termverify._conpty` module docstring and
+write blocks and the abort deadline cannot end it. A bounded 4 MiB workload
+completed under hostile load on the verified matrix, but an earlier 16 MiB
+throughput probe repeatedly exceeded its 60-second containment cap under host
+contention ([issue #286](https://github.com/hoelzl/termverify/issues/286)).
+That is progress evidence, not a claim that conin cannot backpressure. Even
+though TermVerify now owns the conin handle, the synchronous native write is
+not cancellable; see the `termverify._conpty` module docstring and
 [issue #193](https://github.com/hoelzl/termverify/issues/193). Budget the
 deadline for the read phase and do not read the 2x figure as a bound on
 `dispatch` as a whole.
