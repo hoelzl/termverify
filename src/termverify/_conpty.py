@@ -50,8 +50,9 @@ developer guide. Cancellation and recovery are evidenced at this
 binding level only — startup failure fails closed for both a missing command
 and a command the OS refuses to start, forced close recovers from hostile
 children (output flood, busy spin, in-flight write) without leaking threads,
-with handle release proven by the release-only close evidence, and conin
-writes showed no backpressure on the verified matrix. Classification into
+with handle release proven by the release-only close evidence, and a bounded
+interactive-scale conin workload made sustained progress on the verified
+matrix. Classification into
 the structured failure/abort taxonomy is adapter behavior and remains
 unclaimed here.
 
@@ -67,8 +68,10 @@ slice's. The bound: if a subject stops draining conin and the console input
 buffer fills, ``write`` blocks and the adapter's abort deadline cannot end
 it. Measured on this matrix, conin sustains roughly 1 MiB/s — the console
 host turns every byte into input records — and the interactive inputs
-written here are far smaller than any plausible buffer, so this remains a
-stated bound rather than an observed failure.
+written here are far smaller than the measured workload. Throughput fell
+below that earlier rate under host contention (#286), so neither the rate nor
+the absence of backpressure is a product claim; a blocked write remains a
+disclosed theoretical failure mode outside the abort deadline.
 
 Disclosed boundary — a close that cannot cancel in-flight native I/O leaks
 it (review 2026-07-24, section 4). Every ``close`` retries ``cancel_io``

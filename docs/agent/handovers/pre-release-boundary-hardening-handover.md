@@ -759,9 +759,11 @@ OS-observed dead. Replaying the normalizer over the retained raw
 `terminal.output` chunks reproduces every frame and cursor — the design's
 replay rule, executed against real ConPTY output. The disclosed write
 follow-up is decided and recorded in the design: the watchdog wraps reads
-only, because conin writes showed no backpressure, the bounded write-flood
-test fails loudly on regression, and `cancel_io` cannot cancel conin
-writes; new blocking-write evidence would reopen the decision. Adversarial
+only because `cancel_io` cannot cancel conin writes. Issue #286 corrected the
+earlier no-backpressure overclaim after the unchanged 16 MiB flood exceeded
+its 60-second cap repeatedly under host contention. The test now records only
+bounded interactive-scale progress; a blocked conin write remains a disclosed
+failure mode outside the abort deadline. Adversarial
 review surfaced a previously undisclosed platform behavior, now measured
 and recorded as the design's DA-stall disclosure: conhost defers client
 output while its unanswered `CSI c` device-attributes query waits

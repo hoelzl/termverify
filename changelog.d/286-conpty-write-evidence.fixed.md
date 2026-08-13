@@ -1,0 +1,1 @@
+- Correct the ConPTY write evidence so a load-sensitive 16 MiB throughput benchmark no longer claims that conin cannot backpressure; the Windows matrix now records only bounded interactive-scale progress and explicitly retains blocked writes outside the abort deadline as a disclosed failure mode.
