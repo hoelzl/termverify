@@ -642,11 +642,13 @@ close lands, and ordering evidence shows close returns only after the
 write frame returned — the wait-out discipline that prevents the
 release-during-native-call crash (observed experimentally). Handle release
 stays observable under hostile load: a release-only close under flood
-still ends the child with `STATUS_CONTROL_C_EXIT`. Conin writes showed no
-backpressure on the verified matrix (7.1 GiB in 20 s against a child that
-never reads, experiment recorded in issue #110), and a write that did
-block on some SKU would fail the bounded-flood test loudly rather than
-hang it. Classification of these outcomes into the structured
+still ends the child with `STATUS_CONTROL_C_EXIT`. The original conin
+experiment recorded in issue #110 was later narrowed by issue #286: a 16 MiB
+write workload repeatedly exceeded its 60-second containment cap under host
+contention, while a 4 MiB workload completed under hostile load. That proves
+bounded progress on the verified matrix, not absence of backpressure; a
+blocked write remains outside the abort deadline. Classification of these
+outcomes into the structured
 failure/abort taxonomy is adapter behavior and stays unclaimed until the
 public `Adapter` slice; dimensions receipts, enforcement receipts, and
 evidence normalization remain unproven and fail-closed.
@@ -721,10 +723,10 @@ genuine aftermath of a deadline-driven close is ever attributed to the
 deadline. Forced stop records the observed exit with a forced-termination
 disclosure diagnostic bounding evidence at the last marker; `KeyInput`
 uses the structured runtime-failure path. Disclosed follow-up for slice 4:
-the watchdog wraps only reads per the accepted design; binding evidence
-(issue #110) showed no conin write backpressure on the verified matrix,
-and whether writes also need deadline protection is a slice-4
-consideration. Windows integration evidence — real ConPTY path, marker
+the watchdog wraps only reads per the accepted design. The original issue
+#110 no-backpressure claim was corrected by issue #286 after its bounded
+throughput oracle flipped under host contention; writes remain outside the
+abort deadline. Windows integration evidence — real ConPTY path, marker
 passthrough, cooperative fixture child, end-to-end dimensions observation —
 remains slice 4 and fail-closed.
 
@@ -759,9 +761,11 @@ OS-observed dead. Replaying the normalizer over the retained raw
 `terminal.output` chunks reproduces every frame and cursor — the design's
 replay rule, executed against real ConPTY output. The disclosed write
 follow-up is decided and recorded in the design: the watchdog wraps reads
-only, because conin writes showed no backpressure, the bounded write-flood
-test fails loudly on regression, and `cancel_io` cannot cancel conin
-writes; new blocking-write evidence would reopen the decision. Adversarial
+only because `cancel_io` cannot cancel conin writes. Issue #286 corrected the
+earlier no-backpressure overclaim after the unchanged 16 MiB flood exceeded
+its 60-second cap repeatedly under host contention. The test now records only
+bounded interactive-scale progress; a blocked conin write remains a disclosed
+failure mode outside the abort deadline. Adversarial
 review surfaced a previously undisclosed platform behavior, now measured
 and recorded as the design's DA-stall disclosure: conhost defers client
 output while its unanswered `CSI c` device-attributes query waits
