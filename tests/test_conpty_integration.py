@@ -880,6 +880,16 @@ def emit(text):
 emit("TV_READY\\r\\n")
 for line in sys.stdin:
     command = line.strip()
+    if command == "hello":
+        # Force two native reads inside one epoch: without recorder-side
+        # coalescing this deterministically leaves adjacent output events,
+        # keeping issue #195's real-adapter acceptance discriminating even
+        # when ConPTY happens to use stable read boundaries.
+        sys.stdout.write("TV_ECHO:")
+        sys.stdout.flush()
+        time.sleep(0.05)
+        emit("hello\\r\\n")
+        continue
     if command == "final":
         emit("TV_FINAL\\r\\n")
         time.sleep(600)
