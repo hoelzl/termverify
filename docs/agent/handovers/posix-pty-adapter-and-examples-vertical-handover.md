@@ -9,8 +9,8 @@
   slices below in order.
 - **Owner:** project maintainer
 - **Created:** 2026-07-31
-- **Updated:** 2026-08-03 (Phases 1 and 2 merged; #274 merged; #279 in
-  flight as PR #280)
+- **Updated:** 2026-08-04 (PR #280 merged; evidence-first prerequisite
+  sequence accepted in tracking issue #285)
 - **Review required:** yes. Every slice that changes runtime behavior, the
   public API, or a platform claim needs TDD evidence, the full validation
   gate, and an independent fresh-context adversarial review. **The review
@@ -206,11 +206,13 @@ moratorium, recorded under `docs/agent/design/`.
   | 4 | #270 | Synthetic TUI and `examples/` walkthrough |
   | 5 | #271 | Recorded reassessment (decision request, not a slice) |
 
-- **Next actionable work is Phase 3 (#269)** — the adapter-level POSIX
-  evidence. It is now the *only* thing standing between a shipped
-  `PosixPtyBinding` and a POSIX path anyone may rely on, and until it lands
-  the README, the architecture page and the adapter's own docstring all say so
-  explicitly.
+- **The prerequisite chain begins with #281**, followed by #278, #283, and
+  #284 before Phase 3 (#269). Tracking issue #285 records the accepted
+  evidence-first sequence: pin the binding evidence the vertical consumes,
+  settle the two end-of-stream policy questions, then make the adapter-level
+  POSIX claims.
+  Until #269 lands, the README, the architecture page and the adapter's own
+  docstring all continue to say the POSIX path is not proven end to end.
 - **Two issues were deferred out of Phase 1.** **#274** (POSIX binding
   residue) was cleared *before* Phase 3 rather than alongside it, because two
   of its findings sat directly under the slice that comes next — `_read_until`
@@ -223,10 +225,11 @@ moratorium, recorded under `docs/agent/design/`.
   touched neither: a pure-refactor slice is the wrong place to change what
   the scanner honours.
 - **Three issues came out of #274's review rounds.** **#277** (JSONL's
-  bare-`RuntimeError` twin of the refusal type #274 fixed) and **#278** (four
-  correct-but-unpinned teardown invariants) are open and unscheduled; neither
-  blocks Phase 3. **#279** is in flight as PR #280 and is the one worth
-  reading before Phase 3, because it changes what reaches a transcript: the
+  bare-`RuntimeError` twin of the refusal type #274 fixed) remains deferred.
+  **#278** (four correct-but-unpinned teardown invariants) is now sequenced
+  before Phase 3 because #269 consumes those invariants as platform evidence.
+  **#279 merged as PR #280 on 2026-08-03** and is the one worth reading before
+  Phase 3, because it changes what reaches a transcript: the
   POSIX binding discarded whatever its UTF-8 decoder held at end-of-stream,
   so a subject that stopped part-way through a multibyte character produced
   a transcript asserting it wrote only the bytes before it. It now flushes,
@@ -297,13 +300,15 @@ moratorium, recorded under `docs/agent/design/`.
    for Phase 3 but it was underneath it: the read helper every evidence test
    uses had no bound, and Phase 3 adds more tests to that same helper on the
    same CI legs.
-5. **#279 (PR #280), in flight** — the truncated-tail flush, taken before
-   Phase 3 for the same reason #274 was: it changes what a POSIX subject's
-   evidence contains, and Phase 3 is the slice that starts asserting on it.
-6. **Then Phase 3 (#269)**, the adapter-level POSIX evidence, and #270 after
-   it — each consumes its predecessor. Prepare #271 once they have landed.
-   **#277 and #278** (both from #274's review) stay open and unscheduled;
-   neither blocks Phase 3.
+5. ~~#279 (PR #280), the truncated-tail flush~~ **merged 2026-08-03** — taken
+   before Phase 3 because it changes what a POSIX subject's evidence contains.
+6. **Pin the evidence Phase 3 consumes:** #281's delayed exit capture, then
+   #278's teardown/refusal/concurrent-close invariants.
+7. **Settle #283 and #284's end-of-stream policies** before real-subject
+   evidence codifies either classification accidentally.
+8. **Then Phase 3 (#269)**, including #273's PTY echo/marker experiments;
+   #270 follows through public APIs, and #271 is the owner reassessment gate.
+   #277 remains deferred unless executable evidence changes its disposition.
 
 A note on how to get a red for this work, learned on #274 and worth keeping:
 **a local WSL Ubuntu runs the POSIX suite in ~33s**, against the same
