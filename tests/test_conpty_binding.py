@@ -1400,6 +1400,8 @@ def test_forced_close_waits_out_in_flight_write(
     write_entered = threading.Event()
     release_write = threading.Event()
     cancel_entered = threading.Event()
+    release_first_cancel = threading.Event()
+    cancel_retried = threading.Event()
     native_close_called = threading.Event()
     write_errors: list[BaseException] = []
     close_errors: list[BaseException] = []
@@ -1410,17 +1412,29 @@ def test_forced_close_waits_out_in_flight_write(
     session_type = type(session)
     real_cancel_io = session_type.cancel_io
     real_close = session_type.close
+    cancel_calls = 0
 
     def blocked_write(_session: Any, _data: bytes) -> None:
         write_entered.set()
         assert release_write.wait(barrier_timeout), "test did not release native write"
 
     def observed_cancel_io(current: Any) -> None:
-        cancel_entered.set()
+        nonlocal cancel_calls
+        cancel_calls += 1
+        if cancel_calls == 1:
+            cancel_entered.set()
+            assert release_first_cancel.wait(barrier_timeout), (
+                "test did not release the first cancellation attempt"
+            )
+        else:
+            cancel_retried.set()
         real_cancel_io(current)
 
     def observed_close(current: Any) -> None:
         native_close_called.set()
+        assert release_write.is_set(), (
+            "close released native handles before pending I/O cleared"
+        )
         real_close(current)
 
     monkeypatch.setattr(session_type, "write", blocked_write)
@@ -1455,10 +1469,28 @@ def test_forced_close_waits_out_in_flight_write(
             "close released native handles under an in-flight write"
         )
 
+        # Return from the first cancellation attempt while the write remains
+        # blocked. The real wait-out loop must observe pending I/O again and
+        # retry; a one-shot implementation proceeds to native close instead.
+        release_first_cancel.set()
+        deadline = time.monotonic() + barrier_timeout
+        while not cancel_retried.is_set() and not native_close_called.is_set():
+            assert time.monotonic() < deadline, (
+                "close neither retried cancellation nor attempted native close"
+            )
+            time.sleep(0.001)
+        assert cancel_retried.is_set(), (
+            "close did not keep waiting while the write frame held the session"
+        )
+        assert not native_close_called.is_set(), (
+            "close released native handles under an in-flight write"
+        )
+
         release_write.set()
         writer.join(barrier_timeout)
         closer.join(barrier_timeout)
     finally:
+        release_first_cancel.set()
         release_write.set()
         child.close(force=True)
 
