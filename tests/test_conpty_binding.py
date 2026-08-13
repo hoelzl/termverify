@@ -1524,9 +1524,11 @@ def test_forced_close_waits_out_in_flight_write(
         release_second_cancel.set()
         release_write.set()
         child.close(force=True)
+        writer.join(barrier_timeout)
+        closer.join(barrier_timeout)
+        assert not writer.is_alive(), "write thread survived test cleanup"
+        assert not closer.is_alive(), "close thread survived test cleanup"
 
-    assert not writer.is_alive()
-    assert not closer.is_alive()
     assert not write_errors, write_errors
     assert not close_errors, close_errors
     assert native_close_called.is_set()
