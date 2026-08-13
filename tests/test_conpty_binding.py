@@ -24,8 +24,8 @@ Windows-matrix CI evidence:
   close recovers from an unbounded output flood, a busy unresponsive child,
   and an in-flight native write without leaking threads, with handle
   release observed under flood via the release-only close; overlapped I/O
-  fails fast because the native layer is not thread-safe for it; conin
-  writes showed no backpressure on this matrix.
+  fails fast because the native layer is not thread-safe for it; a bounded
+  interactive-scale conin workload makes sustained progress on this matrix.
 
 The slice-1 lifecycle behaviors (creation, dimensions, echo, burst, resize,
 forced close, integer exit status) remain covered against the native read
@@ -1210,7 +1210,7 @@ time.sleep(600)
 """
 
 _WRITE_CHUNK: Final = "W" * 65536
-_WRITE_FLOOD_CHUNKS: Final = 256
+_WRITE_PROBE_CHUNKS: Final = 64
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
@@ -1314,14 +1314,15 @@ def test_release_only_close_under_output_flood_releases_handles() -> None:
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
-def test_write_flood_against_non_reading_child_never_blocked() -> None:
-    """Item 5 (write path): no conin backpressure observed on this matrix.
+def test_interactive_scale_writes_progress_against_non_reading_child() -> None:
+    """Item 5 (write path): bounded interactive-scale progress on this matrix.
 
-    The child never reads stdin, yet every bounded write returns — conhost
-    consumes input regardless of the client. The writes run on a helper
-    thread only so a regression on some SKU cannot hang the test run; the
-    evidence is the completion event, not thread state, and a blocked write
-    would fail this test loudly rather than hanging it.
+    The child never reads stdin. The probe records only that this 4 MiB
+    workload completes; it does not infer unbounded consumption or the
+    absence of backpressure. The former 16 MiB flood was a load-sensitive
+    throughput benchmark whose 60-second cap flipped under host contention.
+    The helper thread and timeout only keep a contradiction from hanging the
+    test process; they are not evidence of a latency or throughput guarantee.
     """
     child = _spawn(_DEAF_CHILD)
     watchdog = _ForcedCloseWatchdog(child)
@@ -1331,7 +1332,7 @@ def test_write_flood_against_non_reading_child_never_blocked() -> None:
 
     def flood() -> None:
         try:
-            for _ in range(_WRITE_FLOOD_CHUNKS):
+            for _ in range(_WRITE_PROBE_CHUNKS):
                 child.write(_WRITE_CHUNK)
             completed.set()
         except BaseException as error:
@@ -1347,7 +1348,7 @@ def test_write_flood_against_non_reading_child_never_blocked() -> None:
         child.close(force=True)
         writer.join(_TIMEOUT_SECONDS)
 
-    assert finished, f"bounded write flood did not complete: {write_errors!r}"
+    assert finished, f"bounded write probe did not complete: {write_errors!r}"
     assert not write_errors
     assert not writer.is_alive()
     assert child.exit_status == FORCED_TERMINATION_EXIT_CODE
@@ -1391,14 +1392,13 @@ def test_forced_close_waits_out_in_flight_large_write() -> None:
     (``cancel_io`` does not cancel conin writes; the wait-out is the
     discipline under test).
 
-    The size is chosen against the measured conin throughput (~1 MiB/s: the
-    console host turns every byte into input records), so the write stays in
-    flight for seconds — long enough for the close to provably overlap it —
-    while still finishing inside the close's cancellation budget. It is
-    deliberately far below the budget: ``write`` now writes every byte it was
-    given rather than however many the previous binding's single native call
-    happened to take, so the same wall-clock window is a much smaller payload
-    than it used to be.
+    The 4 MiB size is large enough to keep a native write in flight until the
+    close overlaps it on the verified matrix, while still completing inside
+    the close's cancellation budget under hostile load. The overlap events,
+    not an assumed throughput rate, are the oracle. ``write`` now writes every
+    byte it was given rather than however many the previous binding's single
+    native call happened to take, so the same wall-clock window is a much
+    smaller payload than it used to be.
     """
     child = _spawn(_DEAF_CHILD)
     watchdog = _ForcedCloseWatchdog(child)

@@ -398,16 +398,20 @@ still has to be re-derived when the *shape* of the record those ceilings
 apply to changes, and budget evidence should be pushed through the real
 recorder and codec rather than through a replica of their rules.
 
-**Write coverage, decided 2026-07-18 (issue #121):** the watchdog wraps
-blocking reads only. Binding evidence showed no conin write backpressure on
-the verified matrix (a 7.1 GiB flood against a never-reading child never
-blocked, issue #110), the bounded write-flood test would fail loudly rather
-than hang if some SKU regressed that behavior, and `cancel_io` cannot cancel
-conin writes anyway — a write watchdog could only close the binding and then
-wait out the same native call it cannot interrupt. Deadline protection for
-writes is therefore not implemented; if future evidence shows a blocking
-conin write, that evidence reopens this decision rather than being absorbed
-silently.
+**Write coverage, decided 2026-07-18 (issue #121), corrected 2026-08-13
+(issue #286):** the watchdog wraps blocking reads only. The original evidence
+overclaimed that conin had no backpressure: an unchanged 16 MiB bounded flood
+later exceeded its 60-second test cap repeatedly under host contention. A
+focused probe measured sustained progress whose rate fell from roughly
+1 MiB/s to roughly 0.31 MiB/s over a 4 MiB workload. The binding test now
+records only completion of that bounded interactive-scale workload on the
+verified matrix; its timeout is hang containment, not latency or throughput
+evidence. `cancel_io` cannot cancel conin writes — a write watchdog could only
+close the binding and then wait out the same native call it cannot interrupt.
+Deadline protection for writes is therefore still not implemented. If a
+subject stops draining conin and the console input buffer fills, `write`
+can block outside the abort deadline; this is a disclosed failure mode, not
+an unreachable state.
 **Disclosed ambient floor (DA stall), measured 2026-07-18 (issue #121):**
 conhost's session preamble includes a `CSI c` primary device-attributes
 query, and while that query waits for an answer the host defers the

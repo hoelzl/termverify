@@ -483,9 +483,9 @@ and folded into this file by `scripts/collect_changelog.py` at release time.
   review.)
 - **Write every byte handed to `write()`.** The previous binding issued one
   native call and accepted whatever it took; the loop now writes the whole
-  payload. Conin sustains roughly 1 MiB/s — the console host turns every byte
-  into input records — so a large payload holds the single-flight slot for
-  proportionally longer than it used to.
+  payload. Conin turns bytes into input records, so a large payload can hold
+  the single-flight slot substantially longer than it used to; the rate is
+  load-sensitive and is not a product guarantee.
 
 - **Bounded the ConPTY epoch on frame rows and frame width, not only on
   frame bytes.** The per-epoch geometry gate added in #194 reserved four
