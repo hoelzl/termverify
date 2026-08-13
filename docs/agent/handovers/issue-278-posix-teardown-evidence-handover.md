@@ -30,8 +30,10 @@ Seven deterministic distinctions now cover the issue body and owner acceptance c
    injects `EPERM` and asks the OS whether all three owned descriptors are invalid after the raise.
 5. `test_a_forced_close_targets_the_owned_process_group`
    distinguishes the process-group signal from pid-only termination and retains the real exit record.
-6. `test_a_release_only_close_of_a_live_child_is_refused`
-   now proves the refusal is a no-op by continuing use and then performing a successful forced close with exit evidence.
+6. `test_a_release_only_close_of_a_live_child_is_refused` and
+   `test_a_release_only_refusal_does_not_interrupt_an_in_flight_read` prove
+   refusal is a true no-op: ordinary use and an active read survive, then a
+   later forced close records the exit.
 7. `test_a_second_close_waits_for_the_first_to_capture_the_exit_record`
    replaces its 0.5-second scheduling window with leader/follower barriers and proves the follower blocks until exit capture completes.
 
@@ -47,6 +49,8 @@ Each listed mutation was applied to the production source and reverted by its ex
 - delete the `finally` descriptor release → exceptional-release test finds an open descriptor;
 - replace process-group termination with `process.kill()` → group-target test records no `killpg` call;
 - set `_closed` before raising the release-only refusal → strengthened refusal test cannot perform honest later teardown (the test cleanup was then made direct/bounded so this mutation cannot stall the suite);
+- write the wake byte before raising the release-only refusal → the in-flight
+  read test fails because later input is rejected as closed-during-write;
 - return immediately in the follower-close branch → follower barrier is never entered and the concurrent-close test fails.
 
 Production `src/termverify/_posix_pty.py` is byte-identical to `origin/main` after restoration.

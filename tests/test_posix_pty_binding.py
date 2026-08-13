@@ -1198,6 +1198,45 @@ def test_a_release_only_close_of_a_live_child_is_refused() -> None:
                 child._process.wait(timeout=_TIMEOUT_S)
 
 
+@_LINUX_ONLY
+def test_a_release_only_refusal_does_not_interrupt_an_in_flight_read() -> None:
+    """Refusing to abandon a live child is a true no-op for active I/O."""
+    child = _spawn("import sys; print(sys.stdin.readline(), end='', flush=True)")
+    returned: list[str] = []
+    failures: list[BaseException] = []
+    read_finished = threading.Event()
+
+    def read() -> None:
+        try:
+            returned.append(child.read())
+        except BaseException as error:  # noqa: BLE001 - asserted below
+            failures.append(error)
+        finally:
+            read_finished.set()
+
+    reader = threading.Thread(target=read, name="tv-read-across-refusal", daemon=True)
+    reader.start()
+    deadline = time.monotonic() + _TIMEOUT_S
+    while not child._read_in_flight:
+        assert time.monotonic() < deadline, "the reader never became in-flight"
+        time.sleep(0.01)
+    try:
+        with pytest.raises(_posix_pty.PosixPtyLiveChildError):
+            child.close(force=False)
+        assert not read_finished.is_set(), "the refused close interrupted the read"
+
+        child.write("still open\n")
+        assert read_finished.wait(_TIMEOUT_S), (
+            "the read did not complete after the refused close"
+        )
+        assert not failures, failures
+        assert returned == ["still open\r\n"]
+    finally:
+        child.close(force=True)
+        reader.join(_TIMEOUT_S)
+        assert not reader.is_alive(), "read thread survived test cleanup"
+
+
 def test_the_live_child_refusal_catches_nothing_else() -> None:
     """A refusal type must not be a supertype of the failures around it.
 
