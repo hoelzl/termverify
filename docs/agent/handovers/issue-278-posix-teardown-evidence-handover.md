@@ -52,6 +52,9 @@ Each listed mutation was applied to the production source and reverted by its ex
 - write the wake byte before raising the release-only refusal → the in-flight
   read test fails because later input is rejected as closed-during-write;
 - return immediately in the follower-close branch → follower barrier is never entered and the concurrent-close test fails.
+- reduce either delivery wait or the follower completion wait to zero →
+  faithful barriers reject the wrong production budget and guarded state
+  transitions fail before descriptor release, termination, or follower return.
 
 Production `src/termverify/_posix_pty.py` is byte-identical to `origin/main` after restoration.
 

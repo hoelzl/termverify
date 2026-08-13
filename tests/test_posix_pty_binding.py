@@ -1037,7 +1037,10 @@ def test_close_waits_for_an_in_flight_write_before_releasing_descriptors(
 
         def wait(self, timeout: float | None = None) -> bool:
             close_waiting.set()
-            return write_returned.wait(barrier_timeout)
+            assert timeout == _posix_pty._IO_DELIVERY_WAIT_S, (
+                f"close used the wrong write-delivery budget: {timeout}"
+            )
+            return write_returned.wait(timeout)
 
     def blocked_write(self: PosixPtyChild, fd: int, wake: int, payload: bytes) -> None:
         write_entered.set()
@@ -1048,6 +1051,9 @@ def test_close_waits_for_an_in_flight_write_before_releasing_descriptors(
     real_release = PosixPtyChild._release_descriptors
 
     def observed_release(self: PosixPtyChild) -> None:
+        assert write_returned.is_set(), (
+            "close released descriptors before the write frame returned"
+        )
         descriptors_released.set()
         real_release(self)
 
@@ -1104,13 +1110,38 @@ def test_forced_close_wakes_and_waits_for_io_before_terminating_the_session(
     child = _spawn("import time; time.sleep(300)")
     wake = child._wake_write
     trace: list[str] = []
+    read_waiting = threading.Event()
+    release_read = threading.Event()
+    read_delivered = threading.Event()
+    write_waiting = threading.Event()
+    release_write = threading.Event()
+    write_delivered = threading.Event()
+    close_errors: list[BaseException] = []
+    barrier_timeout = 5.0
     real_write = os.write
     real_terminate = child._terminate_session
 
     class ObservedDelivery:
+        def __init__(
+            self,
+            *,
+            waiting: threading.Event,
+            release: threading.Event,
+            delivered: threading.Event,
+            label: str,
+        ) -> None:
+            self._waiting = waiting
+            self._release = release
+            self._delivered = delivered
+            self._label = label
+
         def wait(self, timeout: float | None = None) -> bool:
-            trace.append("delivery")
-            return True
+            self._waiting.set()
+            completed = self._release.wait(timeout)
+            if completed:
+                self._delivered.set()
+                trace.append(self._label)
+            return completed
 
     def observed_write(fd: int, payload: bytes) -> int:
         if fd == wake:
@@ -1118,21 +1149,54 @@ def test_forced_close_wakes_and_waits_for_io_before_terminating_the_session(
         return real_write(fd, payload)
 
     def observed_terminate(self: PosixPtyChild, process: object) -> None:
-        assert trace == ["wake", "delivery", "delivery"], (
+        assert read_delivered.is_set() and write_delivered.is_set(), (
+            "session termination overtook an I/O delivery barrier"
+        )
+        assert trace == ["wake", "read-delivery", "write-delivery"], (
             f"session termination overtook close delivery: {trace}"
         )
         trace.append("terminate")
         real_terminate(process)  # type: ignore[arg-type]
 
+    def close() -> None:
+        try:
+            child.close(force=True)
+        except BaseException as error:  # noqa: BLE001 - asserted below
+            close_errors.append(error)
+
     monkeypatch.setattr(os, "write", observed_write)
     monkeypatch.setattr(PosixPtyChild, "_terminate_session", observed_terminate)
     native_child: Any = child
-    native_child._interrupted_read = ObservedDelivery()
-    native_child._interrupted_write = ObservedDelivery()
+    native_child._interrupted_read = ObservedDelivery(
+        waiting=read_waiting,
+        release=release_read,
+        delivered=read_delivered,
+        label="read-delivery",
+    )
+    native_child._interrupted_write = ObservedDelivery(
+        waiting=write_waiting,
+        release=release_write,
+        delivered=write_delivered,
+        label="write-delivery",
+    )
+    closer = threading.Thread(target=close, name="tv-close-delivery-order", daemon=True)
+    try:
+        closer.start()
+        assert read_waiting.wait(barrier_timeout), "close skipped the read barrier"
+        assert trace == ["wake"]
+        release_read.set()
+        assert write_waiting.wait(barrier_timeout), "close skipped the write barrier"
+        assert trace == ["wake", "read-delivery"]
+        release_write.set()
+        closer.join(barrier_timeout)
+    finally:
+        release_read.set()
+        release_write.set()
+        closer.join(barrier_timeout)
+        assert not closer.is_alive(), "close thread survived test cleanup"
 
-    child.close(force=True)
-
-    assert trace == ["wake", "delivery", "delivery", "terminate"]
+    assert not close_errors, close_errors
+    assert trace == ["wake", "read-delivery", "write-delivery", "terminate"]
 
 
 @_LINUX_ONLY
@@ -2057,6 +2121,7 @@ def test_a_second_close_waits_for_the_first_to_capture_the_exit_record() -> None
     """
     child = _spawn("import time; time.sleep(300)")
     observed: list[int | None] = []
+    follower_errors: list[BaseException] = []
     capture_started = threading.Event()
     release_capture = threading.Event()
     follower_waiting = threading.Event()
@@ -2070,7 +2135,13 @@ def test_a_second_close_waits_for_the_first_to_capture_the_exit_record() -> None
 
         def wait(self, timeout: float | None = None) -> bool:
             follower_waiting.set()
-            return close_finished.wait(barrier_timeout)
+            expected = (
+                _posix_pty._IO_DELIVERY_WAIT_S * 2 + _posix_pty._CHILD_EXIT_WAIT_S
+            )
+            assert timeout == expected, (
+                f"follower close used the wrong completion budget: {timeout}"
+            )
+            return close_finished.wait(timeout)
 
     def slow_capture(self: PosixPtyChild, process: object) -> None:
         capture_started.set()
@@ -2081,8 +2152,11 @@ def test_a_second_close_waits_for_the_first_to_capture_the_exit_record() -> None
             self._exit_status = -FORCED_TERMINATION_SIGNAL
 
     def follow_close() -> None:
-        child.close(force=True)
-        observed.append(child.exit_status)
+        try:
+            child.close(force=True)
+            observed.append(child.exit_status)
+        except BaseException as error:  # noqa: BLE001 - asserted below
+            follower_errors.append(error)
 
     original_capture = PosixPtyChild._capture_exit_status_after_close
     original_terminate = PosixPtyChild._terminate_session
@@ -2122,6 +2196,7 @@ def test_a_second_close_waits_for_the_first_to_capture_the_exit_record() -> None
     assert observed == [-FORCED_TERMINATION_SIGNAL], (
         f"the second close returned before the exit record existed: {observed}"
     )
+    assert not follower_errors, follower_errors
 
 
 @_LINUX_ONLY
