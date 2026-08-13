@@ -1382,74 +1382,91 @@ def test_overlapping_io_fails_fast() -> None:
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
-def test_forced_close_waits_out_in_flight_large_write() -> None:
+def test_forced_close_waits_out_in_flight_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Item 5 (stop during in-flight I/O): close waits out a native write.
 
-    A single large write keeps the native call in flight for a substantial
-    window. Close must land inside that window and return only after the
-    write frame returned — releasing the native object during a native call
-    crashes the interpreter — and the write itself completes normally
-    (``cancel_io`` does not cancel conin writes; the wait-out is the
-    discipline under test).
-
-    The 4 MiB size is large enough to keep a native write in flight until the
-    close overlaps it on the verified matrix, while still completing inside
-    the close's cancellation budget under hostile load. The overlap events,
-    not an assumed throughput rate, are the oracle. ``write`` now writes every
-    byte it was given rather than however many the previous binding's single
-    native call happened to take, so the same wall-clock window is a much
-    smaller payload than it used to be.
+    The injected native-write barrier makes the safety ordering independent
+    of conin throughput: close enters its cancellation loop while the write
+    frame provably holds the session, cannot release the native handles, and
+    completes only after the frame returns. A real multi-megabyte write used
+    to arrange the overlap, making this test a hidden throughput benchmark —
+    16 MiB took 29.33 seconds against the production 30-second safety cap and
+    20 MiB reproduced the cap failure deterministically (issue #299).
     """
     child = _spawn(_DEAF_CHILD)
-    watchdog = _ForcedCloseWatchdog(child)
     collected: list[str] = []
-    events: dict[str, float] = {}
+    write_entered = threading.Event()
+    release_write = threading.Event()
+    cancel_entered = threading.Event()
+    native_close_called = threading.Event()
     write_errors: list[BaseException] = []
+    close_errors: list[BaseException] = []
+    barrier_timeout = 5.0
 
-    def big_write() -> None:
+    session = child._pty
+    assert session is not None
+    session_type = type(session)
+    real_cancel_io = session_type.cancel_io
+    real_close = session_type.close
+
+    def blocked_write(_session: Any, _data: bytes) -> None:
+        write_entered.set()
+        assert release_write.wait(barrier_timeout), "test did not release native write"
+
+    def observed_cancel_io(current: Any) -> None:
+        cancel_entered.set()
+        real_cancel_io(current)
+
+    def observed_close(current: Any) -> None:
+        native_close_called.set()
+        real_close(current)
+
+    monkeypatch.setattr(session_type, "write", blocked_write)
+    monkeypatch.setattr(session_type, "cancel_io", observed_cancel_io)
+    monkeypatch.setattr(session_type, "close", observed_close)
+
+    def write() -> None:
         try:
-            events["write_start"] = time.monotonic()
-            child.write("W" * (4 * 1024 * 1024))
-            events["write_end"] = time.monotonic()
+            child.write("W")
         except BaseException as error:
             write_errors.append(error)
 
-    writer = threading.Thread(target=big_write, name="tv-big-write", daemon=True)
+    def close() -> None:
+        try:
+            child.close(force=True)
+        except BaseException as error:
+            close_errors.append(error)
+
+    writer = threading.Thread(target=write, name="tv-blocked-write", daemon=True)
+    closer = threading.Thread(target=close, name="tv-close-during-write", daemon=True)
     try:
         _read_until(child, "TV_READY", collected)
         writer.start()
-        # Arrangement, not evidence: wait until the write is counted as
-        # in flight, so the close provably overlaps the native call.
-        deadline = time.monotonic() + _TIMEOUT_SECONDS
-        while child._pending_io == 0:
-            assert time.monotonic() < deadline, "write never became in-flight"
-            time.sleep(0.001)
+        assert write_entered.wait(barrier_timeout), "write never became in-flight"
+        closer.start()
+        assert cancel_entered.wait(barrier_timeout), "close never observed pending I/O"
 
-        close_called = time.monotonic()
-        child.close(force=True)
-        close_returned = time.monotonic()
+        assert closer.is_alive(), (
+            "close returned while the write frame held the session"
+        )
+        assert not native_close_called.is_set(), (
+            "close released native handles under an in-flight write"
+        )
 
-        writer.join(_TIMEOUT_SECONDS)
+        release_write.set()
+        writer.join(barrier_timeout)
+        closer.join(barrier_timeout)
     finally:
-        watchdog.cancel()
+        release_write.set()
         child.close(force=True)
 
     assert not writer.is_alive()
+    assert not closer.is_alive()
     assert not write_errors, write_errors
-    assert "write_end" in events, "the in-flight native write did not complete"
-    # Close overlapped the write and returned only after the write frame
-    # returned: the ordering evidence for the wait-out discipline. The
-    # second assertion is the load-bearing one — the write was still in
-    # flight when close was *entered*, not merely before it. Without it the
-    # test would degenerate into a tautology if conin ever got fast enough
-    # for the write to finish during the arrangement spin, and would still
-    # pass.
-    assert events["write_start"] < close_returned
-    assert events["write_end"] >= close_called, (
-        "the write completed before close was entered, so this run proves"
-        " nothing about close waiting one out"
-    )
-    assert events["write_end"] <= close_returned
+    assert not close_errors, close_errors
+    assert native_close_called.is_set()
     assert child.exit_status == FORCED_TERMINATION_EXIT_CODE
     with pytest.raises(ConptyClosedError):
         child.write("late\r\n")
