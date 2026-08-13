@@ -2,9 +2,9 @@
 
 ## Handover metadata
 
-- **Status:** blocked — the candidate is complete locally, but the required
-  pre-push gate is currently unreliable while the Windows host is under heavy
-  load. Resume only after that external load has subsided.
+- **Status:** active — the unrelated ConPTY blocker was resolved by #286 and
+  #297; the candidate has been refreshed from current `main` and resumed
+  through its required gate, CI, and fresh-context review sequence.
 - **Issue:** [#281](https://github.com/hoelzl/termverify/issues/281)
 - **Tracking:** [#285](https://github.com/hoelzl/termverify/issues/285)
 - **Created:** 2026-08-04
@@ -34,7 +34,7 @@ ConPTY write-flood contradiction filed as #286.
   `C:\Users\tc\Programming\Python\Worktrees\termverify\issue-281`
 - **Branch:** `fix/issue-281-pin-eos-exit-capture`
 - **Implementation commit:** `8a0518a test: pin POSIX EOS exit capture (#281)`
-- **Base:** `origin/main` at `3c5510d`
+- **Refreshed base:** `origin/main` at `fe8b305`
 - **Remote branch:** absent at handover time; the pre-push hook rejected the
   push, so no draft PR exists.
 
@@ -98,6 +98,13 @@ a status comment linking it. Do not bypass the hook or retry under the known
 heavy load merely to obtain green output.
 
 ## Resume sequence
+
+Resume began 2026-08-13. The replacement ConPTY progress test from #286 passed
+on the refreshed branch, the focused POSIX pair passed in 0.86 seconds, the
+full POSIX binding file passed with 68 tests and 2 platform/interpreter skips in
+4.84 seconds, and a fresh mutation bypassing `_capture_exit_status_after_eos`
+failed the focused oracle with `None != 0`. The mutation was reverted and the
+tree was clean before the wider gate.
 
 After the UE5 rebuild and other heavy tasks have finished:
 
@@ -170,9 +177,6 @@ After the UE5 rebuild and other heavy tasks have finished:
 
 ## Transition
 
-- **Remain blocked** while the host is under known heavy load or if #286 still
-  reproduces on an idle host.
-- **Become active** when the idle-host ConPTY probe and required pre-push gate
-  pass and the branch can be pushed without bypasses.
+- **Remain active** through the required gate, CI, and fresh-context review.
 - **Become complete and archive** only after #281 merges and the tracker,
   active vertical handover, worktree, and branches are reconciled.
