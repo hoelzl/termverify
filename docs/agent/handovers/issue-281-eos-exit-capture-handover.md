@@ -2,9 +2,8 @@
 
 ## Handover metadata
 
-- **Status:** blocked — the refreshed candidate is complete, but the exact
-  pre-push gate twice reproduced the unrelated order/load-sensitive ConPTY
-  failure now tracked as #299. No push or gate bypass is permitted.
+- **Status:** candidate ready — #299 was resolved by merged PR #300, the branch
+  was refreshed onto that merge, and the exact pre-push gate now passes.
 - **Issue:** [#281](https://github.com/hoelzl/termverify/issues/281)
 - **Tracking:** [#285](https://github.com/hoelzl/termverify/issues/285)
 - **Created:** 2026-08-04
@@ -34,9 +33,8 @@ ConPTY write-flood contradiction filed as #286.
   `C:\Users\tc\Programming\Python\Worktrees\termverify\issue-281`
 - **Branch:** `fix/issue-281-pin-eos-exit-capture`
 - **Implementation commit:** `8a0518a test: pin POSIX EOS exit capture (#281)`
-- **Refreshed base:** `origin/main` at `fe8b305`
-- **Remote branch:** absent at handover time; the pre-push hook rejected the
-  push, so no draft PR exists.
+- **Refreshed base:** `origin/main` at `b2c23cc`
+- **Remote branch:** pending the normal verified push.
 
 Do not recreate the worktree or branch. Begin by inspecting them. The branch is
 the only committed copy of the candidate.
@@ -113,7 +111,19 @@ production safety disclosure after pending native I/O did not clear, with
 2091 other tests passing and 70 skipped. This distinct order/load-sensitive
 contradiction is [#299](https://github.com/hoelzl/termverify/issues/299). Per the
 two-repeat stop rule, do not retry until lucky or bypass the hook; #299 must be
-settled first.
+settled first. Issue #299 was resolved by PR #300 with a deterministic
+state-transition oracle that removes native-write throughput from the close
+ordering test.
+
+On 2026-08-13, after merging PR #300 and refreshing this branch to `b2c23cc`:
+
+- the focused POSIX pair passed in 1.05 seconds;
+- the complete POSIX binding file passed with 68 tests and 2 skips in 6.47
+  seconds;
+- removing `_capture_exit_status_after_eos` again failed the focused oracle
+  with `None != 0`, and restoring it passed;
+- the formerly blocking ConPTY test passed in 0.75 seconds; and
+- the exact pre-push stage passed, including the complete test suite.
 
 After the UE5 rebuild and other heavy tasks have finished:
 
@@ -186,6 +196,7 @@ After the UE5 rebuild and other heavy tasks have finished:
 
 ## Transition
 
-- **Remain blocked** until #299 settles the repeated full-gate contradiction.
+- **Candidate ready:** push normally, open the draft PR, wait for CI, and run
+  fresh adversarial review against the exact head.
 - **Become complete and archive** only after #281 merges and the tracker,
   active vertical handover, worktree, and branches are reconciled.
