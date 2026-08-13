@@ -1392,14 +1392,13 @@ def test_forced_close_waits_out_in_flight_large_write() -> None:
     (``cancel_io`` does not cancel conin writes; the wait-out is the
     discipline under test).
 
-    The size is chosen against the measured conin throughput (~1 MiB/s: the
-    console host turns every byte into input records), so the write stays in
-    flight for seconds — long enough for the close to provably overlap it —
-    while still finishing inside the close's cancellation budget. It is
-    deliberately far below the budget: ``write`` now writes every byte it was
-    given rather than however many the previous binding's single native call
-    happened to take, so the same wall-clock window is a much smaller payload
-    than it used to be.
+    The 4 MiB size is large enough to keep a native write in flight until the
+    close overlaps it on the verified matrix, while still completing inside
+    the close's cancellation budget under hostile load. The overlap events,
+    not an assumed throughput rate, are the oracle. ``write`` now writes every
+    byte it was given rather than however many the previous binding's single
+    native call happened to take, so the same wall-clock window is a much
+    smaller payload than it used to be.
     """
     child = _spawn(_DEAF_CHILD)
     watchdog = _ForcedCloseWatchdog(child)
