@@ -1382,74 +1382,157 @@ def test_overlapping_io_fails_fast() -> None:
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
-def test_forced_close_waits_out_in_flight_large_write() -> None:
+def test_forced_close_waits_out_in_flight_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Item 5 (stop during in-flight I/O): close waits out a native write.
 
-    A single large write keeps the native call in flight for a substantial
-    window. Close must land inside that window and return only after the
-    write frame returned — releasing the native object during a native call
-    crashes the interpreter — and the write itself completes normally
-    (``cancel_io`` does not cancel conin writes; the wait-out is the
-    discipline under test).
-
-    The 4 MiB size is large enough to keep a native write in flight until the
-    close overlaps it on the verified matrix, while still completing inside
-    the close's cancellation budget under hostile load. The overlap events,
-    not an assumed throughput rate, are the oracle. ``write`` now writes every
-    byte it was given rather than however many the previous binding's single
-    native call happened to take, so the same wall-clock window is a much
-    smaller payload than it used to be.
+    The injected native-write barrier makes the safety ordering independent
+    of conin throughput: close enters its cancellation loop while the write
+    frame provably holds the session, cannot release the native handles, and
+    completes only after the frame returns. A real multi-megabyte write used
+    to arrange the overlap, making this test a hidden throughput benchmark —
+    16 MiB took 29.33 seconds against the production 30-second safety cap and
+    20 MiB reproduced the cap failure deterministically (issue #299).
     """
     child = _spawn(_DEAF_CHILD)
-    watchdog = _ForcedCloseWatchdog(child)
     collected: list[str] = []
-    events: dict[str, float] = {}
+    write_entered = threading.Event()
+    release_write = threading.Event()
+    cancel_entered = threading.Event()
+    release_first_cancel = threading.Event()
+    release_second_cancel = threading.Event()
+    cancel_retried = threading.Event()
+    native_close_called = threading.Event()
     write_errors: list[BaseException] = []
+    close_errors: list[BaseException] = []
+    barrier_timeout = 5.0
 
-    def big_write() -> None:
+    class PendingProbe:
+        """Record the wait loop's decisions around the real frame decrement."""
+
+        def __init__(self) -> None:
+            self.value = 1
+            self.zero_observations: list[bool] = []
+
+        def __eq__(self, other: object) -> bool:
+            result = other == 0 and self.value == 0
+            self.zero_observations.append(result)
+            return result
+
+        def __isub__(self, amount: int) -> PendingProbe:
+            self.value -= amount
+            return self
+
+    session = child._pty
+    assert session is not None
+    session_type = type(session)
+    real_cancel_io = session_type.cancel_io
+    real_close = session_type.close
+    cancel_calls = 0
+
+    def blocked_write(_session: Any, _data: bytes) -> None:
+        write_entered.set()
+        assert release_write.wait(barrier_timeout), "test did not release native write"
+
+    def observed_cancel_io(current: Any) -> None:
+        nonlocal cancel_calls
+        cancel_calls += 1
+        if cancel_calls == 1:
+            cancel_entered.set()
+            assert release_first_cancel.wait(barrier_timeout), (
+                "test did not release the first cancellation attempt"
+            )
+        else:
+            cancel_retried.set()
+            assert release_second_cancel.wait(barrier_timeout), (
+                "test did not release the second cancellation attempt"
+            )
+        real_cancel_io(current)
+
+    def observed_close(current: Any) -> None:
+        native_close_called.set()
+        assert release_write.is_set(), (
+            "close released native handles before pending I/O cleared"
+        )
+        real_close(current)
+
+    monkeypatch.setattr(session_type, "write", blocked_write)
+    monkeypatch.setattr(session_type, "cancel_io", observed_cancel_io)
+    monkeypatch.setattr(session_type, "close", observed_close)
+
+    def write() -> None:
         try:
-            events["write_start"] = time.monotonic()
-            child.write("W" * (4 * 1024 * 1024))
-            events["write_end"] = time.monotonic()
+            child.write("W")
         except BaseException as error:
             write_errors.append(error)
 
-    writer = threading.Thread(target=big_write, name="tv-big-write", daemon=True)
+    def close() -> None:
+        try:
+            child.close(force=True)
+        except BaseException as error:
+            close_errors.append(error)
+
+    writer = threading.Thread(target=write, name="tv-blocked-write", daemon=True)
+    closer = threading.Thread(target=close, name="tv-close-during-write", daemon=True)
     try:
         _read_until(child, "TV_READY", collected)
         writer.start()
-        # Arrangement, not evidence: wait until the write is counted as
-        # in flight, so the close provably overlaps the native call.
-        deadline = time.monotonic() + _TIMEOUT_SECONDS
-        while child._pending_io == 0:
-            assert time.monotonic() < deadline, "write never became in-flight"
+        assert write_entered.wait(barrier_timeout), "write never became in-flight"
+        pending_probe = PendingProbe()
+        native_child: Any = child
+        native_child._pending_io = pending_probe
+        closer.start()
+        assert cancel_entered.wait(barrier_timeout), "close never observed pending I/O"
+
+        assert closer.is_alive(), (
+            "close returned while the write frame held the session"
+        )
+        assert not native_close_called.is_set(), (
+            "close released native handles under an in-flight write"
+        )
+
+        # Return from the first cancellation attempt while the write remains
+        # blocked. The real wait-out loop must observe pending I/O again and
+        # retry; a one-shot implementation proceeds to native close instead.
+        release_first_cancel.set()
+        deadline = time.monotonic() + barrier_timeout
+        while not cancel_retried.is_set() and not native_close_called.is_set():
+            assert time.monotonic() < deadline, (
+                "close neither retried cancellation nor attempted native close"
+            )
             time.sleep(0.001)
+        assert cancel_retried.is_set(), (
+            "close did not keep waiting while the write frame held the session"
+        )
+        assert not native_close_called.is_set(), (
+            "close released native handles under an in-flight write"
+        )
 
-        close_called = time.monotonic()
-        child.close(force=True)
-        close_returned = time.monotonic()
-
-        writer.join(_TIMEOUT_SECONDS)
+        # Keep the second cancellation call on a barrier while the real write
+        # frame returns and decrements the instrumented pending count. Only
+        # then may close continue: the correct loop reads the new zero and
+        # returns, whereas a fixed two-shot implementation never observes it.
+        release_write.set()
+        writer.join(barrier_timeout)
+        assert not writer.is_alive()
+        assert pending_probe.value == 0
+        release_second_cancel.set()
+        closer.join(barrier_timeout)
     finally:
-        watchdog.cancel()
+        release_first_cancel.set()
+        release_second_cancel.set()
+        release_write.set()
         child.close(force=True)
+        writer.join(barrier_timeout)
+        closer.join(barrier_timeout)
+        assert not writer.is_alive(), "write thread survived test cleanup"
+        assert not closer.is_alive(), "close thread survived test cleanup"
 
-    assert not writer.is_alive()
     assert not write_errors, write_errors
-    assert "write_end" in events, "the in-flight native write did not complete"
-    # Close overlapped the write and returned only after the write frame
-    # returned: the ordering evidence for the wait-out discipline. The
-    # second assertion is the load-bearing one — the write was still in
-    # flight when close was *entered*, not merely before it. Without it the
-    # test would degenerate into a tautology if conin ever got fast enough
-    # for the write to finish during the arrangement spin, and would still
-    # pass.
-    assert events["write_start"] < close_returned
-    assert events["write_end"] >= close_called, (
-        "the write completed before close was entered, so this run proves"
-        " nothing about close waiting one out"
-    )
-    assert events["write_end"] <= close_returned
+    assert not close_errors, close_errors
+    assert native_close_called.is_set()
+    assert pending_probe.zero_observations == [False, False, True]
     assert child.exit_status == FORCED_TERMINATION_EXIT_CODE
     with pytest.raises(ConptyClosedError):
         child.write("late\r\n")
