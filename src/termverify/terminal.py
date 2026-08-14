@@ -1240,10 +1240,11 @@ class TerminalAdapter:
         chunks: Sequence[str],
         details: dict[str, JsonInput],
     ) -> Observation | None:
-        """Retain an exit observed before a later subject-output rejection.
+        """Retain an exit observed before a later epoch failure.
 
-        The raw chunks and native exit remain evidence even when the normalizer
-        cannot produce a trustworthy new frame. This deliberately does not call
+        The raw chunks and native exit remain evidence even when the epoch
+        itself must fail — a normalization rejection (#283) or an expired
+        abort deadline (#284). This deliberately does not call
         ``_snapshot``: it reuses only the last successfully normalized snapshot.
         That snapshot may belong to a larger pre-resize geometry, so its frame
         is accounted against the record's string budget before it is attached:
@@ -1299,7 +1300,9 @@ class TerminalAdapter:
             process=ProcessObservation.exited(status),
         )
 
-    def _deadline_abort(self, at_ms: ManualTime) -> TerminalResult:
+    def _deadline_abort(
+        self, at_ms: ManualTime, chunks: Sequence[str]
+    ) -> TerminalResult:
         # ``bound`` is recorded because two aborts that look identical need
         # opposite remediations: ``read`` means one read blocked for the whole
         # deadline (a stalled subject), ``epoch`` means the subject kept
@@ -1307,11 +1310,20 @@ class TerminalAdapter:
         # fix the marker). Without it the evidence cannot tell them apart.
         bound = self._deadline_bound
         self._deadline_bound = "read"
+        details: dict[str, JsonInput] = {
+            "abort-deadline-ms": self._abort_deadline_ms,
+            "bound": bound,
+        }
+        # An exit observed before the deadline fired is evidence about the
+        # process, not clemency for the epoch: it is retained, and the
+        # expired epoch stays failed (issue #284 policy).
+        observation = self._failure_observation_from_exit(at_ms, chunks, details)
         return self._fail_runtime(
             at_ms,
             "the abort deadline expired before quiescence evidence was"
             " observed; the deadline is host abort policy, not evidence",
-            {"abort-deadline-ms": self._abort_deadline_ms, "bound": bound},
+            details,
+            observation,
         )
 
     def _finish_from_exit(
@@ -1391,13 +1403,22 @@ class TerminalAdapter:
                 # was still observed (the forced close failed or lost the
                 # race): the abort policy fired, so no successful epoch may
                 # be claimed.
-                return self._deadline_abort(at_ms)
+                return self._deadline_abort(at_ms, chunks)
             observation = self._observation(at_ms, chunks, None)
         except TerminalEndOfStreamError:
+            # Reaching this handler with the deadline already expired is not
+            # a policy violation: the end of stream was observed no later
+            # than the deadline-driven close reaching the read — an EIO that
+            # lands in the expire→wake window is indistinguishable here from
+            # an observation that preceded the expiry — and the owner's
+            # #284 policy lets an end of stream observed before the close
+            # arrives finish the run. An expiry with no end of stream
+            # observed never reaches this handler: the close interrupts the
+            # read first, which classifies as the deadline abort above.
             return self._finish_from_exit(at_ms, chunks)
         except _EpochFailure as failure:
             if expired.is_set() or self._deadline_closed:
-                return self._deadline_abort(at_ms)
+                return self._deadline_abort(at_ms, chunks)
             failure_observation = (
                 self._failure_observation_from_exit(at_ms, chunks, failure.details)
                 if failure.details.get("during") == "normalize"

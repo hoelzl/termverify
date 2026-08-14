@@ -225,8 +225,12 @@ class TerminalEndOfStreamError(Exception):
     child's observed exit record. Collapsing it into any other kind would
     turn every clean subject exit into a runtime failure.
 
-    Raised only while the binding is open; a read interrupted by ``close``
-    raises :class:`TerminalClosedError` instead.
+    Raised while the binding is open, and — once end of stream has been
+    observed — also after ``close``: a stream that ended cannot un-end, so a
+    close landing in the deferred-delivery window (or any later read) still
+    reports the end of stream rather than :class:`TerminalClosedError`
+    (issue #284). A read interrupted by ``close`` *before* end of stream was
+    observed raises :class:`TerminalClosedError` instead.
 
     **The decoder is flushed before this is raised.** A binding decodes the
     bytes it receives, so at end of stream it may still hold an incomplete

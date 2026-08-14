@@ -209,6 +209,7 @@ class _FakeChild:
         resize_error: Exception | None = None,
         close_error: Exception | None = None,
         exit_error: Exception | None = None,
+        latch_eos: bool = False,
     ) -> None:
         self.reads = list(reads)
         self.reported_exit_status = (
@@ -218,6 +219,9 @@ class _FakeChild:
         self.resize_error = resize_error
         self.close_error = close_error
         self.exit_error = exit_error
+        #: Model the #284 end-of-stream latch: a scripted end-of-stream raise
+        #: survives a close, because a stream observed to end cannot un-end.
+        self.latch_eos = latch_eos
         self.written: list[str] = []
         self.resizes: list[tuple[int, int]] = []
         self.closes: list[bool] = []
@@ -238,6 +242,12 @@ class _FakeChild:
 
     def read(self) -> str:
         if self.closed:
+            if self.latch_eos and self.reads:
+                latched = self.reads[0]
+                if isinstance(latched, ConptyEndOfStreamError):
+                    self.reads.pop(0)
+                    self.reads_served += 1
+                    raise latched
             raise ConptyClosedError("the ConPTY binding is closed")
         if not self.reads:
             raise AssertionError("the fake child was read past its script")
@@ -1973,6 +1983,63 @@ def test_dispatch_deadline_abort_has_no_observation() -> None:
         "bound": "read",
     }
     assert binding.child.closed
+
+
+def test_end_of_stream_observed_before_expiry_finishes_the_run() -> None:
+    """Issue #284 policy: an end of stream observed before expiry may finish.
+
+    The watchdog's forced close lands in the deferred-delivery window — the
+    flush read already returned — and the owed end-of-stream raise still
+    arrives, because the binding latched it. The run finishes with the exit
+    record that was observed before the deadline fired.
+    """
+    binding = _FakeBinding(
+        _FakeChild(
+            [_marker(), ("tail", 0), ConptyEndOfStreamError("end of stream")],
+            latch_eos=True,
+        )
+    )
+    watchdog = _FakeWatchdog(fire_at_arm=3)
+    adapter = _adapter(binding, watchdog=watchdog)
+    started = adapter.start("run-conpty", _configuration())
+    assert type(started) is Started
+
+    result = adapter.dispatch(TextInput(ManualTime(0), "quit\r"))
+
+    assert type(result) is TerminalResult
+    assert result.outcome == RunFinished.code(0)
+    assert result.observation is not None
+    assert [event.data for event in result.observation.events] == [{"chunk": "tail"}]
+
+
+def test_end_of_stream_lost_to_the_expiry_close_fails_the_epoch() -> None:
+    """The pre-#284 behavior: without the latch, the close wins the gap.
+
+    The expired deadline remains a failed epoch, and the exit the close
+    captured is retained as evidence rather than silently converting the
+    epoch into a success — or vanishing.
+    """
+    binding = _FakeBinding(
+        _FakeChild(
+            [_marker(), ("tail", 0), ConptyEndOfStreamError("end of stream")],
+        )
+    )
+    watchdog = _FakeWatchdog(fire_at_arm=3)
+    adapter = _adapter(binding, watchdog=watchdog)
+    started = adapter.start("run-conpty", _configuration())
+    assert type(started) is Started
+
+    result = adapter.dispatch(TextInput(ManualTime(0), "quit\r"))
+
+    assert type(result) is TerminalResult
+    assert type(result.outcome) is RunFailed
+    assert result.outcome.failure.details == {
+        "abort-deadline-ms": _DEADLINE_MS,
+        "bound": "read",
+    }
+    observation = result.observation
+    assert observation is not None
+    assert observation.process == ProcessObservation.exited(ExitStatus("code", 0))
 
 
 def test_expire_close_failure_still_classifies_the_deadline_abort() -> None:

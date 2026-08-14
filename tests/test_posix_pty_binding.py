@@ -613,8 +613,88 @@ def test_a_truncated_trailing_codepoint_surfaces_rather_than_vanishing() -> None
         with pytest.raises(PosixPtyEndOfStreamError):
             for _ in range(100):
                 collected += child.read()
-        assert collected == "START�"
+        assert collected == "START\ufffd"
         assert child.exit_status == 0
+    finally:
+        child.close(force=True)
+
+
+@_LINUX_ONLY
+def test_a_close_after_the_deferred_flush_does_not_lose_the_end_of_stream() -> None:
+    """A stream observed to end cannot be un-ended by a close in the gap.
+
+    Issue #284: the read that meets end-of-stream returns the flushed
+    replacement text and defers the raise by one call. A close landing in
+    that window used to answer the owed read with ``PosixPtyClosedError``,
+    so the end-of-stream was lost — and with it the adapter's classification
+    of a run whose exit record had already been captured.
+    """
+    child = _spawn(_TRUNCATED_TAIL_CHILD)
+    try:
+        collected = _read_until(child, "START")
+        while "\ufffd" not in collected:
+            collected += child.read()
+        child.close(force=True)
+        with pytest.raises(PosixPtyEndOfStreamError):
+            child.read()
+        assert child.exit_status == 0
+    finally:
+        child.close(force=True)
+
+
+@_LINUX_ONLY
+def test_a_latched_end_of_stream_is_reported_for_every_later_read() -> None:
+    """A stream that ended cannot un-end: the latch is not consumed once."""
+    child = _spawn(_TRUNCATED_TAIL_CHILD)
+    try:
+        collected = _read_until(child, "START")
+        while "\ufffd" not in collected:
+            collected += child.read()
+        child.close(force=True)
+        for _ in range(3):
+            with pytest.raises(PosixPtyEndOfStreamError):
+                child.read()
+    finally:
+        child.close(force=True)
+
+
+@_LINUX_ONLY
+def test_the_latched_end_of_stream_still_enforces_single_flight() -> None:
+    """The latched raise sits inside the single-flight guard, not before it.
+
+    The reverted #280 prototype latched ahead of the guard, so an intruder
+    read after end-of-stream received stream content instead of the
+    concurrent-I/O violation (measured by the round-3 review).
+    """
+    child = _spawn(_TRUNCATED_TAIL_CHILD)
+    try:
+        collected = _read_until(child, "START")
+        while "\ufffd" not in collected:
+            collected += child.read()
+        child.close(force=True)
+        with child._lock:
+            child._read_in_flight = True
+        try:
+            with pytest.raises(PosixPtyConcurrentIOError):
+                child.read()
+        finally:
+            with child._lock:
+                child._read_in_flight = False
+    finally:
+        child.close(force=True)
+
+
+@_LINUX_ONLY
+def test_a_write_after_a_latched_end_of_stream_and_close_reports_closed() -> None:
+    """The latch belongs to ``read``; ``write`` keeps the closed contract."""
+    child = _spawn(_TRUNCATED_TAIL_CHILD)
+    try:
+        collected = _read_until(child, "START")
+        while "\ufffd" not in collected:
+            collected += child.read()
+        child.close(force=True)
+        with pytest.raises(PosixPtyClosedError):
+            child.write("x")
     finally:
         child.close(force=True)
 
