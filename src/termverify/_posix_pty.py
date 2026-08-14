@@ -269,9 +269,12 @@ class PosixPtyLiveChildError(RuntimeError):
 class PosixPtyEndOfStreamError(TerminalEndOfStreamError):
     """Raised by ``read`` when the pseudoterminal reports end-of-stream.
 
-    Only raised while the binding is open: a read interrupted by ``close``
-    raises :class:`PosixPtyClosedError`, because a close may have abandoned
-    output the child had already written.
+    Raised while the binding is open, and — once end of stream has been
+    observed — also after ``close`` (issue #284): the owed raise is
+    constructed from the latch without re-capturing the exit record. A read
+    interrupted by ``close`` before end of stream was observed raises
+    :class:`PosixPtyClosedError`, because a close may have abandoned output
+    the child had already written.
 
     **Raised one call later than the end-of-stream itself when the decoder
     still holds an incomplete sequence** — that read returns the flushed
@@ -633,6 +636,12 @@ class PosixPtyChild:
         self._close_failure: BaseException | None = None
         self._exit_status: int | None = None
         self._read_in_flight = False
+        # Once end-of-stream has been observed the stream cannot un-end: a
+        # close landing in the deferred-delivery window must not turn the
+        # owed raise into a closed-binding error (issue #284). The latched
+        # raise is constructed directly, so it neither re-captures the exit
+        # record nor touches the released descriptors.
+        self._eos_observed = False
         self._write_in_flight = False
         self._interrupted_read = threading.Event()
         self._interrupted_write = threading.Event()
@@ -918,6 +927,14 @@ class PosixPtyChild:
         """
         with self._lock:
             if self._closed:
+                if self._eos_observed:
+                    if self._read_in_flight:
+                        raise PosixPtyConcurrentIOError(
+                            "the POSIX PTY binding allows one in-flight read"
+                        )
+                    raise PosixPtyEndOfStreamError(
+                        "the pseudoterminal reported end-of-stream"
+                    )
                 raise PosixPtyClosedError("the POSIX PTY binding is closed")
             if self._read_in_flight:
                 raise PosixPtyConcurrentIOError(
@@ -1019,6 +1036,8 @@ class PosixPtyChild:
             return True
 
     def _end_of_stream(self) -> PosixPtyEndOfStreamError:  # coverage: exclude-windows
+        with self._lock:
+            self._eos_observed = True
         self._capture_exit_status_after_eos()
         return PosixPtyEndOfStreamError("the pseudoterminal reported end-of-stream")
 

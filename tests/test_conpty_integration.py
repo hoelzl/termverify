@@ -80,6 +80,7 @@ from termverify.adapter import (
     ManualTime,
     NetworkConfiguration,
     Observation,
+    ProcessObservation,
     Resize,
     RunConfiguration,
     RunFailed,
@@ -631,9 +632,10 @@ def test_deadline_abort_on_hanging_subject_recovers_os_observed() -> None:
     The fixture accepts the input and then never answers; no marker and no
     end-of-stream can end the epoch, so the armed watchdog force-closes the
     binding. The result is a structured runtime failure disclosing the
-    deadline policy — never a successful epoch, never fabricated evidence —
-    with no quiescent observation, and the OS confirms the whole child tree
-    was torn down by the deadline-driven close.
+    deadline policy — never a successful epoch, never fabricated evidence.
+    The exit record the deadline-driven close captured is retained as
+    evidence (issue #284 policy) without converting the failed epoch into a
+    success, and the OS confirms the whole child tree was torn down.
     """
     adapter = _adapter(_cooperative_argv(), abort_deadline_ms=_ABORT_DEADLINE_MS)
     started = adapter.start("run-conpty-deadline", _configuration())
@@ -647,7 +649,11 @@ def test_deadline_abort_on_hanging_subject_recovers_os_observed() -> None:
         _close_process_handle(handle)
 
     assert type(result) is TerminalResult, result
-    assert result.observation is None
+    observation = result.observation
+    assert observation is not None
+    assert observation.process == ProcessObservation.exited(
+        ExitStatus("code", FORCED_TERMINATION_EXIT_CODE)
+    )
     outcome = result.outcome
     assert type(outcome) is RunFailed
     assert outcome.failure.code == "adapter-runtime-failed"
@@ -1014,7 +1020,11 @@ def test_forced_stop_under_cooperation_ports_os_observed(tmp_path: Path) -> None
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY integration evidence")
 def test_deadline_abort_under_cooperation_ports_os_observed(tmp_path: Path) -> None:
-    """The abort deadline keeps its structured-failure semantics as well."""
+    """The abort deadline keeps its structured-failure semantics as well.
+
+    The exit record captured by the deadline-driven close is retained as
+    evidence on the failed epoch (issue #284 policy).
+    """
     adapter = _cooperation_adapter(
         _host_sandbox(tmp_path), abort_deadline_ms=_ABORT_DEADLINE_MS
     )
@@ -1029,7 +1039,11 @@ def test_deadline_abort_under_cooperation_ports_os_observed(tmp_path: Path) -> N
         _close_process_handle(handle)
 
     assert type(result) is TerminalResult, result
-    assert result.observation is None
+    observation = result.observation
+    assert observation is not None
+    assert observation.process == ProcessObservation.exited(
+        ExitStatus("code", FORCED_TERMINATION_EXIT_CODE)
+    )
     outcome = result.outcome
     assert type(outcome) is RunFailed
     assert outcome.failure.code == "adapter-runtime-failed"

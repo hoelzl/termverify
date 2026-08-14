@@ -171,9 +171,11 @@ class ConptyConcurrentIOError(TerminalConcurrentIOError):
 class ConptyEndOfStreamError(TerminalEndOfStreamError):
     """Raised by ``read`` when the native output pipe reports end-of-stream.
 
-    Only raised while the binding is open: a read interrupted by ``close``
-    raises :class:`ConptyClosedError` instead, because close may abandon
-    buffered output. On this genuine end-of-stream path Windows pipe
+    Raised while the binding is open, and — once end of stream has been
+    observed — also after ``close`` (issue #284), matching the POSIX
+    binding's latch. A read interrupted by ``close`` before end of stream
+    was observed raises :class:`ConptyClosedError` instead, because close
+    may abandon buffered output. On this genuine end-of-stream path Windows pipe
     semantics deliver all buffered output before the read side observes the
     broken pipe, so every byte the pseudoconsole emitted has been returned by
     earlier ``read`` calls when this is raised.
@@ -1386,6 +1388,11 @@ class ConptyChild:
         self._exit_status: int | None = None
         self._lock = threading.Lock()
         self._pending_io = 0
+        # Port-contract parity with the POSIX binding (issue #284): once
+        # end-of-stream has been observed the stream cannot un-end, so a
+        # close landing before the deferred read must not turn that read
+        # into a closed-binding error.
+        self._eos_observed = False
         # One decoder per child, fed every native chunk in stream order, so a
         # read that lands between two bytes of one codepoint heals on the next
         # read instead of losing the character. ``replace`` therefore never
@@ -1509,12 +1516,15 @@ class ConptyChild:
     def read(self) -> str:
         """Block until pseudoconsole output is available and return it.
 
-        Raises :class:`ConptyEndOfStreamError` when the binding is still open
-        and the native output pipe reports end-of-stream after the child has
-        exited; the native exit status has been captured by then. Raises
+        Raises :class:`ConptyEndOfStreamError` when the native output pipe
+        reports end-of-stream after the child has exited; the native exit
+        status has been captured by then. Once end-of-stream has been
+        observed, a later read reports it even after ``close`` — a stream
+        that ended cannot un-end (issue #284). Raises
         :class:`ConptyClosedError` when the binding is closed before or while
-        the read is in flight, and :class:`ConptyConcurrentIOError` when
-        another read or write is already in flight. Any other native read
+        the read is in flight and no end-of-stream was observed, and
+        :class:`ConptyConcurrentIOError` when another read or write is
+        already in flight. Any other native read
         failure — the binding open, the child alive — is re-raised unchanged.
 
         The native layer hands over raw bytes and this method owns the
@@ -1540,7 +1550,7 @@ class ConptyChild:
         POSIX binding, whose pty decodes nothing and hands the subject's
         unfinished bytes straight over.
         """
-        pty = self._begin_io()
+        pty = self._begin_io(for_read=True)
         try:
             chunk = pty.read_bytes()
         except Exception as error:
@@ -1772,17 +1782,30 @@ class ConptyChild:
             raise ConptyClosedError("the ConPTY binding is closed")
         return pty
 
-    def _begin_io(self) -> Any:
+    def _begin_io(self, *, for_read: bool = False) -> Any:
         """Atomically take the native object and count the in-flight call.
 
         At most one read or write may be in flight: overlapped native calls
         on one pseudoconsole can crash the interpreter, and blocking a write
         behind an indefinitely blocked read would deadlock, so overlap fails
         fast as :class:`ConptyConcurrentIOError`.
+
+        The end-of-stream latch answers only reads: a write attempted after
+        close keeps the closed-binding contract even when the stream's end
+        was observed before the close (issue #284 review).
         """
         with self._lock:
             pty = self._pty
             if pty is None:
+                if for_read and self._eos_observed:
+                    if self._pending_io > 0:
+                        raise ConptyConcurrentIOError(
+                            "another native read or write is already in flight; the"
+                            " binding is single-flight by contract"
+                        )
+                    raise ConptyEndOfStreamError(
+                        "the native ConPTY output pipe reported end-of-stream"
+                    )
                 raise ConptyClosedError("the ConPTY binding is closed")
             if self._pending_io > 0:
                 raise ConptyConcurrentIOError(
@@ -1819,6 +1842,8 @@ class ConptyChild:
         if self._pty is None:
             return ConptyClosedError("the ConPTY binding was closed during native I/O")
         if end_of_stream and type(failure) is _NativeEndOfStream:
+            with self._lock:
+                self._eos_observed = True
             return ConptyEndOfStreamError(
                 "the native ConPTY output pipe reported end-of-stream"
             )

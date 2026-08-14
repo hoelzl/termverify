@@ -486,6 +486,69 @@ def test_a_truncated_trailing_codepoint_never_reaches_this_binding(
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_a_close_after_end_of_stream_does_not_un_end_the_stream() -> None:
+    """Port-contract parity with the POSIX end-of-stream latch (issue #284).
+
+    The deferred flush is not reachable from a real console host (#279), but
+    the contract is the port's: once end-of-stream has been observed, a close
+    must not turn a later read into a closed-binding error — a stream that
+    ended cannot un-end, and the adapter's classification of a finished run
+    must not depend on which side of a close the deferred read lands.
+    """
+    child = _spawn("print('done')")
+    try:
+        with pytest.raises(ConptyEndOfStreamError):
+            for _ in range(100):
+                child.read()
+        child.close(force=True)
+        with pytest.raises(ConptyEndOfStreamError):
+            child.read()
+    finally:
+        child.close(force=True)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_the_latched_end_of_stream_still_enforces_single_flight() -> None:
+    """The latched raise sits inside the single-flight guard, not before it."""
+    child = _spawn("print('done')")
+    try:
+        with pytest.raises(ConptyEndOfStreamError):
+            for _ in range(100):
+                child.read()
+        child.close(force=True)
+        with child._lock:
+            child._pending_io = 1
+        try:
+            with pytest.raises(ConptyConcurrentIOError):
+                child.read()
+        finally:
+            with child._lock:
+                child._pending_io = 0
+    finally:
+        child.close(force=True)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
+def test_a_write_after_a_latched_end_of_stream_and_close_reports_closed() -> None:
+    """The latch belongs to ``read``; ``write`` keeps the closed contract.
+
+    Only ``read`` may report end-of-stream: a write attempted after close
+    answers ``ConptyClosedError`` even when the stream's end was observed
+    before the close.
+    """
+    child = _spawn("print('done')")
+    try:
+        with pytest.raises(ConptyEndOfStreamError):
+            for _ in range(100):
+                child.read()
+        child.close(force=True)
+        with pytest.raises(ConptyClosedError):
+            child.write("x")
+    finally:
+        child.close(force=True)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ConPTY binding evidence")
 def test_a_truncated_codepoint_the_host_can_decide_is_replaced() -> None:
     """The control: the zero above is the host waiting, not a dead pipeline.
 
