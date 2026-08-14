@@ -1162,7 +1162,22 @@ class TerminalAdapter:
                 # Count before honoring the marker: the marker-bearing chunk
                 # is retained like any other, so excluding it would let the
                 # epoch exceed its own bound by a whole read.
-                output_bytes += len(chunk.encode("utf-8", "surrogatepass"))
+                try:
+                    chunk_bytes = len(chunk.encode("utf-8"))
+                except UnicodeEncodeError:
+                    # The codec measures strict UTF-8, so a chunk that cannot
+                    # be encoded (a lone surrogate from an injected port; the
+                    # shipped bindings decode with ``errors="replace"``) would
+                    # produce an observation the serializer must reject,
+                    # losing the whole transcript at `transcript()` time.
+                    # Fail the epoch here instead, before any such chunk is
+                    # retained.
+                    raise _EpochFailure(
+                        "the subject emitted output that cannot be represented"
+                        " as UTF-8 evidence",
+                        {"during": "read", "encoding": "utf-8"},
+                    ) from None
+                output_bytes += chunk_bytes
                 if output_bytes > budget:
                     raise _EpochFailure(
                         "the epoch retained more output than one observation"
@@ -1336,6 +1351,7 @@ class TerminalAdapter:
                 at_ms,
                 "the terminal binding could not be closed after the child exited",
                 {"during": "close"},
+                observation,
             )
         self._set_time_and_state(at_ms, "terminal")
         return TerminalResult(observation, RunFinished(status))
