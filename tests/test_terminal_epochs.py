@@ -1444,7 +1444,7 @@ def test_normalizer_failure_sequence_is_bounded_with_disclosed_byte_count(
     expected_suffix: str,
     expected_prefix: str,
 ) -> None:
-    binding = _FakeBinding(_FakeChild([rejected]))
+    binding = _FakeBinding(_FakeChild(["trigger"]))
     factory = _NormalizerFactory(
         feed_error=VtNormalizationError("unknown sequence", rejected)
     )
@@ -1912,6 +1912,48 @@ def test_resize_rejection_omits_an_oversized_retained_frame_from_the_record() ->
     recorder.record_start(started)
     recorder.record_epoch(resize, result)
     parse_transcript(recorder.transcript())
+
+
+def test_a_chunk_with_a_lone_surrogate_fails_the_epoch_structurally() -> None:
+    adapter, binding, _, _ = _started([_marker()], exit_status=0)
+    binding.child.reads.append("x\ud800")
+
+    result = adapter.dispatch(TextInput(ManualTime(0), "x\r"))
+
+    assert type(result) is TerminalResult
+    assert type(result.outcome) is RunFailed
+    assert result.outcome.failure.details == {"during": "read", "encoding": "utf-8"}
+    assert result.observation is None
+    assert binding.child.closes == [True]
+    assert adapter._state == "terminal"
+
+
+def test_a_startup_chunk_with_a_lone_surrogate_is_start_failed() -> None:
+    binding = _FakeBinding(_FakeChild(["x\ud800"]))
+    adapter = _adapter(binding)
+
+    result = adapter.start("run-conpty", _configuration())
+
+    assert type(result) is StartFailed
+    assert result.failure.details == {"during": "read", "encoding": "utf-8"}
+    assert binding.child.closes == [True]
+    assert adapter._state == "terminal"
+
+
+def test_close_failure_after_exit_retains_the_built_observation() -> None:
+    adapter, binding, _, _ = _started(
+        [_marker()], exit_status=7, close_error=OSError("close exploded")
+    )
+    binding.child.reads.append(ConptyEndOfStreamError("end of stream"))
+
+    result = adapter.dispatch(TextInput(ManualTime(0), "quit\r"))
+
+    assert type(result) is TerminalResult
+    assert type(result.outcome) is RunFailed
+    assert result.outcome.failure.details == {"during": "close"}
+    observation = result.observation
+    assert observation is not None
+    assert observation.process == ProcessObservation.exited(ExitStatus("code", 7))
 
 
 def test_dispatch_deadline_abort_has_no_observation() -> None:
