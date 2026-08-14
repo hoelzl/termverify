@@ -143,7 +143,7 @@ import re
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
-from typing import Final, Literal, Protocol, cast, runtime_checkable
+from typing import Any, Final, Literal, Protocol, cast, runtime_checkable
 
 from termverify._key_encoding_v1 import encode_key_chord
 from termverify._negotiation import AuthorizedTiers, negotiate
@@ -170,6 +170,7 @@ from termverify.adapter import (
     ExitStatus,
     FilesystemConfiguration,
     FilesystemReceipt,
+    Frame,
     JsonInput,
     KeyInput,
     LocaleReceipt,
@@ -201,7 +202,12 @@ from termverify.transcript import (
     _MAX_RECORD_STRING_BYTES,
     _MAX_STRING_BYTES,
 )
-from termverify.vt import ScreenSnapshot, TerminalOutputNormalizer, VtScreenNormalizer
+from termverify.vt import (
+    ScreenSnapshot,
+    TerminalOutputNormalizer,
+    VtNormalizationError,
+    VtScreenNormalizer,
+)
 
 __all__ = [
     "ApplyNothingConstraintPorts",
@@ -253,6 +259,7 @@ _MARKER_TOKEN = re.compile(rf"[0-9A-Za-z._-]{{1,{_MAX_MARKER_TOKEN}}}\Z")
 #: four bytes in the frame lines the codec measures — counting cells as bytes
 #: under-reserves for any non-ASCII screen.
 _MAX_UTF8_BYTES_PER_CELL: Final = 4
+_NORMALIZATION_DETAIL_BYTES: Final = 4096
 
 #: Reserve for an observation record's fixed strings: the envelope's
 #: protocol, kind, run and record identifiers, the cursor and mode values,
@@ -309,7 +316,7 @@ class TerminalChildPort(Protocol):
     def pid(self) -> int: ...
 
     @property
-    def exit_status(self) -> int | None: ...
+    def exit_status(self) -> int | ExitStatus | None: ...
 
     def read(self) -> str: ...
 
@@ -386,6 +393,54 @@ class TimerWatchdog:
         return timer.cancel
 
 
+def _bounded_normalization_detail(value: str) -> str:
+    """Bound one diagnostic value in UTF-8 bytes with disclosed truncation."""
+    encoded = value.encode("utf-8", errors="backslashreplace")
+    if len(encoded) <= _NORMALIZATION_DETAIL_BYTES:
+        return encoded.decode("utf-8")
+    hidden = len(encoded)
+    while True:
+        suffix = f"... (+{hidden} bytes)"
+        prefix_budget = _NORMALIZATION_DETAIL_BYTES - len(suffix.encode("utf-8"))
+        prefix = encoded[:prefix_budget].decode("utf-8", errors="ignore")
+        actual_hidden = len(encoded) - len(prefix.encode("utf-8"))
+        if actual_hidden == hidden:
+            return prefix + suffix
+        hidden = actual_hidden
+
+
+class _ExitStatusChild:
+    """Adapt a native child's raw status into protocol exit evidence."""
+
+    def __init__(self, native: Any, convert_exit: Callable[[int], ExitStatus]) -> None:
+        self._native = native
+        self._convert_exit = convert_exit
+
+    @property
+    def pid(self) -> int:
+        return cast(int, self._native.pid)
+
+    @property
+    def exit_status(self) -> ExitStatus | None:
+        status = self._native.exit_status
+        return None if status is None else self._convert_exit(status)
+
+    def read(self) -> str:
+        return cast(str, self._native.read())
+
+    def write(self, text: str) -> None:
+        self._native.write(text)
+
+    def resize(self, *, rows: int, columns: int) -> None:
+        self._native.resize(rows=rows, columns=columns)
+
+    def is_alive(self) -> bool:
+        return cast(bool, self._native.is_alive())
+
+    def close(self, *, force: bool) -> None:
+        self._native.close(force=force)
+
+
 class ConptyBinding:
     """Windows binding port delegating to ``termverify._conpty``.
 
@@ -412,9 +467,10 @@ class ConptyBinding:
     ) -> TerminalChildPort:
         from termverify._conpty import ConptyChild
 
-        return ConptyChild.spawn(
+        native = ConptyChild.spawn(
             argv, rows=rows, columns=columns, env_overlay=env_overlay, cwd=cwd
         )
+        return _ExitStatusChild(native, lambda status: ExitStatus("code", status))
 
 
 class PosixPtyBinding:
@@ -446,11 +502,25 @@ class PosixPtyBinding:
         env_overlay: Mapping[str, str] | None = None,
         cwd: str | None = None,
     ) -> TerminalChildPort:
+        import signal
+
         from termverify._posix_pty import PosixPtyChild
 
-        return PosixPtyChild.spawn(
+        native = PosixPtyChild.spawn(
             argv, rows=rows, columns=columns, env_overlay=env_overlay, cwd=cwd
         )
+
+        def convert_exit(status: int) -> ExitStatus:
+            if status < 0:
+                signal_number = -status
+                try:
+                    name = signal.Signals(signal_number).name.removeprefix("SIG")
+                except ValueError:
+                    name = str(signal_number)
+                return ExitStatus("signal", name)
+            return ExitStatus("code", status)
+
+        return _ExitStatusChild(native, convert_exit)
 
 
 class ApplyNothingConstraintPorts:
@@ -711,6 +781,7 @@ class TerminalAdapter:
         self._manual_time: ManualTime | None = None
         self._child: TerminalChildPort | None = None
         self._normalizer: TerminalOutputNormalizer | None = None
+        self._last_snapshot: ScreenSnapshot | None = None
         self._pending = ""
         self._columns = 0
         self._rows = 0
@@ -851,6 +922,22 @@ class TerminalAdapter:
         normalizer = cast(TerminalOutputNormalizer, self._normalizer)
         try:
             normalizer.feed(chunk)
+        except VtNormalizationError as error:
+            reason = getattr(error, "reason", None)
+            sequence = getattr(error, "sequence", None)
+            if type(reason) is not str or type(sequence) is not str:
+                raise _EpochFailure(
+                    "terminal output normalization failed", {"during": "normalize"}
+                ) from error
+            raise _EpochFailure(
+                "the subject emitted terminal output the normalizer could not"
+                " interpret",
+                {
+                    "during": "normalize",
+                    "reason": _bounded_normalization_detail(reason),
+                    "sequence": _bounded_normalization_detail(sequence),
+                },
+            ) from error
         except Exception as error:
             raise _EpochFailure(
                 "terminal output normalization failed", {"during": "normalize"}
@@ -873,6 +960,7 @@ class TerminalAdapter:
                 "the normalized frame does not match the effective terminal dimensions",
                 {"during": "snapshot"},
             )
+        self._last_snapshot = snapshot
         return snapshot
 
     def _observation(
@@ -1117,13 +1205,83 @@ class TerminalAdapter:
         return True
 
     def _fail_runtime(
-        self, at_ms: ManualTime, message: str, details: dict[str, JsonInput]
+        self,
+        at_ms: ManualTime,
+        message: str,
+        details: dict[str, JsonInput],
+        observation: Observation | None = None,
     ) -> TerminalResult:
         if not self._close_child():
             details = {**details, "close": "failed"}
         self._set_time_and_state(at_ms, "terminal")
         return TerminalResult(
-            None, RunFailed(AdapterFailure("adapter-runtime-failed", message, details))
+            observation,
+            RunFailed(AdapterFailure("adapter-runtime-failed", message, details)),
+        )
+
+    def _failure_observation_from_exit(
+        self,
+        at_ms: ManualTime,
+        chunks: Sequence[str],
+        details: dict[str, JsonInput],
+    ) -> Observation | None:
+        """Retain an exit observed before a later subject-output rejection.
+
+        The raw chunks and native exit remain evidence even when the normalizer
+        cannot produce a trustworthy new frame. This deliberately does not call
+        ``_snapshot``: it reuses only the last successfully normalized snapshot.
+        That snapshot may belong to a larger pre-resize geometry, so its frame
+        is accounted against the record's string budget before it is attached:
+        an observation the codec must reject would lose the whole transcript.
+        """
+        child = cast(TerminalChildPort, self._child)
+        try:
+            status = child.exit_status
+        except Exception:
+            # A raising injected port means the exit evidence is unavailable;
+            # the normalization failure must still proceed without it.
+            return None
+        if status is None:
+            return None
+        if type(status) is int:
+            status = ExitStatus("code", status)
+        if type(status) is not ExitStatus:
+            return None
+        snapshot = self._last_snapshot
+        if snapshot is None:
+            return None
+        frame: Frame | None = snapshot.frame
+        try:
+            frame_bytes = sum(
+                len(line.encode("utf-8")) for line in snapshot.frame.lines
+            )
+            chunks_bytes = sum(len(chunk.encode("utf-8")) for chunk in chunks)
+        except UnicodeEncodeError:
+            frame_bytes = _MAX_RECORD_STRING_BYTES
+            chunks_bytes = 0
+        if (
+            frame_bytes + chunks_bytes + _FIXED_RECORD_STRING_BYTES
+            > _MAX_RECORD_STRING_BYTES
+        ):
+            frame = None
+            details["observation-frame"] = "omitted-budget"
+        return Observation(
+            at_ms,
+            {
+                "terminal": {
+                    "columns": snapshot.frame.columns,
+                    "rows": snapshot.frame.rows,
+                }
+            },
+            tuple(Event("terminal.output", {"chunk": chunk}) for chunk in chunks),
+            UiObservation(
+                regions=(),
+                focus=None,
+                cursor=snapshot.cursor,
+                mode=snapshot.mode,
+            ),
+            frame=frame,
+            process=ProcessObservation.exited(status),
         )
 
     def _deadline_abort(self, at_ms: ManualTime) -> TerminalResult:
@@ -1145,16 +1303,23 @@ class TerminalAdapter:
         self, at_ms: ManualTime, chunks: Sequence[str]
     ) -> TerminalResult:
         child = cast(TerminalChildPort, self._child)
-        status = child.exit_status
+        try:
+            status = child.exit_status
+        except Exception:
+            return self._fail_runtime(
+                at_ms,
+                "the native exit record could not be observed",
+                {"during": "exit-record"},
+            )
         if status is None:
             return self._fail_runtime(
                 at_ms,
                 "the child exited but no native exit record was observed",
                 {"missing": "exit-record"},
             )
-        try:
-            exit_status = ExitStatus("code", status)
-        except Exception:
+        if type(status) is int:
+            status = ExitStatus("code", status)
+        if type(status) is not ExitStatus:
             return self._fail_runtime(
                 at_ms,
                 "the native exit record is invalid",
@@ -1162,7 +1327,7 @@ class TerminalAdapter:
             )
         try:
             observation = self._observation(
-                at_ms, chunks, ProcessObservation.exited(exit_status)
+                at_ms, chunks, ProcessObservation.exited(status)
             )
         except _EpochFailure as failure:
             return self._fail_runtime(at_ms, failure.message, failure.details)
@@ -1173,7 +1338,7 @@ class TerminalAdapter:
                 {"during": "close"},
             )
         self._set_time_and_state(at_ms, "terminal")
-        return TerminalResult(observation, RunFinished(exit_status))
+        return TerminalResult(observation, RunFinished(status))
 
     def _run_epoch(
         self,
@@ -1217,7 +1382,14 @@ class TerminalAdapter:
         except _EpochFailure as failure:
             if expired.is_set() or self._deadline_closed:
                 return self._deadline_abort(at_ms)
-            return self._fail_runtime(at_ms, failure.message, failure.details)
+            failure_observation = (
+                self._failure_observation_from_exit(at_ms, chunks, failure.details)
+                if failure.details.get("during") == "normalize"
+                else None
+            )
+            return self._fail_runtime(
+                at_ms, failure.message, failure.details, failure_observation
+            )
         self._set_time_and_state(at_ms, "idle")
         return EpochCompleted(observation)
 
@@ -1254,7 +1426,14 @@ class TerminalAdapter:
             return negotiated
         receipts = tuple(negotiated)
 
-        def start_failed(message: str, details: dict[str, JsonInput]) -> StartFailed:
+        def start_failed(
+            message: str,
+            details: dict[str, JsonInput],
+            *,
+            close_child: bool = False,
+        ) -> StartFailed:
+            if close_child and not self._close_child():
+                details = {**details, "close": "failed"}
             self._set_state("terminal")
             return StartFailed(
                 run_id=run_id,
@@ -1329,15 +1508,24 @@ class TerminalAdapter:
         self._columns = terminal.columns
         self._rows = terminal.rows
         self._pending = ""
+        self._last_snapshot = None
         try:
             self._normalizer = self._normalizer_factory(
                 rows=terminal.rows, columns=terminal.columns
             )
         except Exception:
-            self._close_child()
             return start_failed(
                 "the output normalizer could not be constructed",
                 {"during": "normalizer"},
+                close_child=True,
+            )
+        try:
+            self._snapshot()
+        except _EpochFailure as snapshot_failure:
+            return start_failed(
+                snapshot_failure.message,
+                snapshot_failure.details,
+                close_child=True,
             )
         initial_ms = ManualTime(configuration.clock.initial_ms)
         result = self._run_epoch(initial_ms, None, "", "")
@@ -1354,6 +1542,7 @@ class TerminalAdapter:
             failure=AdapterFailure(
                 "adapter-start-failed", failure.message, failure.details
             ),
+            observation=terminal_result.observation,
         )
 
     def dispatch(self, input_event: DispatchInput) -> EpochResult:
@@ -1471,16 +1660,23 @@ class TerminalAdapter:
                 "the terminal binding could not be closed on forced stop",
                 {"during": "close"},
             )
-        status = child.exit_status
+        try:
+            status = child.exit_status
+        except Exception:
+            return self._fail_runtime(
+                at_ms,
+                "the native exit record could not be observed",
+                {"during": "exit-record"},
+            )
         if status is None:
             return self._fail_runtime(
                 at_ms,
                 "forced stop observed no native exit record",
                 {"missing": "exit-record"},
             )
-        try:
-            exit_status = ExitStatus("code", status)
-        except Exception:
+        if type(status) is int:
+            status = ExitStatus("code", status)
+        if type(status) is not ExitStatus:
             return self._fail_runtime(
                 at_ms,
                 "the native exit record is invalid",
@@ -1488,14 +1684,14 @@ class TerminalAdapter:
             )
         try:
             observation = self._observation(
-                at_ms, (), ProcessObservation.exited(exit_status)
+                at_ms, (), ProcessObservation.exited(status)
             )
         except _EpochFailure as failure:
             return self._fail_runtime(at_ms, failure.message, failure.details)
         self._set_time_and_state(at_ms, "terminal")
         return TerminalResult(
             observation,
-            RunFinished(exit_status),
+            RunFinished(status),
             diagnostics=(
                 Diagnostic(
                     at_ms,

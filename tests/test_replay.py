@@ -315,14 +315,33 @@ def test_an_unsupported_start_source_replays_nothing() -> None:
     assert adapter.started_with is None
 
 
-def test_a_failed_start_source_replays_nothing() -> None:
+@pytest.mark.parametrize("with_exit_observation", [False, True])
+def test_a_failed_start_source_replays_nothing(
+    with_exit_observation: bool,
+) -> None:
+    constraints = _constraints()
     recorder = TranscriptRecorder(RUN_ID, _configuration(), SUBJECT)
     recorder.record_start(
         StartFailed(
             RUN_ID,
             _configuration(),
-            (),
+            (
+                constraints.seed,
+                constraints.clock,
+                constraints.locale,
+                constraints.timezone,
+                constraints.terminal,
+                constraints.filesystem,
+                constraints.network,
+            )
+            if with_exit_observation
+            else (),
             AdapterFailure("adapter-start-failed", "boom"),
+            observation=(
+                _observation(process=ProcessObservation.exited(ExitStatus("code", 7)))
+                if with_exit_observation
+                else None
+            ),
         )
     )
     source = recorder.transcript()
@@ -360,6 +379,34 @@ def test_a_runtime_failure_source_is_replayable() -> None:
 
     assert type(outcome) is ReplayRun
     assert outcome.comparison.equivalent is True
+
+
+def test_a_runtime_failure_after_a_running_process_observation_replays() -> None:
+    recorder = TranscriptRecorder(RUN_ID, _configuration(), SUBJECT)
+    recorder.record_start(
+        Started(_constraints(), _observation(process=ProcessObservation.running()))
+    )
+    recorder.record_epoch(
+        TextInput(ManualTime(0), "crash"),
+        TerminalResult(
+            None,
+            RunFailed(AdapterFailure("adapter-runtime-failed", "boom")),
+        ),
+    )
+    source = recorder.transcript()
+    adapter = _ScriptedAdapter(
+        StartFailed(
+            RUN_ID,
+            _configuration(),
+            (),
+            AdapterFailure("adapter-start-failed", "refused"),
+        )
+    )
+
+    outcome = replay_transcript(source, adapter, RUN_ID, SUBJECT)
+
+    assert type(outcome) is ReplayRun
+    assert adapter.started_with is not None
 
 
 def test_a_start_terminated_source_is_replayable() -> None:
