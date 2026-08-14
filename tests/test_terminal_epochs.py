@@ -59,6 +59,7 @@ from termverify.adapter import (
     ManualTime,
     NetworkConfiguration,
     NetworkReceipt,
+    ProcessObservation,
     Resize,
     RunConfiguration,
     RunFailed,
@@ -89,8 +90,9 @@ from termverify.transcript import (
     _MAX_COLLECTION_ITEMS,
     _MAX_RECORD_STRING_BYTES,
     _MAX_STRING_BYTES,
+    parse_transcript,
 )
-from termverify.vt import ScreenSnapshot, VtNormalizationError
+from termverify.vt import ScreenSnapshot, VtNormalizationError, VtScreenNormalizer
 
 _marker_tokens = itertools.count(1)
 
@@ -200,18 +202,22 @@ class _FakeChild:
 
     def __init__(
         self,
-        reads: Sequence[str | Exception] = (),
+        reads: Sequence[str | Exception | tuple[str, int]] = (),
         *,
-        exit_status: int | str | None = None,
+        exit_status: int | str | ExitStatus | None = None,
         write_error: Exception | None = None,
         resize_error: Exception | None = None,
         close_error: Exception | None = None,
+        exit_error: Exception | None = None,
     ) -> None:
         self.reads = list(reads)
-        self.reported_exit_status = exit_status
+        self.reported_exit_status = (
+            ExitStatus("code", exit_status) if type(exit_status) is int else exit_status
+        )
         self.write_error = write_error
         self.resize_error = resize_error
         self.close_error = close_error
+        self.exit_error = exit_error
         self.written: list[str] = []
         self.resizes: list[tuple[int, int]] = []
         self.closes: list[bool] = []
@@ -225,8 +231,10 @@ class _FakeChild:
         return 4711
 
     @property
-    def exit_status(self) -> int | None:
-        return cast("int | None", self.reported_exit_status)
+    def exit_status(self) -> ExitStatus | None:
+        if self.exit_error is not None:
+            raise self.exit_error
+        return cast("ExitStatus | None", self.reported_exit_status)
 
     def read(self) -> str:
         if self.closed:
@@ -237,6 +245,14 @@ class _FakeChild:
         self.reads_served += 1
         if isinstance(item, Exception):
             raise item
+        if isinstance(item, tuple):
+            chunk, status = item
+            self.reported_exit_status = (
+                ExitStatus("signal", "TERM")
+                if status == -15
+                else ExitStatus("code", status)
+            )
+            return chunk
         return item
 
     def write(self, text: str) -> None:
@@ -415,12 +431,13 @@ def _adapter(
 
 
 def _started(
-    reads: Sequence[str | Exception],
+    reads: Sequence[str | Exception | tuple[str, int]],
     *,
-    exit_status: int | str | None = None,
+    exit_status: int | str | ExitStatus | None = None,
     write_error: Exception | None = None,
     resize_error: Exception | None = None,
     close_error: Exception | None = None,
+    exit_error: Exception | None = None,
 ) -> tuple[TerminalAdapter, _FakeBinding, _NormalizerFactory, _FakeWatchdog]:
     binding = _FakeBinding(
         _FakeChild(
@@ -429,6 +446,7 @@ def _started(
             write_error=write_error,
             resize_error=resize_error,
             close_error=close_error,
+            exit_error=exit_error,
         )
     )
     factory = _NormalizerFactory()
@@ -1398,19 +1416,113 @@ def test_start_normalizer_feed_failure_is_start_failed() -> None:
     result = adapter.start("run-conpty", _configuration())
 
     assert type(result) is StartFailed
-    assert result.failure.details == {"during": "normalize"}
+    assert result.failure.details == {
+        "during": "normalize",
+        "reason": "unknown sequence",
+        "sequence": "boom",
+    }
     assert binding.child.closes == [True]
 
 
+@pytest.mark.parametrize(
+    ("rejected", "expected_suffix", "expected_prefix"),
+    [
+        ("3" * 5000 + "�", "... (+923 bytes)", "3" * 4080),
+        ("😀" * 2000, "... (+3924 bytes)", "😀" * 1019),
+        ("x" * 5000 + "\ud800", "... (+926 bytes)", "x" * 4080),
+        ("\ud800", "", "\\ud800"),
+    ],
+    ids=(
+        "ascii-boundary",
+        "multibyte-boundary",
+        "truncated-lone-surrogate",
+        "retained-lone-surrogate",
+    ),
+)
+def test_normalizer_failure_sequence_is_bounded_with_disclosed_byte_count(
+    rejected: str,
+    expected_suffix: str,
+    expected_prefix: str,
+) -> None:
+    binding = _FakeBinding(_FakeChild([rejected]))
+    factory = _NormalizerFactory(
+        feed_error=VtNormalizationError("unknown sequence", rejected)
+    )
+    adapter = _adapter(binding, normalizer_factory=factory)
+
+    result = adapter.start("run-conpty", _configuration())
+
+    assert type(result) is StartFailed
+    details = result.failure.details
+    assert isinstance(details, Mapping)
+    sequence = cast(str, details["sequence"])
+    assert len(sequence.encode("utf-8")) <= 4096
+    assert sequence == expected_prefix + expected_suffix
+    assert binding.child.closes == [True]
+    assert adapter._state == "terminal"
+
+
+def test_malformed_normalizer_error_details_fail_structurally() -> None:
+    malformed = VtNormalizationError("unknown sequence", "trigger")
+    malformed.reason = cast(str, 123)
+    malformed.sequence = cast(str, None)
+    binding = _FakeBinding(_FakeChild(["trigger"]))
+    factory = _NormalizerFactory(feed_error=malformed)
+    adapter = _adapter(binding, normalizer_factory=factory)
+
+    result = adapter.start("run-conpty", _configuration())
+
+    assert type(result) is StartFailed
+    assert result.failure.details == {"during": "normalize"}
+    assert binding.child.closes == [True]
+    assert adapter._state == "terminal"
+
+
+def test_attributeless_normalizer_error_fails_structurally() -> None:
+    class _AttributelessError(VtNormalizationError):
+        def __init__(self) -> None:
+            Exception.__init__(self, "no detail attributes")
+
+    binding = _FakeBinding(_FakeChild(["trigger"]))
+    factory = _NormalizerFactory(feed_error=_AttributelessError())
+    adapter = _adapter(binding, normalizer_factory=factory)
+
+    result = adapter.start("run-conpty", _configuration())
+
+    assert type(result) is StartFailed
+    assert result.failure.details == {"during": "normalize"}
+    assert binding.child.closes == [True]
+    assert adapter._state == "terminal"
+
+
+def test_start_normalizer_rejection_retains_an_already_observed_exit() -> None:
+    binding = _FakeBinding(_FakeChild([("\x1b[3�", 7)]))
+    adapter = _adapter(
+        binding,
+        normalizer_factory=cast("_NormalizerFactory", VtScreenNormalizer),
+    )
+
+    result = adapter.start("run-conpty", _configuration())
+
+    assert type(result) is StartFailed
+    assert result.observation is not None
+    assert result.observation.process == ProcessObservation.exited(
+        ExitStatus("code", 7)
+    )
+
+
 def test_start_snapshot_failure_is_start_failed() -> None:
-    binding = _FakeBinding(_FakeChild([_marker()]))
+    binding = _FakeBinding(
+        _FakeChild([_marker()], close_error=OSError("close exploded"))
+    )
     factory = _NormalizerFactory(snapshot_error=RuntimeError("snapshot exploded"))
     adapter = _adapter(binding, normalizer_factory=factory)
 
     result = adapter.start("run-conpty", _configuration())
 
     assert type(result) is StartFailed
-    assert result.failure.details == {"during": "snapshot"}
+    assert result.failure.details == {"during": "snapshot", "close": "failed"}
+    assert adapter._state == "terminal"
 
 
 def test_start_frame_dimension_disagreement_is_start_failed() -> None:
@@ -1610,6 +1722,196 @@ def test_dispatch_end_of_stream_finishes_the_run() -> None:
     assert binding.child.closes == [True]
     with pytest.raises(RuntimeError):
         adapter.dispatch(TextInput(ManualTime(0), "x"))
+
+
+def test_raw_integer_exit_from_an_existing_child_port_remains_supported() -> None:
+    adapter, binding, _, _ = _started([_marker()])
+    binding.child.reported_exit_status = 9
+    binding.child.reads.append(ConptyEndOfStreamError("end of stream"))
+
+    result = adapter.dispatch(TextInput(ManualTime(0), "quit\r"))
+
+    assert type(result) is TerminalResult
+    assert result.outcome == RunFinished.code(9)
+    assert result.observation is not None
+    assert result.observation.process == ProcessObservation.exited(
+        ExitStatus("code", 9)
+    )
+
+
+@pytest.mark.parametrize(
+    ("rejected", "reason", "sequence"),
+    [
+        ("\x1b[3�", "malformed control sequence", "3�"),
+        ("\x1b�", "unsupported escape sequence", "�"),
+        ("\x1b]0;t\x1b�", "unterminated string sequence", "\x1b�"),
+    ],
+    ids=("csi", "escape", "osc-string-terminator"),
+)
+@pytest.mark.parametrize("exit_code", [0, 7, -15], ids=("zero", "nonzero", "signal"))
+def test_normalizer_rejection_retains_an_exit_observed_before_the_rejection(
+    exit_code: int,
+    rejected: str,
+    reason: str,
+    sequence: str,
+) -> None:
+    """A subject-output rejection must not discard independent exit evidence.
+
+    The tuple script models the real binding ordering opened by issue #279:
+    end-of-stream captures the native exit, flushes an incomplete UTF-8 tail as
+    replacement text, and returns that text before raising end-of-stream on the
+    following read. The replacement completes a malformed CSI here, so the
+    normalizer rejects after the binding has already observed the exit.
+    """
+    binding = _FakeBinding(_FakeChild([_marker(), (rejected, exit_code)]))
+    adapter = _adapter(
+        binding,
+        normalizer_factory=cast("_NormalizerFactory", VtScreenNormalizer),
+    )
+    started = adapter.start("run-conpty", _configuration())
+    assert type(started) is Started
+
+    result = adapter.dispatch(TextInput(ManualTime(0), "quit\r"))
+
+    assert type(result) is TerminalResult
+    assert type(result.outcome) is RunFailed
+    assert result.outcome.failure.message == (
+        "the subject emitted terminal output the normalizer could not interpret"
+    )
+    assert result.outcome.failure.details == {
+        "during": "normalize",
+        "reason": reason,
+        "sequence": sequence,
+    }
+    observation = result.observation
+    assert observation is not None
+    assert observation.process is not None
+    expected_exit = (
+        ExitStatus("signal", "TERM")
+        if exit_code == -15
+        else ExitStatus("code", exit_code)
+    )
+    assert observation.process.exit == expected_exit
+    assert [event.data for event in observation.events] == [{"chunk": rejected}]
+
+
+def test_normalizer_rejection_without_exit_does_not_fabricate_an_observation() -> None:
+    binding = _FakeBinding(_FakeChild([_marker(), "\x1b[3�"]))
+    adapter = _adapter(
+        binding,
+        normalizer_factory=cast("_NormalizerFactory", VtScreenNormalizer),
+    )
+    assert type(adapter.start("run-conpty", _configuration())) is Started
+
+    result = adapter.dispatch(TextInput(ManualTime(0), "quit\r"))
+
+    assert type(result) is TerminalResult
+    assert type(result.outcome) is RunFailed
+    assert result.observation is None
+
+
+def test_normalizer_rejection_with_unreadable_exit_status_still_fails_safely() -> None:
+    binding = _FakeBinding(
+        _FakeChild([_marker(), "\x1b[3\ufffd"], exit_error=OSError("exit probe failed"))
+    )
+    adapter = _adapter(
+        binding,
+        normalizer_factory=cast("_NormalizerFactory", VtScreenNormalizer),
+    )
+    assert type(adapter.start("run-conpty", _configuration())) is Started
+
+    result = adapter.dispatch(TextInput(ManualTime(0), "quit\r"))
+
+    assert type(result) is TerminalResult
+    assert type(result.outcome) is RunFailed
+    assert result.observation is None
+    assert binding.child.closes == [True]
+    assert adapter._state == "terminal"
+
+
+def test_end_of_stream_with_unreadable_exit_status_is_a_structured_failure() -> None:
+    adapter, binding, _, _ = _started(
+        [_marker()], exit_error=OSError("exit probe failed")
+    )
+    binding.child.reads.append(ConptyEndOfStreamError("end of stream"))
+
+    result = adapter.dispatch(TextInput(ManualTime(0), "quit\r"))
+
+    assert type(result) is TerminalResult
+    assert type(result.outcome) is RunFailed
+    assert result.outcome.failure.details == {"during": "exit-record"}
+    assert adapter._state == "terminal"
+
+
+def test_forced_stop_with_unreadable_exit_status_is_a_structured_failure() -> None:
+    adapter, _, _, _ = _started([_marker()], exit_error=OSError("exit probe failed"))
+
+    result = adapter.stop(Stop(ManualTime(0)))
+
+    assert type(result) is TerminalResult
+    assert type(result.outcome) is RunFailed
+    assert result.outcome.failure.details == {"during": "exit-record"}
+    assert adapter._state == "terminal"
+
+
+def test_resize_normalizer_rejection_reuses_coherent_observed_geometry() -> None:
+    binding = _FakeBinding(_FakeChild([_marker(), ("\x1b[3�", 0)]))
+    adapter = _adapter(
+        binding,
+        normalizer_factory=cast("_NormalizerFactory", VtScreenNormalizer),
+    )
+    assert type(adapter.start("run-conpty", _configuration())) is Started
+
+    result = adapter.dispatch(Resize(ManualTime(0), columns=100, rows=31))
+
+    assert type(result) is TerminalResult
+    assert type(result.outcome) is RunFailed
+    observation = result.observation
+    assert observation is not None
+    assert observation.state == {"terminal": {"columns": 80, "rows": 24}}
+    assert observation.frame is not None
+    assert (observation.frame.columns, observation.frame.rows) == (80, 24)
+
+
+def test_resize_rejection_omits_an_oversized_retained_frame_from_the_record() -> None:
+    configuration = replace(
+        _configuration(),
+        terminal=TerminalConfiguration(columns=4000, rows=100, capabilities=()),
+    )
+    binding = _FakeBinding(_FakeChild([_marker(), "x" * 1_000_000, ("bad", 0)]))
+    factory = _NormalizerFactory(frame_cell="😀")
+    adapter = _adapter(binding, normalizer_factory=factory)
+    started = adapter.start("run-conpty", configuration)
+    assert type(started) is Started
+    normalizer = factory.created[0]
+    accepting_feed = normalizer.feed
+
+    def rejecting_feed(chunk: str) -> None:
+        if chunk == "bad":
+            raise VtNormalizationError("unknown sequence", "bad")
+        accepting_feed(chunk)
+
+    normalizer.feed = rejecting_feed  # type: ignore[method-assign]
+
+    resize = Resize(ManualTime(0), columns=1, rows=1)
+    result = adapter.dispatch(resize)
+
+    assert type(result) is TerminalResult
+    assert type(result.outcome) is RunFailed
+    observation = result.observation
+    assert observation is not None
+    assert observation.frame is None
+    assert observation.state == {"terminal": {"columns": 4000, "rows": 100}}
+    assert result.outcome.failure.details is not None
+    assert (
+        cast(Mapping[str, object], result.outcome.failure.details)["observation-frame"]
+        == "omitted-budget"
+    )
+
+    recorder = TranscriptRecorder("run-conpty", configuration, _REPLAY_SUBJECT)
+    recorder.record_start(started)
+    recorder.record_epoch(resize, result)
+    parse_transcript(recorder.transcript())
 
 
 def test_dispatch_deadline_abort_has_no_observation() -> None:

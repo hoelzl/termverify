@@ -31,6 +31,7 @@ class VtNormalizationError(Exception):
 
     def __init__(self, message: str, sequence: str) -> None:
         super().__init__(f"{message}: {sequence!r}")
+        self.reason = message
         self.sequence = sequence
 
 

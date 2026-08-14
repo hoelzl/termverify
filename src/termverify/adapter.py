@@ -1035,6 +1035,7 @@ class StartFailed:
     applied: tuple[EnforcementReceipt, ...]
     failure: AdapterFailure
     diagnostics: tuple[Diagnostic, ...] = ()
+    observation: Observation | None = None
 
     def __post_init__(self) -> None:
         _validate_receipt_prefix(self.run_id, self.requested, self.applied)
@@ -1042,12 +1043,31 @@ class StartFailed:
             raise TypeError("failure has the wrong type")
         if self.failure.code != "adapter-start-failed":
             raise ValueError("start failure code must be adapter-start-failed")
+        if self.observation is not None:
+            if type(self.observation) is not Observation:
+                raise TypeError("start failure observation has the wrong type")
+            if (
+                self.observation.process is None
+                or self.observation.process.state != "exited"
+            ):
+                raise ValueError(
+                    "start failure observations must contain exited-process evidence"
+                )
         _validate_diagnostics(self.diagnostics)
         if self.diagnostics and len(self.applied) != len(CONSTRAINT_NAMES):
             raise ValueError("startup diagnostics require complete negotiation")
         if len(self.applied) == len(CONSTRAINT_NAMES):
             clock = cast(ClockReceipt, self.applied[CONSTRAINT_NAMES.index("clock")])
             _validate_diagnostics(self.diagnostics, clock.effective.initial_ms)
+            if (
+                self.observation is not None
+                and self.observation.at_ms != clock.effective.initial_ms
+            ):
+                raise ValueError(
+                    "start failure observation must use the effective initial clock"
+                )
+        elif self.observation is not None:
+            raise ValueError("start failure observations require complete negotiation")
 
 
 def _validate_diagnostics(

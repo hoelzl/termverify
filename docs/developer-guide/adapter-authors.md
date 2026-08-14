@@ -90,6 +90,11 @@ underscore path.
   a `tuple` statically and a rejection at runtime. Model chords as plain
   tuples.
 
+`StartFailed.observation` is normally absent. An adapter may provide it only
+after complete constraint negotiation, when startup failed after independently
+observing process exit. The observation must use the effective initial manual
+time and carry exited-process evidence; recorders emit it before `run.failed`.
+
 ## What the surface deliberately excludes
 
 - `termverify.terminal` (real-terminal runtime, and the platform-specific

@@ -26,6 +26,7 @@ from termverify.adapter import (
     ConstraintPorts,
     ConstraintUnsupported,
     DeliveryRecord,
+    ExitStatus,
     FilesystemConfiguration,
     FilesystemReceipt,
     LocaleReceipt,
@@ -97,6 +98,27 @@ class _Binding:
     ) -> TerminalChildPort:
         self.spawn_calls += 1
         raise OSError("this negotiation fake refuses to spawn a child")
+
+
+class _NativeChild:
+    def __init__(self, exit_status: int | None) -> None:
+        self.pid = 7
+        self.exit_status = exit_status
+
+    def read(self) -> str:
+        return "output"
+
+    def write(self, text: str) -> None:
+        del text
+
+    def resize(self, *, rows: int, columns: int) -> None:
+        del rows, columns
+
+    def is_alive(self) -> bool:
+        return False
+
+    def close(self, *, force: bool) -> None:
+        del force
 
 
 def _delivery(constraint: str) -> DeliveryRecord:
@@ -182,9 +204,16 @@ def test_terminal_adapter_satisfies_the_adapter_protocol() -> None:
     assert checked is adapter
 
 
-def test_conpty_child_satisfies_the_child_port() -> None:
-    child: TerminalChildPort = ConptyChild(object(), 1, 0, 0)
+def test_conpty_child_satisfies_the_child_port(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The spawned surface, not a bare native fake, satisfies the port."""
+    monkeypatch.setattr(
+        ConptyChild,
+        "spawn",
+        staticmethod(lambda *args, **kwargs: _NativeChild(0)),
+    )
+    child = ConptyBinding().spawn(("subject",), rows=24, columns=80)
     assert isinstance(child, TerminalChildPort)
+    assert child.exit_status == ExitStatus("code", 0)
 
 
 def test_native_binding_satisfies_the_binding_port() -> None:
@@ -225,7 +254,7 @@ def test_native_binding_delegates_the_probe(
 
 
 def test_native_binding_delegates_spawn(monkeypatch: pytest.MonkeyPatch) -> None:
-    sentinel = ConptyChild(object(), 7, 0, 0)
+    sentinel = _NativeChild(7)
     recorded: list[
         tuple[tuple[str, ...], int, int, Mapping[str, str] | None, str | None]
     ] = []
@@ -237,7 +266,7 @@ def test_native_binding_delegates_spawn(monkeypatch: pytest.MonkeyPatch) -> None
         columns: int,
         env_overlay: Mapping[str, str] | None = None,
         cwd: str | None = None,
-    ) -> ConptyChild:
+    ) -> _NativeChild:
         recorded.append((tuple(argv), rows, columns, env_overlay, cwd))
         return sentinel
 
@@ -251,7 +280,7 @@ def test_native_binding_delegates_spawn(monkeypatch: pytest.MonkeyPatch) -> None
         cwd="C:/sandbox",
     )
 
-    assert child is sentinel
+    assert child.exit_status == ExitStatus("code", 7)
     assert recorded == [
         (("subject", "--flag"), 24, 80, {"TERMVERIFY_SEED": "42"}, "C:/sandbox")
     ]
@@ -294,7 +323,7 @@ def test_posix_binding_delegates_spawn(monkeypatch: pytest.MonkeyPatch) -> None:
     the repository. Asymmetric values (24 vs 80) are what make the swap
     observable; equal ones would not be.
     """
-    sentinel = object()
+    sentinel = _NativeChild(-15)
     recorded: list[
         tuple[tuple[str, ...], int, int, Mapping[str, str] | None, str | None]
     ] = []
@@ -306,7 +335,7 @@ def test_posix_binding_delegates_spawn(monkeypatch: pytest.MonkeyPatch) -> None:
         columns: int,
         env_overlay: Mapping[str, str] | None = None,
         cwd: str | None = None,
-    ) -> object:
+    ) -> _NativeChild:
         recorded.append((tuple(argv), rows, columns, env_overlay, cwd))
         return sentinel
 
@@ -320,10 +349,25 @@ def test_posix_binding_delegates_spawn(monkeypatch: pytest.MonkeyPatch) -> None:
         cwd="/sandbox",
     )
 
-    assert child is sentinel
+    assert child.exit_status == ExitStatus("signal", "TERM")
     assert recorded == [
         (("subject", "--flag"), 24, 80, {"TERMVERIFY_SEED": "42"}, "/sandbox")
     ]
+
+
+def test_posix_binding_preserves_an_unnamed_signal_number(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel = _NativeChild(-35)
+    monkeypatch.setattr(
+        _posix_pty.PosixPtyChild,
+        "spawn",
+        staticmethod(lambda *args, **kwargs: sentinel),
+    )
+
+    child = PosixPtyBinding().spawn(["subject"], rows=24, columns=80)
+
+    assert child.exit_status == ExitStatus("signal", "35")
 
 
 @pytest.mark.parametrize("constraint", _NON_TERMINAL_CONSTRAINTS)

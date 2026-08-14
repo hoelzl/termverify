@@ -152,6 +152,22 @@ def _input_from_record(record: Record) -> ScriptedInput:
     return Stop(at_ms)
 
 
+def _established_execution(record: Record) -> bool:
+    """Whether an observation record proves the run reached execution.
+
+    A startup observation never carries an exited process — the `Started`
+    constructor rejects it — while a startup *failure* observation (the
+    `StartFailed.observation` evidence channel) always does. Counting only
+    non-exited observations therefore separates "the run started" from
+    "startup failed but the harness had independently observed the exit".
+    """
+    if record["kind"] != "observation":
+        return False
+    payload = cast(dict[str, JsonValue], record["payload"])
+    process = payload.get("process")
+    return process is None or cast(dict[str, JsonValue], process)["state"] != "exited"
+
+
 def replay_transcript(
     source: bytes,
     adapter: Adapter,
@@ -180,9 +196,7 @@ def replay_transcript(
     except TranscriptValidationError as error:
         raise ReplayError("invalid-source", str(error)) from error
     terminal_kind = cast(str, source_records[-1]["kind"])
-    reached_execution = any(
-        record["kind"] == "observation" for record in source_records
-    )
+    reached_execution = any(_established_execution(record) for record in source_records)
     if terminal_kind == "run.unsupported" or (
         terminal_kind == "run.failed" and not reached_execution
     ):

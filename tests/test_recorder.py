@@ -365,6 +365,28 @@ def test_start_failed_after_full_negotiation_with_diagnostics() -> None:
     }
 
 
+def test_start_failure_records_exit_observation_before_failure() -> None:
+    recorder = TranscriptRecorder(RUN_ID, _configuration(), SUBJECT)
+    recorder.record_start(
+        StartFailed(
+            RUN_ID,
+            _configuration(),
+            _receipt_prefix(7),
+            AdapterFailure("adapter-start-failed", "normalization failed"),
+            observation=_observation(
+                process=ProcessObservation.exited(ExitStatus("code", 7))
+            ),
+        )
+    )
+
+    records = parse_transcript(recorder.transcript())
+
+    assert [record["kind"] for record in records][-2:] == [
+        "observation",
+        "run.failed",
+    ]
+
+
 def test_start_terminated_with_exit_observation() -> None:
     recorder = TranscriptRecorder(RUN_ID, _configuration(), SUBJECT)
     recorder.record_start(
@@ -433,6 +455,39 @@ def test_runtime_failure_without_observation_records_run_failed() -> None:
             "message": "boom",
             "details": {"input_kind": "text"},
         }
+    }
+
+
+def test_runtime_failure_with_exit_observation_records_both_evidence_rows() -> None:
+    recorder = TranscriptRecorder(RUN_ID, _configuration(), SUBJECT)
+    recorder.record_start(Started(_constraints(), _observation()))
+    recorder.record_epoch(
+        TextInput(ManualTime(0), "crash"),
+        TerminalResult(
+            _observation(
+                process=ProcessObservation.exited(ExitStatus("signal", "TERM"))
+            ),
+            RunFailed(
+                AdapterFailure(
+                    "adapter-runtime-failed",
+                    "normalization failed",
+                    {"during": "normalize"},
+                )
+            ),
+        ),
+    )
+
+    records = parse_transcript(recorder.transcript())
+
+    assert [record["kind"] for record in records][-3:] == [
+        "input.text",
+        "observation",
+        "run.failed",
+    ]
+    payload = cast(dict[str, JsonInput], records[-2]["payload"])
+    assert payload["process"] == {
+        "state": "exited",
+        "exit": {"kind": "signal", "value": "TERM"},
     }
 
 

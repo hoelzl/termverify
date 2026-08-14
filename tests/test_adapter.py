@@ -515,6 +515,7 @@ def test_structured_start_outcomes_are_immutable() -> None:
     assert started.diagnostics == (startup_diagnostic,)
     assert unsupported.constraint == "clock"
     assert failed.failure.code == "adapter-start-failed"
+    assert failed.observation is None
     with pytest.raises(ValueError, match="order"):
         StartUnsupported(
             run_id="run-contract",
@@ -616,6 +617,51 @@ def test_epoch_and_terminal_results_preserve_process_lifecycle() -> None:
                 observation=replace(exited, at_ms=ManualTime(1)),
                 outcome=RunFinished.code(0),
             ),
+        )
+
+
+def test_start_failed_observation_requires_initial_exited_process_evidence() -> None:
+    observation = replace(
+        _observation(),
+        process=ProcessObservation.exited(ExitStatus("code", 7)),
+    )
+    constraints = _constraints()
+    receipts = (
+        constraints.seed,
+        constraints.clock,
+        constraints.locale,
+        constraints.timezone,
+        constraints.terminal,
+        constraints.filesystem,
+        constraints.network,
+    )
+    failed = StartFailed(
+        "run-contract",
+        _configuration(),
+        receipts,
+        AdapterFailure("adapter-start-failed", "normalization failed"),
+        observation=observation,
+    )
+
+    assert failed.observation == observation
+    assert StartFailed.__slots__ == (
+        "run_id",
+        "requested",
+        "applied",
+        "failure",
+        "diagnostics",
+        "observation",
+    )
+    assert not hasattr(failed, "__dict__")
+    with pytest.raises(FrozenInstanceError):
+        failed.observation = None  # type: ignore[misc]
+    with pytest.raises(ValueError, match="exited-process"):
+        StartFailed(
+            "run-contract",
+            _configuration(),
+            receipts,
+            AdapterFailure("adapter-start-failed", "failed"),
+            observation=replace(_observation(), process=ProcessObservation.running()),
         )
 
 
