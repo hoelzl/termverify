@@ -8,6 +8,11 @@ version; the continuously supported and tested versions are currently 3.12
 through 3.14. The open-ended `>=3.12` package declaration does not promise
 support for later Python releases before they join the CI matrix.
 
+`scripts/check.py` is the single gate entry point: it runs the pre-commit
+hooks by default and adds the type check, distribution build, and covered
+test suite with `--full`; `--list` prints the commands without running them.
+Sync first in a fresh checkout or worktree. The individual commands are:
+
 ```bash
 uv --no-config sync --all-groups --locked
 uv --no-config run pytest --cov --cov-report=term-missing
@@ -59,8 +64,8 @@ src/termverify/       distributable library
  docs/agent/reviews/   adversarial and independent review reports
 ```
 
-(A `skills/` directory for proven reusable playbooks is reserved by the
-`AGENTS.md` placement table but does not exist yet.)
+(An `.agents/skills/` directory for proven reusable procedures is reserved
+by the [documentation map](../README.md) but does not exist yet.)
 
 ## Coverage ratchet
 
