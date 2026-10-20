@@ -3,6 +3,7 @@ type: Protocol Design
 title: Transcript framing and limits
 description: JSONL framing, fixed v1 resource limits, and canonical serialization of termverify.transcript/v1.
 tags: [protocol, jsonl, limits, canonicalization]
+review_by: 2027-01-20
 ---
 
 # Transcript framing and limits

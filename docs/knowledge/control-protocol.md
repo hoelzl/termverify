@@ -3,6 +3,7 @@ type: Protocol Design
 title: TermVerify JSONL control protocol
 description: Live wire protocol a subject subprocess speaks over stdin/stdout pipes to a driving adapter.
 tags: [protocol, jsonl, control, subprocess, adapter]
+review_by: 2027-01-20
 ---
 
 # TermVerify JSONL control protocol (`termverify.control/v1`)

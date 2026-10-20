@@ -3,6 +3,7 @@ type: Verification Model
 title: Evidence and oracle model
 description: Layered verification rules for autonomous terminal applications.
 tags: [verification, replay, properties, snapshots, differential-testing]
+review_by: 2027-01-20
 ---
 
 This document is the **model** TermVerify is built toward. It is not a

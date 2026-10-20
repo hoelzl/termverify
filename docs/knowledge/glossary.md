@@ -3,6 +3,7 @@ type: Glossary
 title: TermVerify glossary
 description: Core TermVerify vocabulary and the historical names used by older decision records.
 tags: [glossary, terminology, renames]
+review_by: 2027-01-20
 ---
 
 # Glossary

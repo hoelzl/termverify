@@ -3,6 +3,7 @@ type: Architecture
 title: TermVerify architecture
 description: A layered adapter and runner design for semantic and production-terminal verification.
 tags: [architecture, adapters, pty, terminal]
+review_by: 2027-01-20
 ---
 
 # Architecture

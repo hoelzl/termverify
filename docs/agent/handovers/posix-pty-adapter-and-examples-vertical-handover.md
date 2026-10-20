@@ -4,6 +4,7 @@ status: active
 date: 2026-07-31
 summary: Working handover for the POSIX PTY adapter and examples vertical.
 issue: 204
+review_by: 2026-12-01
 ---
 
 # POSIX PTY Adapter and Examples Vertical Handover

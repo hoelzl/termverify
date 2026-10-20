@@ -3,6 +3,7 @@ type: Protocol Design
 title: Transcript compatibility and evolution
 description: Version rejection and the amendment policy for termverify.transcript/v1 and its registries.
 tags: [protocol, compatibility, governance]
+review_by: 2027-01-20
 ---
 
 # Transcript compatibility and evolution
