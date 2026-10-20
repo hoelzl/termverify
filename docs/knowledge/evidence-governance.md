@@ -9,8 +9,10 @@ tags: [evidence, redaction, baselines, snapshots, security]
 
 > **Scope:** the accepted evidence-safety and baseline-governance contract.
 > Sensitive retention, committed baselines, report roots, and CI artifact
-> upload stay disabled until each passes its own reviewed enablement;
-> `scripts/validate_evidence_governance.py` fails closed while they are.
+> upload stay disabled until each passes its own reviewed enablement.
+> `scripts/validate_evidence_governance.py` mechanically rejects report and
+> artifact roots and CI artifact upload; the baseline prohibition is policy
+> (see [baseline proposal and approval](#baseline-proposal-and-approval)).
 
 ## On this page
 

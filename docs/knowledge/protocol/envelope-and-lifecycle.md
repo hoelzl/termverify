@@ -37,7 +37,9 @@ the meaning of a required v1 member.
 A valid transcript contains exactly this lifecycle shape:
 
 1. `run.started` at `seq: 0`;
-2. `capability.result` records in configuration-table order until all requested
+2. `capability.result` records in
+   [configuration-table order](deterministic-constraints.md#configuration-table)
+   until all requested
    constraints are applied, the first is unsupported, or an adapter failure
    terminates negotiation;
 3. if initialization completes, exactly one initial readiness observation;

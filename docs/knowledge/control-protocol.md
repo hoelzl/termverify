@@ -39,8 +39,9 @@ Whether the protocol may change in place is a governance decision, not a
 property of this page: see
 [`prototyping-stage-protocol-governance.md`](../agent/design/prototyping-stage-protocol-governance.md).
 While the prototyping stage lasts it may change in place, including
-incompatibly; no publication event freezes it, and after the stage ends
-amendments require a new protocol version.
+incompatibly. No publication event freezes it: the prototyping stage ends
+only by an explicit recorded owner decision, after which amendments require a
+new protocol version.
 
 ## On this page
 

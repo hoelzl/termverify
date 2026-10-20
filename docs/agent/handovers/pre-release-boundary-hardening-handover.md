@@ -17,7 +17,7 @@ summary: Pre-release boundaries (vocabulary, correlation, containment, schema di
   (2026-07-19, issue #146) — for exactly that design's scope and nothing else;
   this handover's transferred criteria, retirements, and deferrals are
   unchanged by that activation.
-- **Renamed since:** this record uses names from before #268 (2026-08-01) and #218 (2026-07-29); see the [historical names](../../knowledge/glossary.md#historical-names).
+- **Renamed since:** this record uses names from before #218 (2026-07-29) and #268 (2026-08-01); see the [historical names](../../knowledge/glossary.md#historical-names).
 - **Owner:** project maintainer
 - **Created:** 2026-07-17
 - **Updated:** 2026-07-29

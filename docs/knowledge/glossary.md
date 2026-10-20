@@ -15,9 +15,9 @@ tags: [glossary, terminology, renames]
 | Binding | The platform layer beneath the terminal adapter's binding port, such as `ConptyBinding` or `PosixPtyBinding`. | [Architecture](architecture.md) |
 | Capability result | The per-constraint receipt a run records before any input: `applied` with an effective value and tier, or `unsupported`. | [Deterministic constraints](protocol/deterministic-constraints.md) |
 | Enforcement tier | How much an `applied` receipt is worth: `os`, `constructive`, or `delivered`. A `delivered` receipt is not containment. | [Enforcement tiers](protocol/deterministic-constraints.md#enforcement-tiers) |
-| Epoch | One input, the diagnostics it caused, and the observation that closes it at deterministic quiescence. | [Envelope and lifecycle](protocol/envelope-and-lifecycle.md) |
+| Epoch | One input, the diagnostics it caused, and the observation that closes it at deterministic quiescence, unless a terminal record closes it first. | [Envelope and lifecycle](protocol/envelope-and-lifecycle.md) |
 | Observation | Normalized evidence captured at a quiescent point: state, events, UI, and optional frame and process layers. | [Inputs and observations](protocol/inputs-and-observations.md) |
-| Subject | The application under test. | [Architecture](architecture.md) |
+| Subject | The application under test; a transcript identifies it by its versioned replay selector. | [Envelope and lifecycle](protocol/envelope-and-lifecycle.md) |
 | Transcript | One canonical JSONL record of one verified run (`termverify.transcript/v1`). | [Protocol](protocol.md) |
 
 ## Historical names
@@ -35,9 +35,13 @@ only the names moved.
 | #268 (2026-08-01) | `ConptyAdapter` | `TerminalAdapter` |
 | #268 (2026-08-01) | `ConptyBindingPort`, `ConptyChildPort`, `ConptyWatchdogPort` | `TerminalBindingPort`, `TerminalChildPort`, `TerminalWatchdogPort` |
 
-Deliberately unchanged: `EnforcementReceipt`, `EnforcementTier`, and
-`termverify.enforcement-tier/v1` keep their names after #218, matching the
-wire's `applied` status only where the status itself is named. `ConptyBinding`
+Deliberately unchanged: `EnforcementReceipt`, `EnforcementTier`,
+`termverify.enforcement-tier/v1`, and the `constraint-not-enforced` wire code
+keep their names after #218 — the rename aligned names with the wire's
+`applied` status, and these name the tier, the receipt, or a stable error code
+rather than the status. `ConptyBinding`
 keeps its name after #268: it is one of two implementations of the neutral
 binding port, beside `PosixPtyBinding`, and every ConPTY-specific behavior an
-older record describes is still a property of that binding.
+older record describes is still a property of that binding. The private
+native binding module `termverify._conpty` is unrelated to the old public
+`termverify.conpty` module name.

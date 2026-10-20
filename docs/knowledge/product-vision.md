@@ -51,7 +51,7 @@ Stated once, here. Each entry says plainly what does not exist and what it waits
 
 The Ubuntu CI legs cannot yet exercise a real terminal end to end, so most TUIs run on a platform TermVerify has never driven through its own pipeline. This is the **first** planned item, not one among equals: the accepted direction is a vertical slice — a POSIX adapter plus one end-to-end `examples/` walkthrough that verifies a real, even trivial, TUI — before any further horizontal specification. Recorded as finding P6 and strategic recommendation 10 of the 2026-07-24 review, and tracked as the initiative in issue #204.
 
-Initiative progress lives in issue #204 and its active handover, not here. What this entry waits on is evidence rather than machinery: a POSIX pseudoterminal binding (`termverify._posix_pty`) and the platform-neutral adapter above the binding port already exist, but until a leg drives a real subject through the adapter on a pty — readiness, a text epoch, a resize with observed dimensions, exit, forced stop, deadline abort (issue #269) — the POSIX capability is planned scope and belongs here, not in the README.
+Initiative progress lives in issue #204, not here. What this entry waits on is evidence rather than machinery: a POSIX pseudoterminal binding (`termverify._posix_pty`) and the platform-neutral adapter above the binding port already exist, but until a leg drives a real subject through the adapter on a pty — readiness, a text epoch, a resize with observed dimensions, exit, forced stop, deadline abort (issue #269) — the POSIX capability is planned scope and belongs here, not in the README.
 
 ## Property and state-machine testing
 

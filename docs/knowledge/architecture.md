@@ -66,7 +66,8 @@ teardown, and process-tree handling through explicit readiness-marker epochs.
 Key input reaches the subject through the `termverify.key-encoding/v1`
 registry; its evidence is delivery evidence, not key-support negotiation,
 input-mode tracking, or a claim that an arbitrary subject decodes every
-chord. Which bindings are proven end to end is a capability claim, made in
+chord. Only a binding with end-to-end evidence behind it is a production
+path to rely on. Which bindings are proven end to end is a capability claim, made in
 the README and, for what is still missing, in the product vision.
 
 The production adapter does not claim OS filesystem/network containment. Its

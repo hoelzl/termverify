@@ -51,7 +51,8 @@ cross-record lifecycle, canonical ordering, and uniqueness projected onto
 selected fields. In particular, terminal capabilities must be sorted and
 network entries must be sorted and unique by `(host, port)` even though standard
 schema-only validation cannot fully enforce those rules. Exhaustive per-kind
-schema coverage or a custom vocabulary/validator is out of scope for v1.
+schema coverage or a custom vocabulary/validator is a separate compatibility
+and distribution workstream.
 
 The canonical committed schema is packaged as the installed resource
 `termverify/schemas/termverify.transcript/v1.schema.json` in both wheel and

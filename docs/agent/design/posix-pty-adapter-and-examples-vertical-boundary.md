@@ -19,6 +19,11 @@ issue: 204
   No adapter, example, or platform claim exists until its slice lands with
   evidence and an adversarial-review verdict.
 - **Renamed since:** this record uses names from before #268 (2026-08-01); see the [historical names](../../knowledge/glossary.md#historical-names).
+- **Executed since:** decision 1 below was executed by #268. The measured
+  conditional counts recorded below are the counts *at acceptance time* and
+  are deliberately left as measured; the post-slice measurement lives in
+  `tests/test_terminal_platform_neutrality.py`, which holds the threshold at
+  zero. The trigger did not fire.
 - **Issue:** [#204](https://github.com/hoelzl/termverify/issues/204);
   prioritization input is
   [#114](https://github.com/hoelzl/termverify/issues/114)

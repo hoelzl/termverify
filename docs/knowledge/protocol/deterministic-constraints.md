@@ -9,7 +9,7 @@ tags: [protocol, constraints, determinism, enforcement]
 
 Part of the [`termverify.transcript/v1` protocol](../protocol.md).
 
-## Requested deterministic constraints
+## Configuration table
 
 `run.started.payload.config` has all of the following required members:
 
