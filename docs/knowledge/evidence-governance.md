@@ -7,11 +7,21 @@ tags: [evidence, redaction, baselines, snapshots, security]
 
 # Evidence safety and baseline governance
 
-> **Status: accepted and partially implemented.** Independently human-reviewed
-> on 2026-07-15. Safe transcript persistence and recursive transcript-fixture
-> validation are implemented. Sensitive retention, committed baselines, report
-> roots, and CI artifact upload remain disabled pending their separate reviewed
-> enablement boundaries.
+> **Scope:** the accepted evidence-safety and baseline-governance contract.
+> Sensitive retention, committed baselines, report roots, and CI artifact
+> upload stay disabled until each passes its own reviewed enablement.
+> `scripts/validate_evidence_governance.py` mechanically rejects report and
+> artifact roots and CI artifact upload; the baseline prohibition is policy
+> (see [baseline proposal and approval](#baseline-proposal-and-approval)).
+
+## On this page
+
+- [Classification and handling](#classification-and-handling)
+- [Secure capture defaults](#secure-capture-defaults)
+- [Redaction contract](#redaction-contract)
+- [Codec and persistence boundary](#codec-and-persistence-boundary)
+- [Baseline proposal and approval](#baseline-proposal-and-approval)
+- [Enforcement and ownership](#enforcement-and-ownership)
 
 Terminal evidence can contain credentials, personal data, host paths, and
 proprietary application output. The safe default is to capture only sanitized,

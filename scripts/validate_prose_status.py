@@ -40,8 +40,12 @@ from termverify._key_v1 import KEY_NAMES
 #: (relative path, claim pattern with one numeric group, expected count
 #: callable) — one row per prose site that states a registry size.
 REGISTRY_COUNT_CLAIMS: tuple[tuple[str, str, str], ...] = (
-    ("docs/knowledge/protocol.md", r"registry has (\d+) entries", "names"),
-    ("docs/knowledge/protocol.md", r"each of the (\d+) valid", "chords"),
+    (
+        "docs/knowledge/protocol/inputs-and-observations.md",
+        r"registry has (\d+) entries",
+        "names",
+    ),
+    ("docs/knowledge/protocol/key-encoding.md", r"each of the (\d+) valid", "chords"),
     (
         "docs/agent/design/key-to-terminal-byte-mapping.md",
         r"admits exactly (\d+) chords",

@@ -13,22 +13,7 @@ issue: 123
   document records owner decisions taken in session on 2026-07-18; it
   authorizes the implementation slices listed at the end and does not itself
   add code or claim any port exists.
-- **Renamed 2026-07-29 (#218):** this document uses the pre-rename
-  vocabulary. `ConstraintPorts.enforce_*` is now `apply_*`,
-  `EnforcedConstraints` is `AppliedConstraints`, and
-  `UnenforcedConstraintPorts` is `ApplyNothingConstraintPorts`, matching
-  the wire's `applied` status. The decisions recorded below are unchanged;
-  only the names are. `EnforcementReceipt`, `EnforcementTier`, and
-  `termverify.enforcement-tier/v1` deliberately keep their names.
-- **Renamed 2026-08-01 (#268):** this document uses the pre-generalization
-  names. The public adapter module is now `termverify.terminal`;
-  `ConptyAdapter` is `TerminalAdapter`, and `ConptyBindingPort` /
-  `ConptyChildPort` / `ConptyWatchdogPort` are `TerminalBindingPort` /
-  `TerminalChildPort` / `TerminalWatchdogPort`. `ConptyBinding` deliberately
-  keeps its name: it is one of two implementations of the neutral port,
-  beside `PosixPtyBinding`. The decisions recorded below are unchanged, and
-  every ConPTY-specific *behavior* described here is still a property of that
-  binding — only the names above the port moved.
+- **Renamed since:** this record uses names from before #218 (2026-07-29) and #268 (2026-08-01); see the [historical names](../../knowledge/glossary.md#historical-names).
 - **Issue:** [#123](https://github.com/hoelzl/termverify/issues/123)
 - **Date:** 2026-07-18
 - **Inputs:** the `Adapter`/`ConstraintPorts` contract in `termverify.adapter`;

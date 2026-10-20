@@ -11,40 +11,39 @@ TermVerify separates application control from verification policy.
 
 ```text
 Application under test
-  ├── direct adapter: fast commands and structured observation   [built]
-  └── production adapter: PTY/subprocess terminal path           [built: Windows ConPTY + JSONL]
+  ├── direct adapter: fast commands and structured observation
+  └── production adapter: PTY/subprocess terminal path
                          │
                     TermVerify runners
-  ├── deterministic run configuration                            [built]
-  ├── transcript dispatch and replay                             [built]
-  ├── observation normalization                                  [built]
-  ├── comparator/oracle policies                                 [partial: exact comparator only]
-  ├── property and state-machine integration                     [planned]
-  └── reports and failure artifacts                              [planned]
+  ├── deterministic run configuration
+  ├── transcript dispatch and replay
+  ├── observation normalization
+  ├── comparator/oracle policies
+  ├── property and state-machine integration
+  └── reports and failure artifacts
 ```
 
-Sequencing and rationale for the planned rows live once, in
+This page describes structure, not status. Which layers ship today is
+stated once, in the README's "What TermVerify does today" section; planned
+layers and their sequencing live once, in
 [the product vision](product-vision.md).
 
-The runner, comparison/replay, oracle-policy, and reporting rows describe the
-Phase 2 verification-core layer, active under the accepted
-`phase-2-verification-core-boundary.md` decision. At the current pre-release
-boundary, TermVerify ships the adapter/runtime contracts, direct and Windows
-terminal adapters, transcript codec/validation, safe redacted persistence,
-and — from Phase 2 slices 1–3 — the `termverify.recorder` transcript
-recorder with its minimal scripted-run orchestrator, the
-`termverify.comparator` exact comparator with its deterministic plain-text
-report (equivalence excludes only the envelope `run_id`; the exclusion set
-is closed), and the `termverify.replay` caller-bound replay engine
-(selector agreement disclosed, never enforced). Oracle policies,
-differential orchestration, and behavioral baselines remain outside the
-accepted boundary.
+The runner, comparison/replay, oracle-policy, and reporting rows form the
+verification core, scoped by the accepted
+[verification-core boundary decision](../agent/design/phase-2-verification-core-boundary.md):
+the `termverify.recorder` transcript recorder with its minimal scripted-run
+orchestrator, the `termverify.comparator` exact comparator with its
+deterministic plain-text report (equivalence excludes only the envelope
+`run_id`; the exclusion set is closed), and the `termverify.replay`
+caller-bound replay engine (selector agreement disclosed, never enforced).
+Oracle policies, differential orchestration, and behavioral baselines are
+outside that boundary.
 
 # Boundary
 
 Applications expose a small adapter surface: start a deterministic run, dispatch an input event, advance an explicit clock, observe structured state/UI evidence, and stop. State save/restore is not part of the adapter surface.
 
-Phase 1 serializes that surface into single-flight execution epochs. Complete
+The v1 protocol serializes that surface into single-flight execution epochs. Complete
 capability negotiation is followed by one positional initial readiness
 observation. Each later input is drained to an application-port-reported
 quiescent observation or terminal result before another input is accepted.
@@ -58,30 +57,24 @@ constraint and application ports without consulting ambient time, terminal, or
 process state.
 
 The direct adapter is the default for fast unit tests, and is the path
-property testing will use when it exists (`[planned]` above). The Windows
-production path is `termverify.terminal.TerminalAdapter` over the reviewed
-`ConptyBinding`, with the fail-closed `termverify.vt.VtScreenNormalizer` above
-it. That adapter is platform-neutral and also ships `PosixPtyBinding`, whose
-evidence today stops at the binding, so there is no POSIX production path to
-claim yet (issue #269). On Windows the path verifies real terminal input,
-rendering, resize, EOF/exit evidence, forced teardown, and process-tree
-handling through explicit readiness-marker epochs. A successful Windows
-integration run has exercised the real binding, cooperation-tier constraint
-delivery, text input, normalized/replayable frames, resize, and observed
-exit. `termverify.key-encoding/v1` dispatch is implemented; real-child
-Windows-matrix evidence proves exact byte delivery to a cooperative raw-mode
-subject for one representative of every encodable family class, replay identity,
-native exit through an in-band key, and fail-closed unencodable input with
-OS-observed teardown. This is delivery evidence, not key-support negotiation,
-input-mode tracking, or a claim that an arbitrary subject decodes every chord.
+property testing will use when it exists. The production terminal path is
+`termverify.terminal.TerminalAdapter`, which names no platform: it drives an
+injected binding port — `ConptyBinding` on Windows, `PosixPtyBinding` on
+POSIX — with the fail-closed `termverify.vt.VtScreenNormalizer` above it, and
+verifies terminal input, rendering, resize, EOF/exit evidence, forced
+teardown, and process-tree handling through explicit readiness-marker epochs.
+Key input reaches the subject through the `termverify.key-encoding/v1`
+registry; its evidence is delivery evidence, not key-support negotiation,
+input-mode tracking, or a claim that an arbitrary subject decodes every
+chord. Only a binding with end-to-end evidence behind it is a production
+path to rely on. Which bindings are proven end to end is a capability claim, made in
+the README and, for what is still missing, in the product vision.
 
 The production adapter does not claim OS filesystem/network containment. Its
 terminal dimensions receipt is OS-level; the other constraints require explicit
 subject-cooperation ports whose `delivered` receipts disclose delivery rather
 than subject compliance. Non-empty terminal capabilities remain unsupported.
-The terminal adapter is platform-neutral and ships a POSIX binding, but no leg
-anywhere yet drives a real subject through it on a pseudoterminal, so there is
-no POSIX terminal path to rely on (issue #269). Browser bridging remains
+Browser bridging remains
 deferred until the direct and terminal vertical slices prove that a shared
 abstraction is needed.
 

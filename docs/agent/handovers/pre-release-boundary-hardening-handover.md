@@ -17,26 +17,10 @@ summary: Pre-release boundaries (vocabulary, correlation, containment, schema di
   (2026-07-19, issue #146) — for exactly that design's scope and nothing else;
   this handover's transferred criteria, retirements, and deferrals are
   unchanged by that activation.
-- **Renamed 2026-08-01 (#268):** this document uses the pre-generalization
-  names. The public adapter module is now `termverify.terminal`;
-  `ConptyAdapter` is `TerminalAdapter`, and `ConptyBindingPort` /
-  `ConptyChildPort` / `ConptyWatchdogPort` are `TerminalBindingPort` /
-  `TerminalChildPort` / `TerminalWatchdogPort`. `ConptyBinding` deliberately
-  keeps its name: it is one of two implementations of the neutral port,
-  beside `PosixPtyBinding`. The decisions recorded below are unchanged, and
-  every ConPTY-specific *behavior* described here is still a property of that
-  binding — only the names above the port moved.
+- **Renamed since:** this record uses names from before #218 (2026-07-29) and #268 (2026-08-01); see the [historical names](../../knowledge/glossary.md#historical-names).
 - **Owner:** project maintainer
 - **Created:** 2026-07-17
 - **Updated:** 2026-07-29
-- **Renamed 2026-07-29 (#218):** this document uses the pre-rename
-  vocabulary. `ConstraintPorts.enforce_*` is now `apply_*`,
-  `EnforcedConstraints` is `AppliedConstraints`, and
-  `UnenforcedConstraintPorts` is `ApplyNothingConstraintPorts`, matching the
-  wire's `applied` status. The criteria recorded below are unchanged; only
-  the names are. `EnforcementReceipt`, `EnforcementTier`,
-  `termverify.enforcement-tier/v1`, and the `constraint-not-enforced` wire
-  code deliberately keep their names.
 - **Review required:** yes — activation and every workstream that changes public
   compatibility, enforcement, distribution, security, or release claims require
   executable evidence and independent human-readable review.

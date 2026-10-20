@@ -11,9 +11,15 @@ This directory is an [Open Knowledge Format (OKF) v0.1](https://github.com/Googl
   types, marking the ones TermVerify supplies no machinery for yet.
 - [Evidence governance](evidence-governance.md) — accepted redaction, capture,
   and baseline-approval controls.
-- [Protocol](protocol.md) — the planned interaction and observation contract.
+- [Protocol](protocol.md) — the `termverify.transcript/v1` transcript
+  contract: where acceptance authority lives, a summary, and its topic pages.
 - [Control protocol](control-protocol.md) — the `termverify.control/v1`
   live wire protocol for JSONL-subprocess subjects.
+
+## Reference
+
+- [Glossary](glossary.md) — core vocabulary and the historical names that
+  older decision records use.
 
 ## Navigation rule
 

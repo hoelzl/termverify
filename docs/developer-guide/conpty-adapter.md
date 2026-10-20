@@ -315,7 +315,7 @@ epoch's output onto the wrong input.
 
 `dispatch` executes a semantic `KeyInput` chord through the closed
 `termverify.key-encoding/v1` registry (see the
-[protocol companion note](../knowledge/protocol.md)): an encodable chord's
+[protocol companion note](../knowledge/protocol/key-encoding.md)): an encodable chord's
 exact registry string is written to the child exactly once through the
 single-flight write — the same disclosed native console-input encoding path
 `TextInput` rides — and then runs the standard quiescent input epoch. An

@@ -4,9 +4,9 @@ The closed set of semantic key names an ``input.key`` record may carry, and
 the predicate that decides whether a value is one canonical chord. Names are
 exact and case-sensitive; v1 performs no trimming, case folding, Unicode
 normalization, alias rewriting, or modifier reordering (see
-``docs/knowledge/protocol.md``). :data:`KEY_NAMES` and :func:`is_key_chord`
-are re-exported from the top-level ``termverify`` package: the names are
-public, this module path is not.
+``docs/knowledge/protocol/inputs-and-observations.md``). :data:`KEY_NAMES`
+and :func:`is_key_chord` are re-exported from the top-level ``termverify``
+package: the names are public, this module path is not.
 """
 
 from __future__ import annotations
