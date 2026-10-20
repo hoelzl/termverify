@@ -34,4 +34,5 @@ The individual commands and tooling notes are in
 
 ## Documentation
 
-Follow the placement rules in [`docs/README.md`](docs/README.md). `docs/knowledge/` is an OKF bundle: all concept documents need YAML frontmatter and a non-empty `type`; its `index.md` files are navigation-only.
+Follow the placement and metadata rules in [`docs/README.md`](docs/README.md);
+the documentation gates in `scripts/check.py` enforce them.

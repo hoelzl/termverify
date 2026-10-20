@@ -60,16 +60,16 @@ uv --no-config run pre-commit install --hook-type pre-commit --hook-type pre-pus
 ## Repository layout
 
 ```text
-src/termverify/       distributable library
- tests/                executable behavior contracts
- docs/knowledge/       durable OKF knowledge bundle
- docs/developer-guide/ contributor workflows
- docs/agent/design/    architectural decisions and reuse assessments
- docs/agent/reviews/   adversarial and independent review reports
+src/termverify/   distributable library
+tests/            executable behavior contracts
+scripts/          gate entry point, validators, and documentation generators
+docs/             documentation; docs/README.md maps every folder
+changelog.d/      pending changelog fragments
+spikes/           isolated feasibility probes, outside the package
 ```
 
-(An `.agents/skills/` directory for proven reusable procedures is reserved
-by the [documentation map](../README.md) but does not exist yet.)
+The [documentation map](../README.md) describes every folder under `docs/`
+and where a new document belongs; each folder's `index.md` lists its pages.
 
 ## Coverage ratchet
 
@@ -131,12 +131,11 @@ allowing integer rounding to absorb a regression.
   (e.g. `tests/test_transcript_lifecycle.py`). No state-machine or model-based
   runner exists; TermVerify-shipped property harnesses are `[planned]`.
 - **Integration:** adapters running an application in process or subprocess mode.
-- **PTY/end-to-end (proven on Windows today):** actual terminal input/output
-  and normalized rendered-screen evidence through the terminal adapter with
-  `ConptyBinding` injected. The adapter is platform-neutral and a
-  `PosixPtyBinding` ships beside it, but its evidence stops at the binding's
-  own tests; the adapter-level POSIX legs are
-  [issue #269](https://github.com/hoelzl/termverify/issues/269), so treat the
-  POSIX end-to-end path as `[planned]` until they land.
+- **PTY/end-to-end:** actual terminal input/output and normalized
+  rendered-screen evidence through the platform-neutral terminal adapter with
+  a platform binding injected (`ConptyBinding` or `PosixPtyBinding`). Which
+  platforms are proven end to end is a capability claim, stated in the
+  README's "What TermVerify does today"; until a platform is listed there,
+  its results are evidence about the binding, not about the pipeline.
 
-PTY tests must tolerate platform and CI differences deliberately. A direct adapter remains the fast default; PTY support is required for production-fidelity scenarios, not for every unit test — and the only end-to-end-proven PTY path today is the Windows one.
+PTY tests must tolerate platform and CI differences deliberately. A direct adapter remains the fast default; PTY support is required for production-fidelity scenarios, not for every unit test.

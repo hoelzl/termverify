@@ -249,11 +249,17 @@ Phase 1 lands) and a changelog fragment `changelog.d/322-<slug>.changed.md`.
 - `docs/developer-guide/development.md` becomes the only home for commands,
   supported Python versions, and repository layout. `README.md` and
   `CONTRIBUTING.md` link to it.
-- Keep the OKF rule only in `docs/knowledge/index.md` and the reading order
-  only in `AGENTS.md`. Update `agent-workflow.md` "Context budget".
-- Merge README "Design principles" with the AGENTS engineering rules: one
-  home, one pointer. Keep `tests/test_readme_capability_truth.py` passing,
-  updating it if its anchors move.
+- Keep the OKF rule only in `docs/README.md` (with the navigation rule in
+  `docs/knowledge/index.md`) and the reading order only in `AGENTS.md`.
+  Update `agent-workflow.md` "Context budget".
+- Remove platform-status claims from the developer guide; the README's
+  capability section, guarded by `tests/test_readme_capability_truth.py`, is
+  their single home.
+- *Revised during implementation:* README "Design principles" and the AGENTS
+  engineering rules stay separate. They overlap in topic but differ in kind —
+  public product commitments versus imperative working rules for every
+  agent request — so merging them would push product prose into Tier 1 or
+  working rules out of it.
 
 ### Phase 6 — Mechanical gates and doc gardening
 
