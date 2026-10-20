@@ -11,13 +11,7 @@ summary: 'Immutable Python contract for adapters, run configuration, and observa
   [#47](https://github.com/hoelzl/termverify/pull/47) and
   [#49](https://github.com/hoelzl/termverify/pull/49), amended by the accepted
   `termverify.key/v1` boundary
-- **Renamed 2026-07-29 (#218):** this document uses the pre-rename
-  vocabulary. `ConstraintPorts.enforce_*` is now `apply_*`,
-  `EnforcedConstraints` is `AppliedConstraints`, and
-  `UnenforcedConstraintPorts` is `ApplyNothingConstraintPorts`, matching
-  the wire's `applied` status. The decisions recorded below are unchanged;
-  only the names are. `EnforcementReceipt`, `EnforcementTier`, and
-  `termverify.enforcement-tier/v1` deliberately keep their names.
+- **Renamed since:** this record uses names from before #218 (2026-07-29); see the [historical names](../../knowledge/glossary.md#historical-names).
 - **Date:** 2026-07-17
 - **Depends on:** the accepted
   [execution contract](phase-1-adapter-execution-contract.md)

@@ -35,13 +35,23 @@ tied to the prototyping stage (owner decision 2026-07-24, decision 5 in
 and is revisited when that stage ends, where doc-as-contract becomes a
 defensible choice for a protocol third-party subjects implement.
 
-The protocol is **unfrozen**: it may change in place, including
-incompatibly, under the repository's prototyping-stage governance (owner
-decision 2026-07-24,
-[`prototyping-stage-protocol-governance.md`](../agent/design/prototyping-stage-protocol-governance.md)).
-No publication event freezes it; the prototyping stage ends only by an
-explicit recorded owner decision, after which amendments require a new
-protocol version.
+Whether the protocol may change in place is a governance decision, not a
+property of this page: see
+[`prototyping-stage-protocol-governance.md`](../agent/design/prototyping-stage-protocol-governance.md).
+While the prototyping stage lasts it may change in place, including
+incompatibly; no publication event freezes it, and after the stage ends
+amendments require a new protocol version.
+
+## On this page
+
+- [Framing and canonical form](#framing-and-canonical-form)
+- [Fixed v1 resource limits](#fixed-v1-resource-limits)
+- [Common envelope](#common-envelope)
+- [Message kinds and lifecycle](#message-kinds-and-lifecycle)
+- [Message payloads](#message-payloads)
+- [Timing and causality](#timing-and-causality)
+- [Failure taxonomy (adapter-observed)](#failure-taxonomy-adapter-observed)
+- [Subject obligations](#subject-obligations)
 
 ## Framing and canonical form
 
