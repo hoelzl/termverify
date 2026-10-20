@@ -13,26 +13,29 @@ Read only what the task needs:
 | --- | --- |
 | Product scope and current capabilities | `README.md` |
 | Concepts: architecture, protocols, evidence, verification | `docs/knowledge/index.md`, then one or two pages |
-| Tooling, adapters, workflows, release | `docs/developer-guide/` |
+| Tooling, adapters, workflows, release (read before changing them) | `docs/developer-guide/` |
 | Past decisions, reviews, plans, handovers | `docs/README.md` (map of `docs/agent/`) |
 | Writing, moving, or retiring a document | `docs/README.md` (placement rules) |
 | Harness entry points and configuration | `docs/developer-guide/agent-harnesses.md` |
 | Parallel worktrees (read before creating, sharing, or removing one) | `docs/developer-guide/agent-workflow.md` |
 
+When delegating to another agent in a worktree, always give it that worktree as
+its working directory.
+
 ## Sources of truth
 
 Executable checks and working code are authoritative over prose. A
-disagreement is a defect: repair the prose by default, and change code only
-through a test-first slice.
+disagreement is a defect: repair the prose by default, in the same change, and
+change code only through a test-first slice.
 
 | Question | Authoritative source |
 | --- | --- |
 | Dependencies and supported Python versions | `pyproject.toml`, `uv.lock` |
 | Quality gates | `scripts/check.py` (prints each command it runs) |
 | Public API | `src/termverify/` plus tests |
-| Transcript acceptance (`termverify.transcript/v1`) | `src/termverify/transcript.py`; the packaged schema is a non-exhaustive aid, not a conformance verdict |
+| Transcript acceptance (`termverify.transcript/v1`) | `src/termverify/transcript.py`; the packaged schema is a non-exhaustive aid, not a conformance verdict; policy in `docs/knowledge/protocol.md` |
 | Control-protocol acceptance (`termverify.control/v1`) | `src/termverify/control.py`; specification in `docs/knowledge/control-protocol.md` |
-| Protocol freeze and compatibility stage | `docs/agent/design/prototyping-stage-protocol-governance.md` |
+| Protocol freeze, compatibility stage, and the scope of code-over-prose for protocols | `docs/agent/design/prototyping-stage-protocol-governance.md` |
 | Current work state | GitHub issues and pull requests, `git status` — never this file |
 
 ## Non-negotiable engineering rules

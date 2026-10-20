@@ -8,8 +8,8 @@ owner-reviewed completion state recorded in the active handover under
 
 ## Preconditions
 
-1. `main` is green: the full validation gate in `AGENTS.md` passes (including
-   the coverage ratchet), and the CI-only `Security` workflow checks —
+1. `main` is green: `scripts/check.py --full` passes (including the coverage
+   ratchet), and the CI-only `Security` workflow checks —
    workflow security (zizmor) and dependency vulnerabilities (OSV-Scanner) —
    are green on the release commit.
 2. `CHANGELOG.md` has an accurate section for the new version: every breaking

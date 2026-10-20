@@ -17,6 +17,7 @@ repeating them.
 | Adversarial and independent review reports | [`docs/agent/reviews/`](agent/reviews/README.md) | no |
 | Starting prompts for worktree agents | [`docs/agent/prompts/`](agent/prompts/README.md) | no |
 | Pending changelog entries | [`changelog.d/`](../changelog.d/README.md) | no |
+| Reusable agent procedures (skills) | `.agents/skills/` — only once a workflow is proven and stable; none yet | no |
 
 Choose the location by the *kind* of information, never by the task that
 produced it. One fact has one home; other documents link to it rather than

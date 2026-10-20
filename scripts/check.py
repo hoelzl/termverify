@@ -6,11 +6,13 @@ Usage:
     uv --no-config run python scripts/check.py --full    # before a push
     uv --no-config run python scripts/check.py --list    # print, don't run
 
-The default runs the pre-commit hooks over all files. ``--full`` adds what
-the pre-push stage and CI gate on: the type check, the distribution build,
-and the test suite with the coverage ratchet. Run
-``uv --no-config sync --all-groups --locked`` first in a fresh checkout or
-worktree; syncing is not part of the gate because it would replace the
+The default runs the pre-commit hooks over all files. ``--full`` adds the
+pre-push stage — the type check, the distribution build, and the test
+suite — with the coverage ratchet. CI additionally checks the installed
+wheel and sdist and runs the security workflow (``.github/workflows/``).
+
+Run ``uv --no-config sync --all-groups --locked`` first in a fresh checkout
+or worktree; syncing is not part of the gate because it would replace the
 interpreter that runs this script.
 
 The command list lives here, in code that runs, so prose elsewhere names

@@ -17,14 +17,12 @@ Thank you for contributing. TermVerify is designed to be trustworthy infrastruct
 
 ```bash
 uv --no-config sync --all-groups --locked
-uv --no-config run pytest --cov --cov-report=term-missing
-uv --no-config run ruff check .
-uv --no-config run ruff format --check .
-uv --no-config run mypy src tests scripts
-uv --no-config run pre-commit run --all-files
-uv --no-config run pre-commit run --hook-stage pre-push --all-files
-uv --no-config build
+uv --no-config run python scripts/check.py          # before a commit
+uv --no-config run python scripts/check.py --full   # before a push
 ```
+
+The individual commands and tooling notes are in
+[`docs/developer-guide/development.md`](docs/developer-guide/development.md).
 
 ## Pull requests
 
@@ -36,4 +34,4 @@ uv --no-config build
 
 ## Documentation
 
-Follow the placement rules in `AGENTS.md`. `docs/knowledge/` is an OKF bundle: all concept documents need YAML frontmatter and a non-empty `type`; its `index.md` files are navigation-only.
+Follow the placement rules in [`docs/README.md`](docs/README.md). `docs/knowledge/` is an OKF bundle: all concept documents need YAML frontmatter and a non-empty `type`; its `index.md` files are navigation-only.

@@ -102,3 +102,23 @@ def test_default_runner_executes_the_command(monkeypatch: pytest.MonkeyPatch) ->
 
     assert check.main([]) == 0
     assert seen == [list(command) for command in check.QUICK]
+
+
+def test_full_covers_every_pre_push_hook() -> None:
+    """``--full`` must not drift from the pre-push stage: every pre-push hook
+    entry appears in the full gate (the test hook may add coverage flags)."""
+    import yaml
+
+    check = load_check()
+    config = yaml.safe_load(Path(".pre-commit-config.yaml").read_text("utf-8"))
+    pre_push = [
+        hook["entry"]
+        for repo in config["repos"]
+        for hook in repo["hooks"]
+        if "pre-push" in hook.get("stages", ())
+    ]
+    full = [" ".join(command) for command in check.gate_commands(full=True)]
+
+    assert pre_push
+    for entry in pre_push:
+        assert any(command.startswith(entry) for command in full), entry

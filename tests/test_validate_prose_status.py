@@ -187,6 +187,8 @@ def test_main_reports_failures_with_a_nonzero_exit(
     (tmp_path / "CHANGELOG.md").write_text("nothing released\n", encoding="utf-8")
     (tmp_path / "docs" / "agent" / "design").mkdir(parents=True)
     validator = load_validator()
+    for relative in validator.ALWAYS_ON_BUDGETS:
+        (tmp_path / relative).write_text("# Short map\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
 
     assert validator.main() == 1

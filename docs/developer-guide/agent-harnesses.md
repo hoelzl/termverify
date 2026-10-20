@@ -24,17 +24,20 @@ changing a harness entry point or harness configuration.
   `.claude/settings.json`. Personal overrides go in
   `.claude/settings.local.json`. The authoritative copy of any plan or
   decision found in a harness directory belongs under `docs/agent/`.
-- `AGENTS.md` and `CLAUDE.md` are loaded into every request. Their size is
-  gated by `scripts/validate_prose_status.py`; move task-specific detail into
-  a guide like this one and leave a one-line pointer.
+- `AGENTS.md` and `CLAUDE.md` are loaded into every request by the harnesses
+  that read them. Their size is gated by `scripts/validate_prose_status.py`;
+  move task-specific detail into a guide like this one and leave a one-line
+  pointer.
 
 ## Nested instruction files
 
-The repository ships no nested `AGENTS.md` or `CLAUDE.md` files. Codex and
-some Copilot surfaces concatenate nested `AGENTS.md` files from the project
-root down to the working directory, but Claude Code reads only `CLAUDE.md`,
-so nested `AGENTS.md` guidance would differ by harness. Directory-specific
-guidance belongs in the documentation indexes instead.
+The repository ships no nested `AGENTS.md` or `CLAUDE.md` files. Harnesses
+resolve nested instruction files differently: Codex concatenates every
+`AGENTS.md` from the project root down to the working directory, other
+harnesses pick the nearest file, make nesting opt-in, or read their own file
+names instead. Nested guidance would therefore reach each harness differently.
+Directory-specific guidance belongs in the documentation indexes, which every
+harness reads the same way.
 
 ## GitHub Copilot surfaces
 

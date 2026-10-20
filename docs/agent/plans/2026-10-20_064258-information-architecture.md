@@ -156,7 +156,7 @@ Phase 1 lands) and a changelog fragment `changelog.d/322-<slug>.changed.md`.
 
 ### Phase 1 — Lean Tier 1
 
-- Rewrite `AGENTS.md` as a map of at most about 50 lines and 4 KB.
+- Rewrite `AGENTS.md` as a map within a gated 4 KB budget.
   - Make reading conditional on the task.
   - Keep the source-of-truth table with short rows.
   - Keep the non-negotiable rules.
@@ -164,8 +164,8 @@ Phase 1 lands) and a changelog fragment `changelog.d/322-<slug>.changed.md`.
   - Shrink the placement table to a pointer to `docs/README.md`.
 - Move Copilot surfaces and harness compatibility into
   `docs/developer-guide/agent-harnesses.md`.
-- Add `scripts/check.py` with `--quick` (pre-commit stage) and `--full`
-  (adds pre-push stage and build) as the single gate entry point. Its
+- Add `scripts/check.py` as the single gate entry point: pre-commit hooks by
+  default, plus the pre-push stage with coverage under `--full`. Its
   docstring says it is meant to be run.
 - Add a Tier-1 size budget to `scripts/validate_prose_status.py`, applied to
   `AGENTS.md` and `CLAUDE.md`. Its failure message says what to move out and

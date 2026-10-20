@@ -64,8 +64,8 @@ src/termverify/       distributable library
  docs/agent/reviews/   adversarial and independent review reports
 ```
 
-(A `skills/` directory for proven reusable playbooks is reserved by the
-`AGENTS.md` placement table but does not exist yet.)
+(An `.agents/skills/` directory for proven reusable procedures is reserved
+by the [documentation map](../README.md) but does not exist yet.)
 
 ## Coverage ratchet
 
