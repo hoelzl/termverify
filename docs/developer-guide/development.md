@@ -135,7 +135,8 @@ allowing integer rounding to absorb a regression.
   rendered-screen evidence through the platform-neutral terminal adapter with
   a platform binding injected (`ConptyBinding` or `PosixPtyBinding`). Which
   platforms are proven end to end is a capability claim, stated in the
-  README's "What TermVerify does today"; until a platform is listed there,
-  its results are evidence about the binding, not about the pipeline.
+  README's "What TermVerify does today" and "Project status" sections; until
+  a platform is listed there as proven, its results are evidence about the
+  binding, not about the pipeline.
 
 PTY tests must tolerate platform and CI differences deliberately. A direct adapter remains the fast default; PTY support is required for production-fidelity scenarios, not for every unit test.

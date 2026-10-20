@@ -30,7 +30,8 @@ change code only through a test-first slice.
 
 | Question | Authoritative source |
 | --- | --- |
-| Dependencies and supported Python versions | `pyproject.toml`, `uv.lock` |
+| Dependencies | `pyproject.toml`, `uv.lock` |
+| Supported Python versions | `docs/developer-guide/development.md` (the CI matrix) |
 | Quality gates | `scripts/check.py` (prints each command it runs) |
 | Public API | `src/termverify/` plus tests |
 | Transcript acceptance (`termverify.transcript/v1`) | `src/termverify/transcript.py`; the packaged schema is a non-exhaustive aid, not a conformance verdict; policy in `docs/knowledge/protocol.md` |
