@@ -44,9 +44,10 @@ copying it.
   the changelog. A document that needs a volatile fact names the command or
   page that reports it.
 - **Records are historical.** ADRs, reviews, and archived handovers record
-  what was decided or found at the time. Correct them only to repair dead
-  links or paths, or to mark supersession; record a changed decision in a new
-  or amended record.
+  what was decided or found at the time. Correct ADRs and archived handovers
+  only to repair dead links or paths, or to mark supersession; a review
+  report changes only in its frontmatter (`reviews/README.md`). Record a
+  changed decision in a new or amended record.
 - **Knowledge pages are timeless.** `docs/knowledge/` follows OKF:
   `index.md` files are navigation-only, and every other page has YAML
   frontmatter with at least a non-empty `type`

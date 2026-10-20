@@ -10,9 +10,10 @@ Metadata schema: [`docs/README.md`](../../../docs/README.md#agent-record-metadat
 
 **Create** `docs/agent/handovers/<initiative>-handover.md` with frontmatter
 (`type: handover`, `status: draft` or `active`, `date`, one-line `summary`,
-`issue`, `review_by` about six weeks out) and the sections the workflow guide
-requires: scope, verified current state, decisions, risks, next actions,
-validation evidence, completion or supersession criteria. Record evidence,
+`issue`, and a `review_by` date by which it must be re-verified) and what the
+workflow guide requires: status, optional owner, whether review is required,
+scope, verified current state, decisions, risks, next actions, validation
+evidence, and completion or supersession criteria. Record evidence,
 not issue-by-issue progress — GitHub tracks volatile state.
 
 **Resume:** read the handover whole, then verify its "current state" against

@@ -1,6 +1,6 @@
 ---
 name: adversarial-review
-description: Run and file an independent adversarial review of a TermVerify pull request or of the repository. Use before merging any nontrivial code, protocol, or governance change, and when asked for a review pass.
+description: Run an independent adversarial review of a TermVerify pull request or of the repository, and file it when it must be durable evidence. Use before merging a nontrivial code, protocol, or governance change, and when asked for a review pass.
 ---
 
 # Adversarial review
@@ -20,7 +20,10 @@ Past reports, for calibration: [`docs/agent/reviews/index.md`](../../../docs/age
 4. **Fix and re-review.** The author fixes or explicitly disposes of every
    finding; a new round reviews the new head. Stop when a round finds
    nothing that blocks the merge.
-5. **File the report** under `docs/agent/reviews/` with the record
+5. **Record the verdict.** By default it lives in the pull request. File a
+   report under `docs/agent/reviews/` when the pass must be durable evidence —
+   a whole-repository pass, or a review a plan or handover requires — with the
+   record
    frontmatter (`type: review`, `status: findings`, then `resolved` once
    every finding is dispositioned) and regenerate the indexes with
    `uv --no-config run python scripts/build_doc_indexes.py`. Never rewrite a

@@ -12,7 +12,8 @@ read that section first. The procedure:
 1. From the clean integration checkout on `main`: `git fetch origin`.
 2. Create an **external sibling** worktree on its own branch, on the same
    volume:
-   `git worktree add -b <branch> <Projects>/../Worktrees/termverify/<name> origin/main`.
+   `git worktree add -b <branch> /c/Users/<user>/Programming/Python/Worktrees/termverify/<name> origin/main`
+   — never inside the checkout itself.
 3. In the new worktree: `uv --no-config sync --all-groups --locked`.
 4. One writing agent and one branch per worktree. When delegating, give the
    agent the worktree as its working directory and never let it edit the

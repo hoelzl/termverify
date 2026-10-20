@@ -10,7 +10,9 @@ it is authoritative and this skill only orders the steps. Agents prepare the
 release; a human reviews the release PR, and the `Release` workflow — never a
 local build — tags and publishes.
 
-1. Confirm authorization and the preconditions in the checklist:
+1. Confirm authorization. Cutting the first supported external artifact
+   additionally requires the owner-reviewed completion state recorded in the
+   active handover. Then confirm the preconditions in the checklist:
    `uv --no-config run python scripts/check.py --full` is green, the
    `Security` workflow is green on the release commit, and documentation
    matches behavior.

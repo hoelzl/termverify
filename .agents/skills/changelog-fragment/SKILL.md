@@ -12,9 +12,10 @@ Conventions: [`changelog.d/README.md`](../../../changelog.d/README.md).
    is one of `added`, `changed`, `deprecated`, `removed`, `fixed`, `security`.
    Use the issue number when the PR number is not known yet.
 3. Write the finished entry exactly as it should appear in the changelog:
-   usually one `- **Bold summary (#N).** …` bullet in the style of the
-   released sections. A breaking protocol or API change carries its migration
+   usually one `- **Bold summary.** …` bullet in the style of the released
+   sections, with issue or PR references in the text. A breaking protocol or API change carries its migration
    note inside the fragment, under `changed` or `removed`.
 4. Several fragments per PR are fine when the PR does several user-visible
-   things; they are folded in filename order at release time by
+   things; they are folded at release time, grouped by type and then ordered by
+   filename, by
    `scripts/collect_changelog.py`.
