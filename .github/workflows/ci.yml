@@ -73,3 +73,5 @@ jobs:
       - run: uv --no-config sync --all-groups --locked
       - name: Validate OKF knowledge frontmatter
         run: uv --no-config run python scripts/validate_knowledge_frontmatter.py
+      - name: Validate agent record metadata
+        run: uv --no-config run python scripts/validate_agent_docs.py

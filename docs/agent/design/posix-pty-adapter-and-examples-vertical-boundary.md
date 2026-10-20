@@ -1,3 +1,11 @@
+---
+type: decision
+status: accepted
+date: 2026-07-31
+summary: Boundary of the POSIX PTY adapter and the first end-to-end example vertical.
+issue: 204
+---
+
 # Vertical Boundary: A POSIX PTY Adapter and the First End-to-End Example
 
 - **Status:** accepted — drafted 2026-07-31 at owner request as the boundary

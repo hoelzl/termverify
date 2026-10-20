@@ -1,3 +1,10 @@
+---
+type: prompt
+status: retired
+date: 2026-07-15
+summary: 'Phase 1 prompt: expand the transcript-v1 fixture corpus without changing the accepted protocol.'
+---
+
 # Agent Prompt: Transcript Fixture Corpus
 
 ## Assignment

@@ -1,3 +1,10 @@
+---
+type: decision
+status: accepted
+date: 2026-07-18
+summary: Deliver deterministic constraints through cooperation-tier ports with truthful tier receipts; process containment is a non-goal.
+---
+
 # Cooperation-Tier Constraint Ports: Delivered Constraints, Truthful Tier Receipts, and the Containment Non-Goal
 
 - **Status:** accepted — decided 2026-07-18 by explicit owner direction;

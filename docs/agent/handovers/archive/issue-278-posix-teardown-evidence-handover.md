@@ -1,8 +1,16 @@
+---
+type: handover
+status: complete
+date: 2026-08-13
+summary: 'Pin the POSIX binding''s teardown invariants with deterministic probes; delivered by PR #302.'
+issue: 278
+---
+
 # Issue 278 — POSIX teardown evidence handover
 
 ## Handover metadata
 
-- **Status:** implementation candidate
+- **Status:** complete — [PR #302](https://github.com/hoelzl/termverify/pull/302) merged on 2026-08-13; issue #278 is closed.
 - **Issue:** [#278](https://github.com/hoelzl/termverify/issues/278)
 - **Tracking:** [#285](https://github.com/hoelzl/termverify/issues/285)
 - **Created:** 2026-08-13

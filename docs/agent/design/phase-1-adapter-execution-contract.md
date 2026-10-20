@@ -1,3 +1,11 @@
+---
+type: decision
+status: accepted
+date: 2026-07-16
+summary: API-neutral execution semantics for the direct adapter and the terminal lifecycle feasibility slice.
+issue: 42
+---
+
 # Phase 1 Adapter Execution Contract
 
 - **Status:** accepted by the maintainer on 2026-07-16; implemented by PR #45's

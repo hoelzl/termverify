@@ -1,8 +1,10 @@
 ---
 type: review
-status: current
-subject: PR #280 (issue #279) — the POSIX end-of-stream decoder flush
+status: resolved
 date: 2026-08-03
+summary: 'Three adversarial rounds on PR #280, the POSIX end-of-stream decoder flush (#279).'
+issue: 279
+subject: 'PR #280 (issue #279) — the POSIX end-of-stream decoder flush'
 ---
 
 # Adversarial review record — PR #280 / issue #279

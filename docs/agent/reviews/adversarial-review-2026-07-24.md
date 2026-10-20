@@ -1,3 +1,10 @@
+---
+type: review
+status: resolved
+date: 2026-07-24
+summary: Four-pass adversarial design and implementation review of main @ 8f33e6c; remediated by the archived 2026-07-24 remediation handover.
+---
+
 # TermVerify — Adversarial Design & Implementation Review
 
 - **Date:** 2026-07-24

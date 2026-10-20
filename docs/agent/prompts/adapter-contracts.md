@@ -1,3 +1,10 @@
+---
+type: prompt
+status: retired
+date: 2026-07-15
+summary: 'Phase 1 prompt: define the framework-neutral adapter contract and immutable run configuration.'
+---
+
 # Agent Prompt: Adapter Contracts
 
 ## Assignment

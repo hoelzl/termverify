@@ -94,7 +94,9 @@ owner, whether review is required, scope, verified current state, decisions,
 risks, next actions, validation evidence, and completion or supersession
 criteria.
 
-Use these statuses:
+Record the status in the handover's frontmatter (the agent-record schema in
+the [documentation map](../README.md)); a `- **Status:**` bullet in the body,
+if present, must agree with it. Use these statuses:
 
 - **draft:** proposed context, not yet accepted as the working handover;
 - **active:** the current handover for its initiative;

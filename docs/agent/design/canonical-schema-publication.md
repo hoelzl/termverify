@@ -1,3 +1,11 @@
+---
+type: decision
+status: accepted
+date: 2026-07-19
+summary: Publish the canonical transcript schema and the curated documentation at termverify.dev.
+issue: 131
+---
+
 # Canonical Schema Publication and Documentation Site at termverify.dev
 
 - **Status:** accepted — decided 2026-07-19 by explicit owner direction in

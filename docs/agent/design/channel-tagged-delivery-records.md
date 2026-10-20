@@ -1,3 +1,11 @@
+---
+type: decision
+status: accepted
+date: 2026-07-20
+summary: Amend the JSONL control transport with channel-tagged delivery records for handshake and wire-message delivery.
+issue: 173
+---
+
 # Channel-Tagged Delivery Records: A Design Amendment for Handshake and Wire-Message Delivery
 
 - **Status:** accepted — owner decisions taken in session 2026-07-20

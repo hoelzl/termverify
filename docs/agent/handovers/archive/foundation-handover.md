@@ -1,3 +1,10 @@
+---
+type: handover
+status: complete
+date: 2026-07-14
+summary: 'Phase 0 foundation: initial package, workflow, documentation, and CI.'
+---
+
 # Foundation Handover
 
 ## Feature overview

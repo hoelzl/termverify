@@ -1,3 +1,10 @@
+---
+type: decision
+status: accepted
+date: 2026-07-19
+summary: Add the full printable-ASCII punctuation row to termverify.key/v1 as a one-time in-place amendment.
+---
+
 # `termverify.key/v1` Punctuation Base Amendment
 
 - **Status:** accepted — decided 2026-07-19 by explicit owner direction. The

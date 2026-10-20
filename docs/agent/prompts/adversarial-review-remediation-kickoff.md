@@ -1,3 +1,10 @@
+---
+type: prompt
+status: retired
+date: 2026-07-16
+summary: 'Kickoff prompt for Slice 1 of the 2026-07-16 review remediation; delivered by PR #57.'
+---
+
 # Agent Prompt: Adversarial Review Remediation Kickoff
 
 > **Status:** delivered by

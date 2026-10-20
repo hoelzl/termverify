@@ -1,3 +1,10 @@
+---
+type: assessment
+status: current
+date: 2026-07-14
+summary: Integrate Recursive://Neon as a living external subject before copying any subsystem; reassessed 2026-07-19.
+---
+
 # Recursive://Neon Reuse Assessment
 
 Recursive://Neon is a valuable external subject and source of proven terminal interaction and parity-harness ideas. TermVerify will integrate with the living application before copying any subsystem.

@@ -1,3 +1,10 @@
+---
+type: decision
+status: accepted
+date: 2026-07-17
+summary: Terminal adapter dependency and verification plan; amended 2026-07-26 (#197) to replace pywinpty with TermVerify's own ConPTY binding.
+---
+
 # Terminal Adapter Dependency and Verification Decision
 
 > **Amended 2026-07-26 (issue #197, finding R7): `pywinpty` is replaced by

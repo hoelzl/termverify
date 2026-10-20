@@ -42,5 +42,39 @@ copying it.
   are written here, never only to a harness's private memory, state
   directory, or session context. See
   [agent harnesses](developer-guide/agent-harnesses.md).
+- **Agent records carry metadata.** Every record under `docs/agent/` opens
+  with the frontmatter below (`scripts/validate_agent_docs.py` enforces it).
 - **Not published:** `docs/agent/` never reaches the site; the build rewrites
   links into it to GitHub URLs (`scripts/build_site.py`).
+
+## Agent-record metadata
+
+Every Markdown file under `docs/agent/` except `README.md` and `index.md`
+opens with YAML frontmatter:
+
+```yaml
+---
+type: decision          # decision | assessment | review | plan | prompt | handover
+status: accepted        # closed vocabulary per type, below
+date: 2026-07-19        # when the record was made or decided
+summary: One line that says what the record decides or finds.
+issue: 146              # optional
+supersedes: [docs/agent/design/old.md]       # optional, repository-relative
+superseded_by: docs/agent/design/new.md      # required when status is superseded
+---
+```
+
+| Type | Folder | Statuses |
+| --- | --- | --- |
+| `decision` | `design/` | proposed, accepted, superseded, rejected |
+| `assessment` | `design/` | current, superseded |
+| `review` | `reviews/` (older reports also in `design/`) | findings, resolved |
+| `plan` | `plans/` | active, completed, abandoned |
+| `prompt` | `prompts/` | current, retired |
+| `handover` | `handovers/` | draft, active, blocked, complete, superseded |
+
+The frontmatter status is the living status. Records keep their historical
+text: a superseded decision's body still says what was accepted at the time,
+and a review's body is never rewritten. Finished handovers move to
+`handovers/archive/`; an amended decision stays in place and says so in its
+summary. Paths cited by source code stay stable, so decisions are never moved.

@@ -1,3 +1,10 @@
+---
+type: decision
+status: accepted
+date: 2026-07-24
+summary: Suspend the protocol freeze during the prototyping stage and make the codec authoritative over protocol prose until the stage's exit criterion.
+---
+
 # Prototyping-Stage Protocol Governance (Freeze Suspension)
 
 - **Status:** accepted — decided 2026-07-24 by explicit owner direction,

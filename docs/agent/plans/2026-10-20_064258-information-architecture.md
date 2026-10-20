@@ -1,3 +1,11 @@
+---
+type: plan
+status: active
+date: 2026-10-20
+summary: 'Information-architecture overhaul: lean always-on context, indexed agent records, generated indexes, and mechanical documentation gates.'
+issue: 322
+---
+
 # Information Architecture Overhaul Implementation Plan
 
 > **For the implementing agent:** Execute one phase per pull request, each
@@ -129,9 +137,10 @@ reversible change.
 - **Design-record paths stay stable.** Source docstrings and tests cite
   `docs/agent/design/*.md`. Superseded ADRs are therefore marked in
   frontmatter and in the generated index, not moved into an archive folder.
-  Misfiled *reviews* do move: no code cites them.
-- **Plans and prompts gain `archive/` subfolders.** This mirrors
-  `handovers/archive/`. Completed plans and delivered prompts move there.
+  Older reviews filed under `design/` stay there too, as `reviews/README.md`
+  already directs.
+- **Only handovers have an archive folder.** Plans and prompts record their
+  lifecycle in frontmatter status, which the generated index displays.
 - **Generated indexes are committed Tier-4 files.** Each carries a
   "GENERATED — do not edit" header that names the regeneration command.
   `--check` mode runs in pre-commit and in the CI `docs-contract` job.
@@ -178,24 +187,32 @@ Phase 1 lands) and a changelog fragment `changelog.d/322-<slug>.changed.md`.
 - Define the frontmatter schema in `docs/README.md`:
   - required: `type`, `status`, `date`, `summary`;
   - optional: `issue`, `supersedes`, `superseded_by`, `review_by`.
-- Define one status vocabulary per folder:
-  - `design`: proposed, accepted, superseded, rejected;
-  - `reviews`: findings, resolved;
-  - `plans`: active, completed, abandoned;
-  - `prompts`: current, delivered;
-  - `handovers`: draft, active, blocked, complete, superseded.
+- Define one status vocabulary per record *type*, and the types each folder
+  may hold:
+  - `decision` (`design/`): proposed, accepted, superseded, rejected;
+  - `assessment` (`design/`): current, superseded;
+  - `review` (`reviews/`, older reports also `design/`): findings, resolved;
+  - `plan` (`plans/`): active, completed, abandoned;
+  - `prompt` (`prompts/`): current, retired;
+  - `handover` (`handovers/`): draft, active, blocked, complete, superseded.
 - Add `scripts/validate_agent_docs.py` with tests. It fails when:
   - frontmatter is missing or invalid;
-  - the status is outside the folder vocabulary;
-  - `superseded` lacks `superseded_by`;
-  - a link target does not exist.
+  - the status is outside the type vocabulary, or the type is outside the
+    folder;
+  - `superseded` lacks `superseded_by`, or a supersession target is missing;
+  - a finished handover sits outside `handovers/archive/`, or an unfinished
+    record inside an `archive/` folder;
+  - a body `- **Status:**` bullet disagrees with the frontmatter (except in
+    reviews and superseded records, whose bullets are history).
 - Retire the bold-bullet status check in `validate_prose_status.py` in favour
   of the new validator.
-- Convert every record. Mark the superseded ADRs, the completed plan, and
-  the delivered prompts.
-- Move the two model-named reviews to `reviews/`, completed plans to
-  `plans/archive/`, and delivered prompts to `prompts/archive/`. Update every
-  reference.
+- Convert every record. Mark the completed plan and the retired prompts, and
+  archive the delivered issue-278 handover.
+- *Revised during implementation:* move nothing else. `reviews/README.md`
+  keeps older reports under `design/` where other documents link to them,
+  and the generated index (Phase 3) shows each record's status, so archive
+  folders for plans and prompts would only churn links. No ADR turned out to
+  be fully superseded; the amended ones say so in their summary.
 
 ### Phase 3 — Generated indexes (Tier 4)
 

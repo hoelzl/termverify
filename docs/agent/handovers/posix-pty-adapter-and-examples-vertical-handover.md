@@ -1,3 +1,11 @@
+---
+type: handover
+status: active
+date: 2026-07-31
+summary: Working handover for the POSIX PTY adapter and examples vertical.
+issue: 204
+---
+
 # POSIX PTY Adapter and Examples Vertical Handover
 
 ## Handover metadata

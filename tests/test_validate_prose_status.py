@@ -1,9 +1,10 @@
 """The prose-status validator holds drift-prone status prose to the code.
 
 Owner decision 2026-07-24 (review Slice 8.4): a minimal, drift-driven
-validator — version discipline for the manual ``.dev0`` marker scheme, the
-ADR status vocabulary, and registry counts stated in prose — in the
-``scripts/`` validator pattern.
+validator — version discipline for the manual ``.dev0`` marker scheme and
+registry counts stated in prose — in the ``scripts/`` validator pattern.
+Issue #322 added the always-on budget and moved the ADR status vocabulary to
+``scripts/validate_agent_docs.py``.
 """
 
 from __future__ import annotations
@@ -80,36 +81,6 @@ def test_version_and_bumpversion_current_must_agree(tmp_path: Path) -> None:
     errors = validator.validate_version_discipline(tmp_path)
     assert len(errors) == 1
     assert "current_version" in errors[0]
-
-
-def test_adr_status_vocabulary_accepts_the_closed_tokens(tmp_path: Path) -> None:
-    design = tmp_path / "docs" / "agent" / "design"
-    design.mkdir(parents=True)
-    (design / "one.md").write_text(
-        "# ADR\n\n- **Status:** accepted — decided 2026-07-19\n", encoding="utf-8"
-    )
-    (design / "two.md").write_text(
-        "# ADR\n\n- **Status:** proposed\n", encoding="utf-8"
-    )
-    (design / "no-status.md").write_text("# Notes\n", encoding="utf-8")
-
-    validator = load_validator()
-
-    assert validator.validate_adr_status(tmp_path) == []
-
-
-def test_adr_status_vocabulary_rejects_a_novel_token(tmp_path: Path) -> None:
-    design = tmp_path / "docs" / "agent" / "design"
-    design.mkdir(parents=True)
-    (design / "weird.md").write_text(
-        "# ADR\n\n- **Status:** simmering — we will see\n", encoding="utf-8"
-    )
-
-    validator = load_validator()
-
-    errors = validator.validate_adr_status(tmp_path)
-    assert len(errors) == 1
-    assert "simmering" in errors[0]
 
 
 def test_registry_counts_match_the_shipped_registries() -> None:

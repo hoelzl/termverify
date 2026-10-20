@@ -1,3 +1,10 @@
+---
+type: decision
+status: accepted
+date: 2026-07-14
+summary: Adopt OKF narrowly for docs/knowledge/; defer OpenWiki until a reviewed local trial.
+---
+
 # OpenWiki and OKF Policy
 
 ## OKF: adopt now, narrowly
