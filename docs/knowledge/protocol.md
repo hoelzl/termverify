@@ -3,6 +3,7 @@ type: Protocol Design
 title: TermVerify JSONL transcript protocol
 description: Versioned wire contract for deterministic terminal-verification transcripts.
 tags: [protocol, jsonl, terminal, observations, determinism]
+review_by: 2027-01-20
 ---
 
 # TermVerify JSONL transcript protocol

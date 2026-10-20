@@ -69,6 +69,7 @@ summary: One line that says what the record decides or finds.
 issue: 146              # optional
 supersedes: [docs/agent/design/old.md]       # optional, repository-relative
 superseded_by: docs/agent/design/new.md      # required when status is superseded
+review_by: 2026-12-01   # required on unfinished handovers
 ---
 ```
 
@@ -91,3 +92,23 @@ text: a superseded decision's body still says what was accepted at the time,
 and a review's body is never rewritten. Finished handovers move to
 `handovers/archive/`; a decision amended in place stays where it is and
 says so in its summary. Paths cited by source code stay stable, so decisions are never moved.
+
+## Keeping documentation current
+
+These gates run in pre-commit and in the CI documentation job, so a
+convention that matters is checked rather than only described:
+
+| Gate | Checks |
+| --- | --- |
+| `scripts/validate_knowledge_frontmatter.py` | Knowledge pages carry OKF frontmatter with a non-empty `type`. |
+| `scripts/validate_agent_docs.py` | Agent records carry the metadata above. |
+| `scripts/build_doc_indexes.py --check` | Every generated index is current and lists every page. |
+| `scripts/check_doc_references.py` | Relative links, heading anchors, and backticked repository paths resolve. |
+| `scripts/check_doc_freshness.py` | Knowledge pages and unfinished handovers are within their `review_by` date; working handovers stay within their size budget. |
+| `scripts/validate_prose_status.py` | Version discipline, registry counts stated in prose, and the always-on budget of `AGENTS.md` and `CLAUDE.md`. |
+
+**Doc gardening.** When a `review_by` date passes — or whenever code and prose
+disagree — re-verify the page against the code and executable checks, repair
+the prose (code changes only test-first), and move `review_by` forward,
+typically by three months for knowledge pages. The same pass prunes copies of
+facts that have a canonical home elsewhere and replaces them with a link.

@@ -12,6 +12,7 @@ cannot hide in free-form prose (issue #322)::
     issue: 146                # optional: the record's own issue
     supersedes: [docs/agent/design/old.md]        # optional
     superseded_by: docs/agent/design/new.md       # required when superseded
+    review_by: 2026-12-01     # unfinished handovers (check_doc_freshness.py)
     ---
 
 Paths in ``supersedes`` and ``superseded_by`` are repository-relative, point
@@ -40,7 +41,7 @@ import yaml
 AGENT_DOCS = Path("docs") / "agent"
 EXEMPT_FILENAMES = frozenset({"README.md", "index.md"})
 REQUIRED_FIELDS = ("type", "status", "date", "summary")
-OPTIONAL_FIELDS = frozenset({"issue", "supersedes", "superseded_by"})
+OPTIONAL_FIELDS = frozenset({"issue", "supersedes", "superseded_by", "review_by"})
 #: Keys some review reports carried before the schema existed.
 LEGACY_REVIEW_FIELDS = frozenset({"scope", "rounds", "verdicts", "subject"})
 

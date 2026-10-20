@@ -3,6 +3,7 @@ type: Protocol Design
 title: Key encoding registry
 description: The termverify.key-encoding/v1 registry mapping semantic key chords to xterm-legacy terminal bytes.
 tags: [protocol, keys, terminal, encoding]
+review_by: 2027-01-20
 ---
 
 # Key encoding registry

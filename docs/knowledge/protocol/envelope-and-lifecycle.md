@@ -3,6 +3,7 @@ type: Protocol Design
 title: Transcript envelope and lifecycle
 description: The common record envelope, record ordering, execution epochs, replay subject, and terminal records of termverify.transcript/v1.
 tags: [protocol, lifecycle, epochs, records]
+review_by: 2027-01-20
 ---
 
 # Transcript envelope and lifecycle

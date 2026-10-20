@@ -3,6 +3,7 @@ type: Protocol Design
 title: Requested deterministic constraints
 description: Requested run configuration, capability results, enforcement tiers, and delivery channels of termverify.transcript/v1.
 tags: [protocol, constraints, determinism, enforcement]
+review_by: 2027-01-20
 ---
 
 # Requested deterministic constraints

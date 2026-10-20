@@ -3,6 +3,7 @@ type: Evidence Governance
 title: Evidence safety and baseline governance
 description: Accepted safe-capture, redaction, and baseline-approval contract for TermVerify.
 tags: [evidence, redaction, baselines, snapshots, security]
+review_by: 2027-01-20
 ---
 
 # Evidence safety and baseline governance

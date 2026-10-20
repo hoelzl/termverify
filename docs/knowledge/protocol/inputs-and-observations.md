@@ -3,6 +3,7 @@ type: Protocol Design
 title: Transcript inputs and observations
 description: Input kinds, termverify.key/v1 semantic key chords, diagnostics, and observations of termverify.transcript/v1.
 tags: [protocol, inputs, keys, observations]
+review_by: 2027-01-20
 ---
 
 # Transcript inputs and observations

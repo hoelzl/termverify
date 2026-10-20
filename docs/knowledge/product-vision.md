@@ -3,6 +3,7 @@ type: Product Vision
 title: TermVerify product vision
 description: A reusable verification toolkit for autonomous terminal applications, and the sequenced scope it has not built yet.
 tags: [agents, terminal, testing, verification]
+review_by: 2027-01-20
 ---
 
 # Problem

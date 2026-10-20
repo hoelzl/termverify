@@ -77,3 +77,7 @@ jobs:
         run: uv --no-config run python scripts/validate_agent_docs.py
       - name: Check generated documentation indexes
         run: uv --no-config run python scripts/build_doc_indexes.py --check
+      - name: Check documentation references
+        run: uv --no-config run python scripts/check_doc_references.py
+      - name: Check documentation review dates and budgets
+        run: uv --no-config run python scripts/check_doc_freshness.py

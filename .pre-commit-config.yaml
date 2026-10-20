@@ -34,6 +34,18 @@ repos:
         language: system
         pass_filenames: false
 
+      - id: check-doc-references
+        name: check documentation references
+        entry: uv --no-config run python scripts/check_doc_references.py
+        language: system
+        pass_filenames: false
+
+      - id: check-doc-freshness
+        name: check documentation review dates and budgets
+        entry: uv --no-config run python scripts/check_doc_freshness.py
+        language: system
+        pass_filenames: false
+
       - id: validate-evidence-governance
         name: validate evidence governance
         entry: uv --no-config run python scripts/validate_evidence_governance.py
