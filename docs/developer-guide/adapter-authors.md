@@ -1,3 +1,7 @@
+---
+summary: 'The public import surface external subjects implement: adapters, constraint ports, and what the surface deliberately excludes.'
+---
+
 # Adapter-Author Surface
 
 External subjects implement the TermVerify producer contract: an `Adapter`

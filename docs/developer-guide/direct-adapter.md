@@ -1,3 +1,7 @@
+---
+summary: 'The deterministic in-process execution path: wiring, execution rules, and zero-reach subjects.'
+---
+
 # Direct Adapter
 
 `termverify.direct.DirectAdapter` is the deterministic in-process execution path.

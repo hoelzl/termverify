@@ -14,19 +14,7 @@ Every prompt carries a `status` in its frontmatter: `current` prompts may be
 run; `retired` prompts were delivered or overtaken and are kept as execution
 records only.
 
-## Prompts
-
-- [Adapter contracts](adapter-contracts.md) — sequential foundation for the
-  direct-adapter vertical slice.
-- [ConPTY lifecycle spike](conpty-lifecycle-spike.md) — parallel research only;
-  no production adapter or binding selection.
-- [Phase 1 documentation reconciliation](phase1-documentation-reconciliation.md)
-  — independent stale-documentation correction.
-- [Transcript fixture corpus](transcript-fixture-corpus.md) — independent
-  fixture/schema expansion constrained by the accepted v1 protocol.
-- [Adversarial review remediation kickoff](adversarial-review-remediation-kickoff.md)
-  — delivered the highest-priority evidence-security slice in PR #57 and is
-  retained as its execution record; continuation follows the active handover.
+The generated [index](index.md) lists every prompt with its status.
 
 The adapter-contract prompt establishes the API boundary. Runner, replay,
 comparator, fake-application, and production-adapter implementation should wait

@@ -1,3 +1,7 @@
+---
+summary: 'Driving a subject subprocess over termverify.control/v1: spawning, the watchdog, and the reference fixture subject.'
+---
+
 # JSONL Adapter
 
 `termverify.jsonl` implements the `termverify.control/v1` control protocol: an

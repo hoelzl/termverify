@@ -1,3 +1,7 @@
+---
+summary: How the canonical schema publication at termverify.dev works and how to troubleshoot it.
+---
+
 # Canonical Schema Publication (termverify.dev)
 
 This guide records how the canonical schema publication at

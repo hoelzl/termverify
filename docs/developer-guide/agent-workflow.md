@@ -1,3 +1,7 @@
+---
+summary: The agent-first development loop, context budget, parallel worktrees, handover lifecycle, and review boundaries.
+---
+
 # Agent-First Development Workflow
 
 TermVerify is developed so that human developers and autonomous coding agents can follow the same evidence-producing loop.

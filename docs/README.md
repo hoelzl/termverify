@@ -10,14 +10,20 @@ repeating them.
 | --- | --- | --- |
 | Human-facing introduction and quick start | `README.md` | yes (landing page) |
 | Durable architecture, protocol, terminology, and verification knowledge | [`docs/knowledge/`](knowledge/index.md) (OKF bundle) | yes |
-| Developer guides and operating workflows | [`docs/developer-guide/`](developer-guide/) | yes |
-| Architecture decision records (ADRs) and reuse assessments | [`docs/agent/design/`](agent/design/) | no |
+| Developer guides and operating workflows | [`docs/developer-guide/`](developer-guide/index.md) | yes |
+| Architecture decision records (ADRs) and reuse assessments | [`docs/agent/design/`](agent/design/index.md) | no |
 | Handovers for initiatives that cross an ownership or phase boundary | [`docs/agent/handovers/`](agent/handovers/index.md) | no |
-| Implementation plans for accepted initiatives | [`docs/agent/plans/`](agent/plans/README.md) | no |
-| Adversarial and independent review reports | [`docs/agent/reviews/`](agent/reviews/README.md) | no |
-| Starting prompts for worktree agents | [`docs/agent/prompts/`](agent/prompts/README.md) | no |
+| Implementation plans for accepted initiatives | [`docs/agent/plans/`](agent/plans/index.md) | no |
+| Adversarial and independent review reports | [`docs/agent/reviews/`](agent/reviews/index.md) | no |
+| Starting prompts for worktree agents | [`docs/agent/prompts/`](agent/prompts/index.md) | no |
 | Pending changelog entries | [`changelog.d/`](../changelog.d/README.md) | no |
 | Reusable agent procedures (skills) | `.agents/skills/` — only once a workflow is proven and stable; none yet | no |
+
+Every folder above has an `index.md` that lists its pages with their status
+and one-line summary. Except for `docs/knowledge/index.md`, which is curated
+by hand, the indexes are generated from page frontmatter by
+`scripts/build_doc_indexes.py` and never edited by hand; a folder's
+`README.md`, where present, holds its conventions.
 
 Choose the location by the *kind* of information, never by the task that
 produced it. One fact has one home; other documents link to it rather than
@@ -49,8 +55,9 @@ copying it.
 
 ## Agent-record metadata
 
-Every Markdown file under `docs/agent/` except `README.md` and `index.md`
-opens with YAML frontmatter:
+Developer-guide pages carry a one-line `summary` in their frontmatter for
+the generated index. Every Markdown file under `docs/agent/` except
+`README.md` and `index.md` opens with YAML frontmatter:
 
 ```yaml
 ---

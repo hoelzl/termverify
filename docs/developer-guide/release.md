@@ -1,3 +1,7 @@
+---
+summary: 'The release checklist: preconditions, version scheme, cutting the release, provenance, and follow-up.'
+---
+
 # Release Process
 
 This checklist defines how a termverify release is produced when one is
