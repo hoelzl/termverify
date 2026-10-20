@@ -190,3 +190,43 @@ def test_main_reports_failures_with_a_nonzero_exit(
     monkeypatch.chdir(tmp_path)
 
     assert validator.main() == 1
+
+
+def test_always_on_files_within_budget_are_valid(tmp_path: Path) -> None:
+    validator = load_validator()
+    for relative in validator.ALWAYS_ON_BUDGETS:
+        (tmp_path / relative).write_text("# Short map\n", encoding="utf-8")
+
+    assert validator.validate_always_on_budget(tmp_path) == []
+
+
+def test_oversized_always_on_file_names_the_remedy(tmp_path: Path) -> None:
+    validator = load_validator()
+    for relative, budget in validator.ALWAYS_ON_BUDGETS.items():
+        (tmp_path / relative).write_text("x" * (budget + 1), encoding="utf-8")
+
+    errors = validator.validate_always_on_budget(tmp_path)
+
+    assert len(errors) == len(validator.ALWAYS_ON_BUDGETS)
+    assert all("docs/" in error for error in errors)
+
+
+def test_always_on_budget_counts_utf8_bytes(tmp_path: Path) -> None:
+    """The budget is a context cost, so it counts encoded bytes, not
+    characters: an em dash costs three."""
+    validator = load_validator()
+    for relative, budget in validator.ALWAYS_ON_BUDGETS.items():
+        (tmp_path / relative).write_text("—" * (budget // 3 + 1), encoding="utf-8")
+
+    errors = validator.validate_always_on_budget(tmp_path)
+
+    assert len(errors) == len(validator.ALWAYS_ON_BUDGETS)
+
+
+def test_missing_always_on_file_is_a_curated_error(tmp_path: Path) -> None:
+    validator = load_validator()
+
+    errors = validator.validate_always_on_budget(tmp_path)
+
+    assert len(errors) == len(validator.ALWAYS_ON_BUDGETS)
+    assert all("missing" in error for error in errors)

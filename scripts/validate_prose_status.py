@@ -1,6 +1,6 @@
 """Drift-driven prose-status validator (owner decision 2026-07-24, Slice 8.4).
 
-Three checks, each born from an observed drift, none aspiring to general
+Four checks, each born from an observed drift, none aspiring to general
 prose understanding:
 
 1. **Version discipline** for the manual ``.dev0`` marker scheme:
@@ -20,6 +20,11 @@ prose understanding:
    the size the package ships (the 934 → 1,382 drift the review found in a
    handover). A claim site that disappears fails loudly: the claim table
    below and the prose move in lockstep, never independently.
+4. **Always-on budget**: ``AGENTS.md`` and ``CLAUDE.md`` are injected into
+   every agent request, so their size is a per-request context cost that
+   grows one helpful paragraph at a time (issue #322). The budget counts
+   UTF-8 bytes; task-specific detail moves to an on-demand page and leaves
+   a one-line pointer.
 """
 
 from __future__ import annotations
@@ -56,6 +61,29 @@ REGISTRY_COUNT_CLAIMS: tuple[tuple[str, str, str], ...] = (
         "chords",
     ),
 )
+
+
+#: Byte budgets for the files every agent harness loads on every request.
+ALWAYS_ON_BUDGETS: dict[str, int] = {"AGENTS.md": 4096, "CLAUDE.md": 1024}
+
+
+def validate_always_on_budget(root: Path) -> list[str]:
+    """Return budget violations for the always-loaded instruction files."""
+    errors: list[str] = []
+    for relative, budget in ALWAYS_ON_BUDGETS.items():
+        path = root / relative
+        if not path.is_file():
+            errors.append(f"{relative}: missing")
+            continue
+        size = len(path.read_bytes())
+        if size > budget:
+            errors.append(
+                f"{relative}: {size} bytes exceeds the always-on budget of"
+                f" {budget} — move task-specific detail to an on-demand page"
+                " (placement rules: docs/README.md) and leave a one-line"
+                " pointer"
+            )
+    return errors
 
 
 def validate_version_discipline(root: Path) -> list[str]:
@@ -142,6 +170,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         validate_version_discipline(root)
         + validate_adr_status(root)
         + validate_registry_counts(root)
+        + validate_always_on_budget(root)
     )
     if errors:
         print("\n".join(errors))
