@@ -8,17 +8,17 @@ Lifecycle and authoring rules: [`agent-workflow.md`](../../developer-guide/agent
 
 | Record | Status | Date | Summary |
 | --- | --- | --- | --- |
-| [POSIX PTY Adapter and Examples Vertical Handover](posix-pty-adapter-and-examples-vertical-handover.md) | active | 2026-07-31 | Working handover for the POSIX PTY adapter and examples vertical. |
+| [POSIX PTY Adapter and Examples Vertical Handover](posix-pty-adapter-and-examples-vertical-handover.md) | active | 2026-07-31 | Working handover for the POSIX PTY adapter and examples vertical. ([#204](https://github.com/hoelzl/termverify/issues/204)) |
 | [Pre-release Boundary Hardening Handover](pre-release-boundary-hardening-handover.md) | active | 2026-07-17 | Pre-release boundaries (vocabulary, correlation, containment, schema distribution, terminal production, release governance) that stay unsupported until accepted. |
 
 ## Archive
 
 | Record | Status | Date | Summary |
 | --- | --- | --- | --- |
-| [Issue 278 — POSIX teardown evidence handover](archive/issue-278-posix-teardown-evidence-handover.md) | complete | 2026-08-13 | Pin the POSIX binding's teardown invariants with deterministic probes; delivered by PR #302. |
-| [Issue 281 — POSIX EOS Exit-Capture Handover](archive/issue-281-eos-exit-capture-handover.md) | complete | 2026-08-04 | Pin delayed POSIX end-of-stream exit capture; delivered by PR #301. |
+| [Issue 278 — POSIX teardown evidence handover](archive/issue-278-posix-teardown-evidence-handover.md) | complete | 2026-08-13 | Pin the POSIX binding's teardown invariants with deterministic probes; delivered by PR #302. ([#278](https://github.com/hoelzl/termverify/issues/278)) |
+| [Issue 281 — POSIX EOS Exit-Capture Handover](archive/issue-281-eos-exit-capture-handover.md) | complete | 2026-08-04 | Pin delayed POSIX end-of-stream exit capture; delivered by PR #301. ([#281](https://github.com/hoelzl/termverify/issues/281)) |
 | [Adversarial Review 2026-07-24 Remediation Handover](archive/adversarial-review-2026-07-24-remediation-handover.md) | complete | 2026-07-24 | Remediation of every finding of the 2026-07-24 adversarial review; retired 2026-07-31. |
 | [Adversarial Review Remediation Handover](archive/adversarial-review-remediation-handover.md) | complete | 2026-07-16 | Remediation of the 2026-07-16 adversarial reviews; complete through PR #80. |
-| [Phase 1 Readiness Hardening Handover](archive/phase-1-readiness-hardening-handover.md) | superseded | 2026-07-15 | Phase 1 readiness hardening; its criteria transferred intact to the pre-release boundary hardening handover. |
+| [Phase 1 Readiness Hardening Handover](archive/phase-1-readiness-hardening-handover.md) | superseded → [successor](pre-release-boundary-hardening-handover.md) | 2026-07-15 | Phase 1 readiness hardening; its criteria transferred intact to the pre-release boundary hardening handover. |
 | [Quality Hardening Handover](archive/quality-hardening-handover.md) | complete | 2026-07-14 | Delivery, security, documentation, and workflow gaps from the July 2026 review, closed before Phase 1 contracts froze. |
 | [Foundation Handover](archive/foundation-handover.md) | complete | 2026-07-14 | Phase 0 foundation: initial package, workflow, documentation, and CI. |

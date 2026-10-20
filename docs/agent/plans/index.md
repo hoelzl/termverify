@@ -6,5 +6,5 @@ Conventions: [`README.md`](README.md).
 
 | Record | Status | Date | Summary |
 | --- | --- | --- | --- |
-| [Information Architecture Overhaul Implementation Plan](2026-10-20_064258-information-architecture.md) | active | 2026-10-20 | Information-architecture overhaul: lean always-on context, indexed agent records, generated indexes, and mechanical documentation gates. |
+| [Information Architecture Overhaul Implementation Plan](2026-10-20_064258-information-architecture.md) | active | 2026-10-20 | Information-architecture overhaul: lean always-on context, indexed agent records, generated indexes, and mechanical documentation gates. ([#322](https://github.com/hoelzl/termverify/issues/322)) |
 | [Adversarial Review Remediation Implementation Plan](2026-07-16_215137-adversarial-review-remediation.md) | completed | 2026-07-16 | Slice plan for remediating the 2026-07-16 adversarial reviews; complete through PR #80. |

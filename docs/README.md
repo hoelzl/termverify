@@ -19,11 +19,13 @@ repeating them.
 | Pending changelog entries | [`changelog.d/`](../changelog.d/README.md) | no |
 | Reusable agent procedures (skills) | `.agents/skills/` — only once a workflow is proven and stable; none yet | no |
 
-Every folder above has an `index.md` that lists its pages with their status
-and one-line summary. Except for `docs/knowledge/index.md`, which is curated
-by hand, the indexes are generated from page frontmatter by
-`scripts/build_doc_indexes.py` and never edited by hand; a folder's
-`README.md`, where present, holds its conventions.
+The `docs/` folders above each have an `index.md` that lists their pages
+with a one-line summary (and, for agent records, status and date).
+`docs/knowledge/index.md` is curated by hand; every other index is generated
+from page frontmatter by `scripts/build_doc_indexes.py` and never edited by
+hand. A folder's `README.md`, where present, holds its conventions.
+Developer-guide pages therefore carry a one-line `summary` in their
+frontmatter.
 
 Choose the location by the *kind* of information, never by the task that
 produced it. One fact has one home; other documents link to it rather than
@@ -55,9 +57,8 @@ copying it.
 
 ## Agent-record metadata
 
-Developer-guide pages carry a one-line `summary` in their frontmatter for
-the generated index. Every Markdown file under `docs/agent/` except
-`README.md` and `index.md` opens with YAML frontmatter:
+Every Markdown file under `docs/agent/` except `README.md` and `index.md`
+opens with YAML frontmatter:
 
 ```yaml
 ---

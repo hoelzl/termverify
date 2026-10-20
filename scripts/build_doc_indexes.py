@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import posixpath
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,6 +43,7 @@ class Page:
     link: str
     title: str
     meta: Mapping[str, object]
+    base: str = ""
 
     def field(self, name: str) -> str:
         value = self.meta.get(name, "")
@@ -58,7 +60,7 @@ class IndexSpec:
     title: str
     intro: str
     render: Callable[[Sequence[Page]], str]
-    recursive: bool = False
+    recursive: bool = True
 
 
 def _frontmatter(text: str) -> dict[str, object]:
@@ -69,14 +71,22 @@ def _frontmatter(text: str) -> dict[str, object]:
         return {}
     try:
         data = yaml.safe_load(text[4:end])
-    except yaml.YAMLError:
+    except (yaml.YAMLError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}
 
 
 def _title(text: str, fallback: str) -> str:
+    """Return the first H1 of the body, outside frontmatter and code fences."""
+    if text.startswith("---\n"):
+        end = text.find("\n---\n", 4)
+        if end != -1:
+            text = text[end + 5 :]
+    in_fence = False
     for line in text.splitlines():
-        if line.startswith("# "):
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+        elif not in_fence and line.startswith("# "):
             return line[2:].strip()
     return fallback
 
@@ -85,7 +95,7 @@ def _cell(text: str) -> str:
     return text.replace("|", "\\|").replace("\n", " ").strip()
 
 
-def collect_pages(directory: Path, *, recursive: bool) -> list[Page]:
+def collect_pages(directory: Path, *, recursive: bool, base: str = "") -> list[Page]:
     """Return the listable pages in *directory*, sorted by link."""
     paths = directory.rglob("*.md") if recursive else directory.glob("*.md")
     pages: list[Page] = []
@@ -94,23 +104,51 @@ def collect_pages(directory: Path, *, recursive: bool) -> list[Page]:
             continue
         text = path.read_text(encoding="utf-8")
         link = path.relative_to(directory).as_posix()
-        pages.append(Page(link, _title(text, path.stem), _frontmatter(text)))
+        pages.append(Page(link, _title(text, path.stem), _frontmatter(text), base))
     return pages
+
+
+ISSUE_URL = "https://github.com/hoelzl/termverify/issues/"
+
+
+def _status_cell(page: Page) -> str:
+    status = _cell(page.field("status"))
+    successor = page.meta.get("superseded_by")
+    if isinstance(successor, str) and successor:
+        link = posixpath.relpath(successor, page.base or ".")
+        return f"{status} → [successor]({link})"
+    return status
+
+
+def _summary_cell(page: Page) -> str:
+    summary = _cell(page.field("summary"))
+    issue = page.meta.get("issue")
+    if isinstance(issue, int) and not isinstance(issue, bool):
+        summary += f" ([#{issue}]({ISSUE_URL}{issue}))"
+    return summary
 
 
 def _record_table(pages: Sequence[Page]) -> str:
     rows = sorted(pages, key=lambda page: (page.field("date"), page.link), reverse=True)
     lines = ["| Record | Status | Date | Summary |", "| --- | --- | --- | --- |"]
     lines.extend(
-        f"| [{_cell(page.title)}]({page.link}) | {page.field('status')}"
-        f" | {page.field('date')} | {_cell(page.field('summary'))} |"
+        f"| [{_cell(page.title)}]({page.link}) | {_status_cell(page)}"
+        f" | {_cell(page.field('date'))} | {_summary_cell(page)} |"
         for page in rows
     )
     return "\n".join(lines) + "\n"
 
 
+def _archived(page: Page) -> bool:
+    return "archive" in page.link.split("/")[:-1]
+
+
 def render_records(pages: Sequence[Page]) -> str:
-    return _record_table(pages)
+    current = [page for page in pages if not _archived(page)]
+    archived = [page for page in pages if _archived(page)]
+    if not archived:
+        return _record_table(current)
+    return f"{_record_table(current)}\n## Archive\n\n{_record_table(archived)}"
 
 
 def render_by_type(pages: Sequence[Page]) -> str:
@@ -128,8 +166,8 @@ def render_by_type(pages: Sequence[Page]) -> str:
 
 
 def render_handovers(pages: Sequence[Page]) -> str:
-    current = [page for page in pages if not page.link.startswith("archive/")]
-    archived = [page for page in pages if page.link.startswith("archive/")]
+    current = [page for page in pages if not _archived(page)]
+    archived = [page for page in pages if _archived(page)]
     parts = []
     for heading, group in (("Current", current), ("Archive", archived)):
         body = _record_table(group) if group else "None.\n"
@@ -138,10 +176,16 @@ def render_handovers(pages: Sequence[Page]) -> str:
 
 
 def render_guides(pages: Sequence[Page]) -> str:
-    rows = sorted(pages, key=lambda page: page.title.lower())
+    rows = sorted(pages, key=lambda page: (_sort_title(page.title), page.link))
     return "".join(
-        f"- [{page.title}]({page.link}) — {page.field('summary')}\n" for page in rows
+        f"- [{_cell(page.title)}]({page.link}) — {_cell(page.field('summary'))}\n"
+        for page in rows
     )
+
+
+def _sort_title(title: str) -> str:
+    lowered = title.lower()
+    return lowered[4:] if lowered.startswith("the ") else lowered
 
 
 INDEXES: tuple[IndexSpec, ...] = (
@@ -178,7 +222,6 @@ INDEXES: tuple[IndexSpec, ...] = (
         " GitHub issues, pull requests, and Git remain the source of truth for"
         " volatile work state.",
         render_handovers,
-        recursive=True,
     ),
     IndexSpec(
         "docs/developer-guide",
@@ -186,13 +229,16 @@ INDEXES: tuple[IndexSpec, ...] = (
         "Workflows and operating guides for contributors and agents. Concepts"
         " live in the [knowledge bundle](../knowledge/index.md).",
         render_guides,
+        recursive=False,
     ),
 )
 
 
 def render_index(root: Path, spec: IndexSpec) -> str:
     """Return the full text of the generated index for *spec*."""
-    pages = collect_pages(root / spec.directory, recursive=spec.recursive)
+    pages = collect_pages(
+        root / spec.directory, recursive=spec.recursive, base=spec.directory
+    )
     return f"{HEADER}\n# {spec.title}\n\n{spec.intro}\n\n{spec.render(pages)}"
 
 

@@ -197,3 +197,64 @@ def test_main_check_reports_stale_indexes(
     assert "stale" in capsys.readouterr().out
     assert builder.main([]) == 0
     assert builder.main(["--check"]) == 0
+
+
+def test_subfolders_are_indexed_and_archives_grouped(tmp_path: Path) -> None:
+    _tree(tmp_path)
+    _page(
+        tmp_path,
+        "docs/agent/plans/archive/done.md",
+        "type: plan\nstatus: completed\ndate: 2026-07-01\nsummary: Done.\n",
+    )
+    builder = load_builder()
+    builder.build(tmp_path, check=False)
+
+    plans = (tmp_path / "docs/agent/plans/index.md").read_text(encoding="utf-8")
+
+    assert "## Archive" in plans
+    assert (
+        plans.index("(one.md)")
+        < plans.index("## Archive")
+        < plans.index("(archive/done.md)")
+    )
+
+
+def test_successor_and_issue_are_linked(tmp_path: Path) -> None:
+    _tree(tmp_path)
+    _page(
+        tmp_path,
+        "docs/agent/handovers/archive/old.md",
+        "type: handover\nstatus: superseded\ndate: 2026-07-01\nsummary: Old.\n"
+        "issue: 87\nsuperseded_by: docs/agent/handovers/one.md\n",
+    )
+    builder = load_builder()
+    builder.build(tmp_path, check=False)
+
+    text = (tmp_path / "docs/agent/handovers/index.md").read_text(encoding="utf-8")
+
+    assert "superseded → [successor](one.md)" in text
+    assert "Old. ([#87](https://github.com/hoelzl/termverify/issues/87))" in text
+
+
+def test_title_ignores_frontmatter_comments_and_code_fences() -> None:
+    builder = load_builder()
+    text = "---\nsummary: x\n# owner note\n---\n\n```bash\n# comment\n```\n\n# Real\n"
+
+    assert builder._title(text, "fallback") == "Real"
+
+
+def test_invalid_dates_do_not_crash_the_generator() -> None:
+    builder = load_builder()
+
+    assert builder._frontmatter("---\ndate: 2026-13-45\n---\n") == {}
+
+
+def test_guides_sort_without_a_leading_article(tmp_path: Path) -> None:
+    _tree(tmp_path)
+    _page(tmp_path, "docs/developer-guide/z.md", "summary: Z.\n", "The Alpha Guide")
+    builder = load_builder()
+    builder.build(tmp_path, check=False)
+
+    text = (tmp_path / "docs/developer-guide/index.md").read_text(encoding="utf-8")
+
+    assert text.index("The Alpha Guide") < text.index("[Guide]")
