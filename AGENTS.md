@@ -18,6 +18,7 @@ Read only what the task needs:
 | Writing, moving, or retiring a document | `docs/README.md` (placement rules) |
 | Harness entry points and configuration | `docs/developer-guide/agent-harnesses.md` |
 | Parallel worktrees (read before creating, sharing, or removing one) | `docs/developer-guide/agent-workflow.md` |
+| Changelog fragments, handovers, reviews, releases, worktrees, doc gardening | `.agents/skills/` (each `SKILL.md` says when to use it) |
 
 When delegating to another agent in a worktree, always give it that worktree as
 its working directory.

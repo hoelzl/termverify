@@ -17,7 +17,7 @@ repeating them.
 | Adversarial and independent review reports | [`docs/agent/reviews/`](agent/reviews/index.md) | no |
 | Starting prompts for worktree agents | [`docs/agent/prompts/`](agent/prompts/index.md) | no |
 | Pending changelog entries | [`changelog.d/`](../changelog.d/README.md) | no |
-| Reusable agent procedures (skills) | `.agents/skills/` — only once a workflow is proven and stable; none yet | no |
+| Reusable agent procedures (skills) | [`.agents/skills/`](../.agents/skills/) — one folder per proven, stable procedure | no |
 
 The `docs/` folders above each have an `index.md` that lists their pages
 with a one-line summary (and, for agent records, status and date).
@@ -26,6 +26,11 @@ from page frontmatter by `scripts/build_doc_indexes.py` and never edited by
 hand. A folder's `README.md`, where present, holds its conventions.
 Developer-guide pages therefore carry a one-line `summary` in their
 frontmatter.
+
+A skill is a `SKILL.md` whose frontmatter `name` matches its folder and whose
+one-line `description` says when to use it; harnesses load only that line up
+front. A skill orders the steps of a procedure and links to the guide that
+explains them, rather than copying the guide.
 
 Choose the location by the *kind* of information, never by the task that
 produced it. One fact has one home; other documents link to it rather than

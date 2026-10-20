@@ -74,7 +74,6 @@ ALLOWED_MISSING: Mapping[str, str] = {
     ".github/copilot-instructions.md": (
         "deliberately not shipped (docs/developer-guide/agent-harnesses.md)"
     ),
-    ".agents/skills/": "reserved for proven skills; created by phase 7 of #322",
 }
 
 _LINK = re.compile(r"(?<!!)\[[^\]]*\]\(\s*(<[^>]+>|[^)\s]+)(?:\s+\"[^\"]*\")?\s*\)")

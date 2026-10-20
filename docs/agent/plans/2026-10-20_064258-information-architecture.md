@@ -1,6 +1,6 @@
 ---
 type: plan
-status: active
+status: completed
 date: 2026-10-20
 summary: 'Information-architecture overhaul: lean always-on context, indexed agent records, generated indexes, and mechanical documentation gates.'
 issue: 322
@@ -307,4 +307,5 @@ Shorten the AGENTS worktree paragraph to a pointer.
 - No knowledge page contains phase or handover status.
 - The reference checker passes over all Markdown.
 - The skills exist and are linked.
-- Mark this plan `completed` and move it to `plans/archive/`.
+- Mark this plan `completed` (plans stay in place; the generated index shows
+  their status).

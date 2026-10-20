@@ -43,6 +43,15 @@ names instead. Nested guidance would therefore reach each harness differently.
 Directory-specific guidance belongs in the documentation indexes, which every
 harness reads the same way.
 
+## Skills
+
+Proven, repeatable procedures live under `.agents/skills/<name>/SKILL.md`,
+the harness-neutral location that several harnesses discover directly.
+Harnesses that look elsewhere reach them through the `AGENTS.md` pointer; do
+not copy skills into a harness-specific folder, which would create a second
+home that drifts. A skill orders the steps and links to the developer guide
+for the rules, so the guide stays the single home of each rule.
+
 ## GitHub Copilot surfaces
 
 Root `AGENTS.md` is the canonical repository instruction source for GitHub

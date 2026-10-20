@@ -26,7 +26,8 @@ The frontmatter status is the living status; a body ``- **Status:**``
 bullet outside code fences must agree with it, except in reviews
 (point-in-time reports that are never rewritten) and in superseded records
 (whose bullet is history). The schema and its rationale are documented in
-``docs/README.md``.
+``docs/README.md``. Skills under ``.agents/skills/`` are checked too: each
+``SKILL.md`` names its folder and carries a one-line ``description``.
 """
 
 from __future__ import annotations
@@ -39,6 +40,8 @@ from pathlib import Path
 import yaml
 
 AGENT_DOCS = Path("docs") / "agent"
+SKILLS = Path(".agents") / "skills"
+SKILL_DESCRIPTION_MAX = 1024
 EXEMPT_FILENAMES = frozenset({"README.md", "index.md"})
 REQUIRED_FIELDS = ("type", "status", "date", "summary")
 OPTIONAL_FIELDS = frozenset({"issue", "supersedes", "superseded_by", "review_by"})
@@ -269,6 +272,39 @@ def _validate_status_bullet(relative: str, body: str, status: str) -> list[str]:
     return errors
 
 
+def validate_skills(root: Path) -> list[str]:
+    """Return metadata violations for every skill under ``.agents/skills``.
+
+    A skill's ``description`` is the only part a harness loads up front, so it
+    must exist, fit on one line, and stay short; ``name`` must match the
+    skill's folder so harnesses resolve it consistently.
+    """
+    errors: list[str] = []
+    for folder in sorted(p for p in (root / SKILLS).glob("*") if p.is_dir()):
+        path = folder / "SKILL.md"
+        relative = path.relative_to(root).as_posix()
+        if not path.is_file():
+            errors.append(f"{relative}: missing")
+            continue
+        data, _, error = read_frontmatter(path)
+        if data is None:
+            errors.append(f"{relative}: {error}")
+            continue
+        if data.get("name") != folder.name:
+            errors.append(
+                f"{relative}: name must equal the folder name {folder.name!r}"
+            )
+        description = data.get("description")
+        if not isinstance(description, str) or not description.strip():
+            errors.append(f"{relative}: missing description")
+        elif "\n" in description.strip() or len(description) > SKILL_DESCRIPTION_MAX:
+            errors.append(
+                f"{relative}: description must be one line of at most"
+                f" {SKILL_DESCRIPTION_MAX} characters"
+            )
+    return errors
+
+
 def validate_agent_docs(root: Path) -> list[str]:
     """Return metadata violations for every record under ``docs/agent``."""
     errors: list[str] = []
@@ -276,7 +312,7 @@ def validate_agent_docs(root: Path) -> list[str]:
         if path.name in EXEMPT_FILENAMES:
             continue
         errors.extend(_validate_record(root, path))
-    return errors
+    return errors + validate_skills(root)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

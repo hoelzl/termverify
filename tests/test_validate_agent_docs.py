@@ -434,3 +434,48 @@ def test_every_status_bullet_is_checked_outside_code_fences(tmp_path: Path) -> N
 
     assert len(errors) == 1
     assert "blocked" in errors[0]
+
+
+def _skill(root: Path, folder: str, front: str) -> None:
+    path = root / ".agents" / "skills" / folder / "SKILL.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"---\n{front}---\n\n# Skill\n", encoding="utf-8")
+
+
+def test_well_formed_skills_are_valid(tmp_path: Path) -> None:
+    _skill(
+        tmp_path, "do-thing", "name: do-thing\ndescription: Do the thing. Use when X.\n"
+    )
+    validator = load_validator()
+
+    assert validator.validate_agent_docs(tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    ("front", "fragment"),
+    [
+        ("name: other\ndescription: Does it.\n", "folder name"),
+        ("name: do-thing\n", "missing description"),
+        ("name: do-thing\ndescription: |\n  one\n  two\n", "one line"),
+        ("name: do-thing\ndescription: x: y: z\n", "invalid YAML"),
+    ],
+)
+def test_malformed_skills_are_reported(
+    tmp_path: Path, front: str, fragment: str
+) -> None:
+    _skill(tmp_path, "do-thing", front)
+    validator = load_validator()
+
+    errors = validator.validate_agent_docs(tmp_path)
+
+    assert len(errors) == 1
+    assert fragment in errors[0]
+
+
+def test_skill_folder_without_skill_file_is_reported(tmp_path: Path) -> None:
+    (tmp_path / ".agents" / "skills" / "empty").mkdir(parents=True)
+    validator = load_validator()
+
+    assert validator.validate_agent_docs(tmp_path) == [
+        ".agents/skills/empty/SKILL.md: missing"
+    ]
