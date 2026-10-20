@@ -1,3 +1,7 @@
+---
+summary: 'Wiring the terminal adapter with the ConPTY binding: geometry, delivered tiers, sandbox disclosures, cooperation, and key encoding.'
+---
+
 # The ConPTY Binding, the Terminal Adapter, and Cooperation Ports
 
 `termverify.terminal.TerminalAdapter` drives one terminal subject through an

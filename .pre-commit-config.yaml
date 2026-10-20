@@ -28,6 +28,12 @@ repos:
         language: system
         pass_filenames: false
 
+      - id: build-doc-indexes
+        name: check generated documentation indexes
+        entry: uv --no-config run python scripts/build_doc_indexes.py --check
+        language: system
+        pass_filenames: false
+
       - id: validate-evidence-governance
         name: validate evidence governance
         entry: uv --no-config run python scripts/validate_evidence_governance.py

@@ -13,7 +13,7 @@ Read only what the task needs:
 | --- | --- |
 | Product scope and current capabilities | `README.md` |
 | Concepts: architecture, protocols, evidence, verification | `docs/knowledge/index.md`, then one or two pages |
-| Tooling, adapters, workflows, release (read before changing them) | `docs/developer-guide/` |
+| Tooling, adapters, workflows, release (read before changing them) | `docs/developer-guide/index.md` |
 | Past decisions, reviews, plans, handovers | `docs/README.md` (map of `docs/agent/`) |
 | Writing, moving, or retiring a document | `docs/README.md` (placement rules) |
 | Harness entry points and configuration | `docs/developer-guide/agent-harnesses.md` |

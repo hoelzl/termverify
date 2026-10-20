@@ -75,3 +75,5 @@ jobs:
         run: uv --no-config run python scripts/validate_knowledge_frontmatter.py
       - name: Validate agent record metadata
         run: uv --no-config run python scripts/validate_agent_docs.py
+      - name: Check generated documentation indexes
+        run: uv --no-config run python scripts/build_doc_indexes.py --check

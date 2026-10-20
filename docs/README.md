@@ -10,14 +10,22 @@ repeating them.
 | --- | --- | --- |
 | Human-facing introduction and quick start | `README.md` | yes (landing page) |
 | Durable architecture, protocol, terminology, and verification knowledge | [`docs/knowledge/`](knowledge/index.md) (OKF bundle) | yes |
-| Developer guides and operating workflows | [`docs/developer-guide/`](developer-guide/) | yes |
-| Architecture decision records (ADRs) and reuse assessments | [`docs/agent/design/`](agent/design/) | no |
+| Developer guides and operating workflows | [`docs/developer-guide/`](developer-guide/index.md) | yes |
+| Architecture decision records (ADRs) and reuse assessments | [`docs/agent/design/`](agent/design/index.md) | no |
 | Handovers for initiatives that cross an ownership or phase boundary | [`docs/agent/handovers/`](agent/handovers/index.md) | no |
-| Implementation plans for accepted initiatives | [`docs/agent/plans/`](agent/plans/README.md) | no |
-| Adversarial and independent review reports | [`docs/agent/reviews/`](agent/reviews/README.md) | no |
-| Starting prompts for worktree agents | [`docs/agent/prompts/`](agent/prompts/README.md) | no |
+| Implementation plans for accepted initiatives | [`docs/agent/plans/`](agent/plans/index.md) | no |
+| Adversarial and independent review reports | [`docs/agent/reviews/`](agent/reviews/index.md) | no |
+| Starting prompts for worktree agents | [`docs/agent/prompts/`](agent/prompts/index.md) | no |
 | Pending changelog entries | [`changelog.d/`](../changelog.d/README.md) | no |
 | Reusable agent procedures (skills) | `.agents/skills/` — only once a workflow is proven and stable; none yet | no |
+
+The `docs/` folders above each have an `index.md` that lists their pages
+with a one-line summary (and, for agent records, status and date).
+`docs/knowledge/index.md` is curated by hand; every other index is generated
+from page frontmatter by `scripts/build_doc_indexes.py` and never edited by
+hand. A folder's `README.md`, where present, holds its conventions.
+Developer-guide pages therefore carry a one-line `summary` in their
+frontmatter.
 
 Choose the location by the *kind* of information, never by the task that
 produced it. One fact has one home; other documents link to it rather than

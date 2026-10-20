@@ -1,3 +1,7 @@
+---
+summary: Tooling and quality gates, repository layout, the coverage ratchet, and testing tiers.
+---
+
 # Development Environment
 
 ## Tooling

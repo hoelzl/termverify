@@ -1,3 +1,7 @@
+---
+summary: How agent harnesses reach AGENTS.md, the portability rules, and which harness-specific files the repository ships.
+---
+
 # Agent Harnesses
 
 Root `AGENTS.md` is the only authoritative agent instruction file. This guide
