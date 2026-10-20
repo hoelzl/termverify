@@ -132,24 +132,18 @@ layers that do not exist yet.
 
 ## Development
 
-Requirements: [uv](https://docs.astral.sh/uv/) and Python 3.12 or newer. The
-minimum installer version is 3.12; the continuously supported and tested
-versions are currently 3.12 through 3.14. Support for later Python releases is
-not implied until they join the CI matrix.
+Requirements: [uv](https://docs.astral.sh/uv/) and Python 3.12 or newer.
 
 ```bash
 uv --no-config sync --all-groups --locked
-uv --no-config run pytest --cov --cov-report=term-missing
-uv --no-config run ruff check .
-uv --no-config run ruff format --check .
-uv --no-config run mypy src tests scripts
-uv --no-config run pre-commit run --all-files
-uv --no-config run pre-commit run --hook-stage pre-push --all-files
-uv --no-config build
-uv --no-config run pre-commit install --hook-type pre-commit --hook-type pre-push
+uv --no-config run python scripts/check.py --full
 ```
 
-See [developer workflow](docs/developer-guide/agent-workflow.md) and [contributing guide](CONTRIBUTING.md).
+Supported Python versions, the individual gate commands, and hook setup are in
+the [development guide](docs/developer-guide/development.md). See also the
+[developer workflow](docs/developer-guide/agent-workflow.md), the
+[contributing guide](CONTRIBUTING.md), and the
+[documentation map](docs/README.md).
 External subjects implementing the producer contract start with the
 [adapter-author surface](docs/developer-guide/adapter-authors.md).
 

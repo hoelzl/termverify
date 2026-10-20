@@ -12,22 +12,17 @@ TermVerify is developed so that human developers and autonomous coding agents ca
 2. **Specify:** express one observable behavior as a unit test, property, or transcript expectation; semantic snapshot expectations are `[planned]` (see the evidence hierarchy below).
 3. **Red:** run it and observe the expected failure.
 4. **Green:** make the minimum implementation change.
-5. **Exercise:** drive the application through the appropriate adapter; use the terminal adapter when the user-facing terminal path is relevant, injecting `ConptyBinding` or `PosixPtyBinding` — only the Windows path is proven end to end today, so a POSIX result is evidence about the binding rather than about the pipeline until [issue #269](https://github.com/hoelzl/termverify/issues/269) lands.
+5. **Exercise:** drive the application through the appropriate adapter; use the terminal adapter when the user-facing terminal path is relevant, injecting `ConptyBinding` or `PosixPtyBinding`. On a platform the README does not yet list as proven end to end, a result is evidence about the binding rather than about the pipeline.
 6. **Review:** inspect diffs and reports, then run the wider quality gate.
 7. **Preserve:** turn every discovered bug into durable, replayable evidence.
 
 ## Context budget
 
-Always-loaded instructions must stay short. Use this retrieval order:
+Always-loaded instructions must stay short, and their size is gated. Start
+from the task-indexed "Where to look" table in `AGENTS.md`, open one index,
+then only the pages and the source/tests for the exact behavior.
 
-```text
-AGENTS.md
-  → docs/knowledge/index.md
-    → one or two relevant concept documents
-      → source/tests for the exact behavior
-```
-
-Do not paste architecture dumps, old handovers, generated wiki pages, or volatile issue state into `AGENTS.md`.
+Do not paste architecture dumps, old handovers, generated wiki pages, or volatile issue state into `AGENTS.md`; the [agent harnesses guide](agent-harnesses.md) says where such detail belongs.
 
 ## Parallel worktrees
 
