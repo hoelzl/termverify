@@ -1,3 +1,11 @@
+---
+type: review
+status: resolved
+date: 2026-07-21
+summary: 'Adversarial review of PR #177, the real JSONL pipe binding (#173 slice 2).'
+issue: 173
+---
+
 # Adversarial review — PR #177 (issue #173 slice 2: real JSONL pipe binding)
 
 - **Reviewed SHA:** `9fef2242f9a271cac48b7f26863c698b5d665f4f` (verified at start and end — no drift)

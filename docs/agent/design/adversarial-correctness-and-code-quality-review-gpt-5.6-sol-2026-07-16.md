@@ -1,3 +1,10 @@
+---
+type: review
+status: resolved
+date: 2026-07-16
+summary: 'Whole-repository adversarial correctness and code-quality review of 97778b9 (GPT-5.6 pass); remediated through PR #80.'
+---
+
 # Adversarial correctness and code-quality review
 
 - **Date:** 2026-07-16

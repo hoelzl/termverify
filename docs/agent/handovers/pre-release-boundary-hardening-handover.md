@@ -1,3 +1,10 @@
+---
+type: handover
+status: active
+date: 2026-07-17
+summary: Pre-release boundaries (vocabulary, correlation, containment, schema distribution, terminal production, release governance) that stay unsupported until accepted.
+---
+
 # Pre-release Boundary Hardening Handover
 
 ## Handover metadata

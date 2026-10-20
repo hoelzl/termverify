@@ -1,3 +1,10 @@
+---
+type: handover
+status: complete
+date: 2026-07-16
+summary: 'Remediation of the 2026-07-16 adversarial reviews; complete through PR #80.'
+---
+
 # Adversarial Review Remediation Handover
 
 ## Handover metadata

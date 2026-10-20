@@ -1,3 +1,11 @@
+---
+type: handover
+status: complete
+date: 2026-08-04
+summary: 'Pin delayed POSIX end-of-stream exit capture; delivered by PR #301.'
+issue: 281
+---
+
 # Issue 281 — POSIX EOS Exit-Capture Handover
 
 ## Handover metadata

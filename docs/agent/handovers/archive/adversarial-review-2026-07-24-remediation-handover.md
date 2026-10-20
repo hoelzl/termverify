@@ -1,3 +1,10 @@
+---
+type: handover
+status: complete
+date: 2026-07-24
+summary: Remediation of every finding of the 2026-07-24 adversarial review; retired 2026-07-31.
+---
+
 # Adversarial Review 2026-07-24 Remediation Handover
 
 ## Handover metadata

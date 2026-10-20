@@ -1,4 +1,4 @@
-# Phase 1 Worktree Agent Prompts
+# Worktree Agent Prompts
 
 These prompts provide bounded starting context for concurrent TermVerify work.
 They are not issue trackers or architectural approvals. Before editing, each
@@ -10,7 +10,11 @@ Create one external sibling worktree and one branch per prompt, as described in
 Do not run two prompts that edit the same public API, shared fixture, or test
 module concurrently.
 
-## Available prompts
+Every prompt carries a `status` in its frontmatter: `current` prompts may be
+run; `retired` prompts were delivered or overtaken and are kept as execution
+records only.
+
+## Prompts
 
 - [Adapter contracts](adapter-contracts.md) — sequential foundation for the
   direct-adapter vertical slice.

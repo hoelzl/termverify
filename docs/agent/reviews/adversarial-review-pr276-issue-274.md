@@ -1,9 +1,12 @@
 ---
 type: review
-scope: PR #276 (issue #274, POSIX pty binding residue)
+status: resolved
+date: 2026-08-02
+summary: 'Three adversarial rounds on PR #276, the POSIX binding residue (#274).'
+issue: 274
+scope: 'PR #276 (issue #274, POSIX pty binding residue)'
 rounds: 3
 verdicts: REJECT, REJECT, REJECT
-recorded: 2026-08-02
 ---
 
 # Adversarial review — PR #276, POSIX binding residue (#274)

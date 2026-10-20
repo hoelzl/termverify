@@ -1,3 +1,11 @@
+---
+type: decision
+status: accepted
+date: 2026-07-15
+summary: Portable transcript protocol and the direct/terminal adapter boundary, with partial Windows ConPTY feasibility evidence; the binding was chosen later.
+issue: 3
+---
+
 # Phase 1 Protocol and Windows PTY Boundary Decision
 
 - **Status:** accepted — independently human-reviewed on 2026-07-15 and

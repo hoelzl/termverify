@@ -1,3 +1,11 @@
+---
+type: decision
+status: accepted
+date: 2026-07-19
+summary: Encoding contract from semantic key chords to terminal bytes (termverify.key-encoding/v1) for the terminal adapter.
+issue: 139
+---
+
 # Key-to-Terminal Byte Mapping for the ConPTY Adapter
 
 - **Status:** accepted — decided 2026-07-19 by explicit owner direction in

@@ -1,3 +1,11 @@
+---
+type: decision
+status: accepted
+date: 2026-07-19
+summary: 'Phase 2 scope: the verification core (recorder, comparator, replay, report) and the order of its slices.'
+issue: 146
+---
+
 # Phase 2 Boundary: The Verification Core
 
 - **Status:** accepted — owner decision 2026-07-19, recorded in

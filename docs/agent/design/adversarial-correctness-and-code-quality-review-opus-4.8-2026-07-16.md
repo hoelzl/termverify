@@ -1,3 +1,10 @@
+---
+type: review
+status: resolved
+date: 2026-07-16
+summary: 'Companion Claude Opus 4.8 adversarial review of 97778b9, including the Pydantic and inheritance questions; remediated through PR #80.'
+---
+
 # Adversarial correctness and code-quality review
 
 - **Date:** 2026-07-16

@@ -13,6 +13,10 @@ repository root and separates them from the design decisions under
   `review-pr177-summary.md`, `review-pr177-rereview-summary.md`), or
   `<scope>-review-<YYYY-MM-DD>.md` for a broader pass (for example
   `adversarial-review-2026-07-24.md`).
+- Every report opens with the agent-record frontmatter defined in
+  [`docs/README.md`](../../README.md) (`type: review`, `status: findings` until
+  every finding is dispositioned, then `resolved`). The frontmatter is the
+  only part of a report that changes after filing.
 - Every report names the exact commit SHA it reviewed; findings against
   anything else are not review evidence.
 - Reports are point-in-time records, like handovers: file the report as

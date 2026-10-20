@@ -1,3 +1,10 @@
+---
+type: prompt
+status: retired
+date: 2026-07-15
+summary: 'Phase 1 prompt: reconcile stale status language after the transcript-v1 contracts landed.'
+---
+
 # Agent Prompt: Phase 1 Documentation Reconciliation
 
 ## Assignment

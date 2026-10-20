@@ -1,3 +1,10 @@
+---
+type: handover
+status: complete
+date: 2026-07-14
+summary: Delivery, security, documentation, and workflow gaps from the July 2026 review, closed before Phase 1 contracts froze.
+---
+
 # Quality Hardening Handover
 
 ## Handover metadata

@@ -1,3 +1,10 @@
+---
+type: prompt
+status: retired
+date: 2026-07-15
+summary: 'Phase 1 prompt: Windows ConPTY lifecycle feasibility spike, delivered as spikes/conpty-lifecycle/ (PR #53).'
+---
+
 # Agent Prompt: ConPTY Lifecycle Spike
 
 ## Assignment

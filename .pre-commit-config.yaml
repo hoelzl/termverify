@@ -22,6 +22,12 @@ repos:
         language: system
         pass_filenames: false
 
+      - id: validate-agent-docs
+        name: validate agent record metadata
+        entry: uv --no-config run python scripts/validate_agent_docs.py
+        language: system
+        pass_filenames: false
+
       - id: validate-evidence-governance
         name: validate evidence governance
         entry: uv --no-config run python scripts/validate_evidence_governance.py

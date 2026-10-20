@@ -1,3 +1,10 @@
+---
+type: decision
+status: accepted
+date: 2026-07-15
+summary: Canonicalize transcript records with the maintained rfc8785 package.
+---
+
 # RFC 8785 implementation choice
 
 ## Context

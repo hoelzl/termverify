@@ -7,9 +7,6 @@ source of truth for volatile work state.
 
 ## Active
 
-- [Issue 278 — POSIX teardown evidence handover](issue-278-posix-teardown-evidence-handover.md)
-  — **implementation candidate**; seven deterministic probes pin teardown
-  ordering, failure cleanup, containment, refusal, and concurrent close.
 - [POSIX PTY adapter and examples vertical handover](posix-pty-adapter-and-examples-vertical-handover.md)
   — **active**; the vertical tracked by issue #204, authorized by the accepted
   [vertical boundary decision](../design/posix-pty-adapter-and-examples-vertical-boundary.md)
@@ -29,6 +26,9 @@ None.
 
 ## Archive
 
+- [Issue 278 — POSIX teardown evidence handover](archive/issue-278-posix-teardown-evidence-handover.md)
+  — **complete** (PR #302, 2026-08-13); seven deterministic probes pin teardown
+  ordering, failure cleanup, containment, refusal, and concurrent close.
 - [Issue 281 — POSIX EOS exit-capture handover](archive/issue-281-eos-exit-capture-handover.md)
   — **complete** (retired 2026-08-13); PR #301 pinned delayed EOS exit capture,
   removed the uninformative 30-second test cost, and handed the prerequisite

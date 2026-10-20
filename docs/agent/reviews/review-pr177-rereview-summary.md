@@ -1,3 +1,11 @@
+---
+type: review
+status: resolved
+date: 2026-07-21
+summary: 'Re-review of the PR #177 successor candidate (JSONL pipe binding, #173 slice 2).'
+issue: 173
+---
+
 # Adversarial RE-review — PR #177 (issue #173 slice 2: real JSONL pipe binding), successor candidate
 
 - **Reviewed SHA:** `40ff752d815e4e3bee621cc0bda33f51d9a42a5e` — `git rev-parse HEAD` verified at start AND end: **no drift**

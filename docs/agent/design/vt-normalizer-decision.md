@@ -1,3 +1,11 @@
+---
+type: decision
+status: accepted
+date: 2026-07-18
+summary: Build an in-house, fail-closed VT normalizer for a defined v1 subset instead of reusing a screen model.
+issue: 115
+---
+
 # VT Normalizer Decision: Screen-Model Reuse Assessment and v1 Subset
 
 - **Status:** accepted — decided 2026-07-18 under the maintainer's delegated

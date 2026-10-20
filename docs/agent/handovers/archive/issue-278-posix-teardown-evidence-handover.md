@@ -1,8 +1,16 @@
+---
+type: handover
+status: complete
+date: 2026-08-13
+summary: 'Pin the POSIX binding''s teardown invariants with deterministic probes; delivered by PR #302.'
+issue: 278
+---
+
 # Issue 278 — POSIX teardown evidence handover
 
 ## Handover metadata
 
-- **Status:** implementation candidate
+- **Status:** complete — [PR #302](https://github.com/hoelzl/termverify/pull/302) merged on 2026-08-13; issue #278 is closed.
 - **Issue:** [#278](https://github.com/hoelzl/termverify/issues/278)
 - **Tracking:** [#285](https://github.com/hoelzl/termverify/issues/285)
 - **Created:** 2026-08-13
@@ -73,6 +81,17 @@ Production `src/termverify/_posix_pty.py` is byte-identical to `origin/main` aft
 3. Commit and push through the real pre-push hook.
 4. Open the draft PR with `Closes #278` and obtain fresh-context adversarial review.
 5. Merge only at the exact reviewed, green head; then advance tracker #285 to #283 and archive this handover.
+
+## Completion
+
+The remaining sequence above was carried out: the candidate merged through
+[PR #302](https://github.com/hoelzl/termverify/pull/302) (`39e25f3`, 2026-08-13)
+and GitHub closed #278. The two sections above are kept as the record of the
+candidate at handover time.
+
+## Transition
+
+- **Complete and archived.** Tracker #285 advanced to issue #283.
 
 ## Risks and non-negotiables
 

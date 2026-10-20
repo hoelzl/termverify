@@ -1,3 +1,11 @@
+---
+type: handover
+status: superseded
+date: 2026-07-15
+summary: Phase 1 readiness hardening; its criteria transferred intact to the pre-release boundary hardening handover.
+superseded_by: docs/agent/handovers/pre-release-boundary-hardening-handover.md
+---
+
 # Phase 1 Readiness Hardening Handover
 
 ## Handover metadata
