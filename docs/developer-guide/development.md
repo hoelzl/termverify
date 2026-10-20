@@ -66,6 +66,7 @@ scripts/          gate entry point, validators, and documentation generators
 docs/             documentation; docs/README.md maps every folder
 changelog.d/      pending changelog fragments
 spikes/           isolated feasibility probes, outside the package
+.agents/skills/   reusable agent procedures, one SKILL.md per skill
 ```
 
 The [documentation map](../README.md) describes every folder under `docs/`

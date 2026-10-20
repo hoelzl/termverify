@@ -17,7 +17,7 @@ repeating them.
 | Adversarial and independent review reports | [`docs/agent/reviews/`](agent/reviews/index.md) | no |
 | Starting prompts for worktree agents | [`docs/agent/prompts/`](agent/prompts/index.md) | no |
 | Pending changelog entries | [`changelog.d/`](../changelog.d/README.md) | no |
-| Reusable agent procedures (skills) | `.agents/skills/` — only once a workflow is proven and stable; none yet | no |
+| Reusable agent procedures (skills) | [`.agents/skills/`](../.agents/skills/) — one folder per proven, stable procedure | no |
 
 The `docs/` folders above each have an `index.md` that lists their pages
 with a one-line summary (and, for agent records, status and date).
@@ -26,6 +26,11 @@ from page frontmatter by `scripts/build_doc_indexes.py` and never edited by
 hand. A folder's `README.md`, where present, holds its conventions.
 Developer-guide pages therefore carry a one-line `summary` in their
 frontmatter.
+
+A skill is a `SKILL.md` whose frontmatter `name` matches its folder and whose
+one-line `description` says when to use it; harnesses load only that line up
+front. A skill orders the steps of a procedure and links to the guide that
+explains them, rather than copying the guide.
 
 Choose the location by the *kind* of information, never by the task that
 produced it. One fact has one home; other documents link to it rather than
@@ -39,9 +44,10 @@ copying it.
   the changelog. A document that needs a volatile fact names the command or
   page that reports it.
 - **Records are historical.** ADRs, reviews, and archived handovers record
-  what was decided or found at the time. Correct them only to repair dead
-  links or paths, or to mark supersession; record a changed decision in a new
-  or amended record.
+  what was decided or found at the time. Correct ADRs and archived handovers
+  only to repair dead links or paths, or to mark supersession; a review
+  report changes only in its frontmatter (`reviews/README.md`). Record a
+  changed decision in a new or amended record.
 - **Knowledge pages are timeless.** `docs/knowledge/` follows OKF:
   `index.md` files are navigation-only, and every other page has YAML
   frontmatter with at least a non-empty `type`
