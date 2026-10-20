@@ -1,4 +1,9 @@
-"""Living documentation carries a review-by date and a size budget (#322)."""
+"""Living documentation carries a review-by date and a size budget (#322).
+
+The commit/PR gate fails only on facts fixed in the tree; passed dates fail
+only under ``--overdue`` (the weekly scheduled workflow), so no commit ever
+starts failing its own gate because the calendar moved.
+"""
 
 from __future__ import annotations
 
@@ -30,7 +35,7 @@ def _write(root: Path, relative: str, front: str, body: str = "# Page\n") -> Non
     path.write_text(f"---\n{front}---\n\n{body}", encoding="utf-8")
 
 
-def _tree(root: Path, review_by: str = "2026-12-01") -> None:
+def _tree(root: Path, review_by: str = "2027-01-20") -> None:
     _write(root, "docs/knowledge/page.md", f"type: Concept\nreview_by: {review_by}\n")
     _write(
         root, "docs/knowledge/sub/deep.md", f"type: Concept\nreview_by: {review_by}\n"
@@ -48,28 +53,36 @@ def _tree(root: Path, review_by: str = "2026-12-01") -> None:
     )
 
 
-def test_current_documents_pass(tmp_path: Path) -> None:
+def test_current_documents_pass_without_warnings(tmp_path: Path) -> None:
     _tree(tmp_path)
     checker = load_checker()
 
-    assert checker.check(tmp_path, TODAY) == []
+    assert checker.check(tmp_path, TODAY) == ([], [])
+    assert checker.check(tmp_path, TODAY, overdue=True) == ([], [])
 
 
-def test_review_by_today_is_still_current(tmp_path: Path) -> None:
-    _tree(tmp_path, review_by="2026-10-20")
-    checker = load_checker()
-
-    assert checker.check(tmp_path, TODAY) == []
-
-
-def test_overdue_documents_fail_with_the_remedy(tmp_path: Path) -> None:
+def test_passed_dates_warn_in_the_gate_and_fail_when_overdue(tmp_path: Path) -> None:
     _tree(tmp_path, review_by="2026-10-19")
     checker = load_checker()
 
-    errors = checker.check(tmp_path, TODAY)
+    errors, warnings = checker.check(tmp_path, TODAY)
+    assert errors == []
+    assert len(warnings) == 3
 
+    errors, _ = checker.check(tmp_path, TODAY, overdue=True)
     assert len(errors) == 3
     assert all("move review_by forward" in error for error in errors)
+
+
+def test_near_dates_warn(tmp_path: Path) -> None:
+    _tree(tmp_path, review_by="2026-10-20")
+    checker = load_checker()
+
+    errors, warnings = checker.check(tmp_path, TODAY, overdue=True)
+
+    assert errors == []
+    assert len(warnings) == 3
+    assert all("is near" in warning for warning in warnings)
 
 
 @pytest.mark.parametrize("value", ["", "soon", "2026-10-20T10:00:00"])
@@ -77,7 +90,7 @@ def test_missing_or_malformed_review_by_fails(tmp_path: Path, value: str) -> Non
     _write(tmp_path, "docs/knowledge/page.md", f"type: Concept\nreview_by: {value}\n")
     checker = load_checker()
 
-    errors = checker.check(tmp_path, TODAY)
+    errors, _ = checker.check(tmp_path, TODAY)
 
     assert errors == [
         "docs/knowledge/page.md: missing or malformed review_by (YYYY-MM-DD)"
@@ -96,7 +109,16 @@ def test_unparsable_frontmatter_counts_as_missing(tmp_path: Path) -> None:
         path.write_text(text, encoding="utf-8")
     checker = load_checker()
 
-    assert len(checker.check(tmp_path, TODAY)) == 4
+    assert len(checker.check(tmp_path, TODAY)[0]) == 4
+
+
+def test_crlf_and_bom_working_copies_are_read(tmp_path: Path) -> None:
+    path = tmp_path / "docs/knowledge/page.md"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"\xef\xbb\xbf---\r\nreview_by: 2027-01-20\r\n---\r\n# P\r\n")
+    checker = load_checker()
+
+    assert checker.check(tmp_path, TODAY) == ([], [])
 
 
 def test_finished_and_archived_handovers_are_exempt(tmp_path: Path) -> None:
@@ -106,7 +128,7 @@ def test_finished_and_archived_handovers_are_exempt(tmp_path: Path) -> None:
     (tmp_path / "docs/agent/handovers/index.md").write_text("# Index\n", "utf-8")
     checker = load_checker()
 
-    assert checker.check(tmp_path, TODAY) == []
+    assert checker.check(tmp_path, TODAY) == ([], [])
 
 
 def test_oversized_working_handover_fails(tmp_path: Path) -> None:
@@ -114,30 +136,39 @@ def test_oversized_working_handover_fails(tmp_path: Path) -> None:
     _write(
         tmp_path,
         "docs/agent/handovers/big.md",
-        "type: handover\nstatus: active\nreview_by: 2026-12-01\n",
+        "type: handover\nstatus: active\nreview_by: 2027-01-20\n",
         body="x" * (checker.HANDOVER_BUDGET + 1),
     )
 
-    errors = checker.check(tmp_path, TODAY)
+    errors, _ = checker.check(tmp_path, TODAY)
 
     assert len(errors) == 1
     assert "archived record" in errors[0]
 
 
-def test_the_repository_documents_are_current() -> None:
+def test_the_repository_documents_carry_valid_review_dates() -> None:
+    """Date-independent: the tree's own gate never depends on the calendar."""
     checker = load_checker()
 
-    assert checker.check(Path(), datetime.date.today()) == []
+    errors, _ = checker.check(Path(), datetime.date.min)
+
+    assert errors == []
 
 
-def test_main_reports_failures(
+def test_utc_today_is_a_date() -> None:
+    checker = load_checker()
+
+    assert isinstance(checker.utc_today(), datetime.date)
+
+
+def test_main_warns_by_default_and_fails_when_overdue(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     _tree(tmp_path, review_by="2026-01-01")
     checker = load_checker()
     monkeypatch.chdir(tmp_path)
 
-    assert checker.main(today=TODAY) == 1
+    assert checker.main([], today=TODAY) == 0
+    assert "warning:" in capsys.readouterr().out
+    assert checker.main(["--overdue"], today=TODAY) == 1
     assert "has passed" in capsys.readouterr().out
-    _tree(tmp_path)
-    assert checker.main(today=TODAY) == 0

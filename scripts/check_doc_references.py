@@ -4,13 +4,17 @@
 Usage:
     uv --no-config run python scripts/check_doc_references.py
 
-Two kinds of reference are checked in every tracked-style Markdown file
-outside the exclusions below (issue #322):
+Two kinds of reference are checked in every Markdown file outside the
+exclusions below and outside dot-directories other than ``.agents/`` and
+``.github/`` (issue #322):
 
-1. **Relative Markdown links** — ``[text](path)`` and ``[text](path#anchor)``.
-   The target file must exist, and an anchor into a Markdown file must name
-   one of its headings (GitHub/MkDocs slug rules: lowercase, punctuation
-   dropped, spaces to hyphens).
+1. **Relative Markdown links** — inline ``[text](path#anchor "title")``,
+   angle-bracket ``[text](<path>)``, and reference definitions
+   ``[ref]: path``. The target must exist with exactly this spelling —
+   case-sensitively, as on Linux CI and GitHub, even on a case-insensitive
+   file system — and an anchor into a Markdown file must name one of its ATX
+   headings (GitHub slug rules: lowercase, punctuation dropped, spaces to
+   hyphens). Image links and raw HTML are not checked.
 2. **Backticked repository paths** — `` `src/termverify/x.py` `` and the
    like, starting with a top-level repository directory. Agents follow these
    as lightweight identifiers, so a renamed file must not leave them dangling.
@@ -23,10 +27,12 @@ reason; the allowance is per path, never per file.
 
 from __future__ import annotations
 
+import os
 import re
 import unicodedata
 from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
+from urllib.parse import unquote
 
 #: Markdown trees that are point-in-time history, not navigation.
 EXCLUDED_PREFIXES = (
@@ -39,6 +45,9 @@ EXCLUDED_PREFIXES = (
     ".site-docs/",
     "tests/fixtures/external/",
 )
+
+#: Dot-directories whose Markdown is project documentation.
+VISIBLE_DOT_DIRECTORIES = frozenset({".agents", ".github"})
 
 #: Top-level directories a backticked path may start with.
 REPO_ROOTS = (
@@ -68,7 +77,8 @@ ALLOWED_MISSING: Mapping[str, str] = {
     ".agents/skills/": "reserved for proven skills; created by phase 7 of #322",
 }
 
-_LINK = re.compile(r"(?<!!)\[[^\]]*\]\(([^)\s]+)\)")
+_LINK = re.compile(r"(?<!!)\[[^\]]*\]\(\s*(<[^>]+>|[^)\s]+)(?:\s+\"[^\"]*\")?\s*\)")
+_DEFINITION = re.compile(r"^\s{0,3}\[[^\]]+\]:\s*(<[^>]+>|\S+)")
 _CODE = re.compile(r"`([^`\n]+)`")
 _EXTERNAL = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|//)", re.IGNORECASE)
 _HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
@@ -116,6 +126,26 @@ def anchors(path: Path) -> set[str]:
     return result
 
 
+def exists_exactly(path: Path) -> bool:
+    """Return whether *path* exists with exactly this spelling of every part."""
+    absolute = Path(os.path.abspath(path))
+    current = Path(absolute.anchor)
+    for part in absolute.parts[1:]:
+        try:
+            names = os.listdir(current)
+        except OSError:
+            return False
+        if part not in names:
+            return False
+        current = current / part
+    return True
+
+
+def _link_target(raw: str) -> str:
+    target = raw[1:-1] if raw.startswith("<") and raw.endswith(">") else raw
+    return unquote(target.split("?", 1)[0])
+
+
 def _allowed(target: str) -> bool:
     return any(
         target == allowed or target.startswith(allowed) for allowed in ALLOWED_MISSING
@@ -129,12 +159,14 @@ def check_file(root: Path, path: Path) -> list[str]:
     text = path.read_text(encoding="utf-8")
     for number, line in markdown_lines(text):
         prose = _CODE.sub("``", line)
-        for target in _LINK.findall(prose):
+        targets = _LINK.findall(prose) + _DEFINITION.findall(prose)
+        for raw in targets:
+            target = _link_target(raw)
             if _EXTERNAL.match(target):
                 continue
             file_part, _, anchor = target.partition("#")
-            resolved = (path.parent / file_part).resolve() if file_part else path
-            if file_part and not resolved.exists():
+            resolved = path.parent / file_part if file_part else path
+            if file_part and not exists_exactly(resolved):
                 errors.append(f"{relative}:{number}: broken link {target}")
                 continue
             if (
@@ -150,7 +182,7 @@ def check_file(root: Path, path: Path) -> list[str]:
                 ch in candidate for ch in "*<>{} "
             ):
                 continue
-            if not (root / candidate).exists() and not _allowed(candidate):
+            if not exists_exactly(root / candidate) and not _allowed(candidate):
                 errors.append(f"{relative}:{number}: missing path `{candidate}`")
     return errors
 
@@ -161,6 +193,9 @@ def markdown_files(root: Path) -> list[Path]:
     for path in sorted(root.rglob("*.md")):
         relative = path.relative_to(root).as_posix()
         if relative.startswith(EXCLUDED_PREFIXES) or "/node_modules/" in relative:
+            continue
+        hidden = [part for part in Path(relative).parts[:-1] if part.startswith(".")]
+        if any(part not in VISIBLE_DOT_DIRECTORIES for part in hidden):
             continue
         files.append(path)
     return files

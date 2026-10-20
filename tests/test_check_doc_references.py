@@ -119,3 +119,42 @@ def test_main_reports_failures_with_remediation(
     assert "ALLOWED_MISSING" in capsys.readouterr().out
     (tmp_path / "docs/a.md").write_text("fine\n", encoding="utf-8")
     assert checker.main() == 0
+
+
+def test_wrong_case_targets_fail_even_on_case_insensitive_systems(
+    tmp_path: Path,
+) -> None:
+    _write(tmp_path, "docs/Guide.md", "# Guide\n")
+    _write(tmp_path, "docs/a.md", "[g](guide.md) `docs/guide.md` [ok](Guide.md)\n")
+    checker = load_checker()
+
+    errors = checker.check(tmp_path)
+
+    assert errors == [
+        "docs/a.md:1: broken link guide.md",
+        "docs/a.md:1: missing path `docs/guide.md`",
+    ]
+
+
+def test_titles_angle_brackets_queries_encoding_and_definitions(tmp_path: Path) -> None:
+    _write(tmp_path, "docs/my page.md", "# My page\n")
+    _write(
+        tmp_path,
+        "docs/a.md",
+        '[t](<my page.md>) [u](my%20page.md?x=1) [v](my%20page.md "Title")\n'
+        "[gone]: missing.md\n[ok]: <my page.md#my-page>\n",
+    )
+    checker = load_checker()
+
+    assert checker.check(tmp_path) == ["docs/a.md:2: broken link missing.md"]
+
+
+def test_hidden_tool_directories_are_not_scanned(tmp_path: Path) -> None:
+    _write(tmp_path, ".pytest_cache/README.md", "[x](gone.md)\n")
+    _write(tmp_path, ".claude/worktrees/w/docs/a.md", "[x](gone.md)\n")
+    _write(tmp_path, ".agents/skills/s/SKILL.md", "[x](gone.md)\n")
+    checker = load_checker()
+
+    assert checker.check(tmp_path) == [
+        ".agents/skills/s/SKILL.md:1: broken link gone.md"
+    ]

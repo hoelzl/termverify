@@ -95,7 +95,8 @@ says so in its summary. Paths cited by source code stay stable, so decisions are
 
 ## Keeping documentation current
 
-These gates run in pre-commit and in the CI documentation job, so a
+These gates run as pre-commit hooks, which every CI quality leg runs; all
+but the prose-status validator also run in the CI documentation job. A
 convention that matters is checked rather than only described:
 
 | Gate | Checks |
@@ -104,10 +105,11 @@ convention that matters is checked rather than only described:
 | `scripts/validate_agent_docs.py` | Agent records carry the metadata above. |
 | `scripts/build_doc_indexes.py --check` | Every generated index is current and lists every page. |
 | `scripts/check_doc_references.py` | Relative links, heading anchors, and backticked repository paths resolve. |
-| `scripts/check_doc_freshness.py` | Knowledge pages and unfinished handovers are within their `review_by` date; working handovers stay within their size budget. |
+| `scripts/check_doc_freshness.py` | Knowledge pages and unfinished handovers carry a valid `review_by` date (passed or near dates only warn); working handovers stay within their size budget. With `--overdue`, run weekly by the `Documentation freshness` workflow, passed dates fail. |
 | `scripts/validate_prose_status.py` | Version discipline, registry counts stated in prose, and the always-on budget of `AGENTS.md` and `CLAUDE.md`. |
 
-**Doc gardening.** When a `review_by` date passes — or whenever code and prose
+**Doc gardening.** When a `review_by` date passes (the weekly workflow fails
+and the gate warns) — or whenever code and prose
 disagree — re-verify the page against the code and executable checks, repair
 the prose (code changes only test-first), and move `review_by` forward,
 typically by three months for knowledge pages. The same pass prunes copies of
