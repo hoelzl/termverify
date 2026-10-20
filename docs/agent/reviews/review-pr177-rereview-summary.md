@@ -1,7 +1,7 @@
 ---
 type: review
 status: resolved
-date: 2026-07-24
+date: 2026-07-21
 summary: 'Re-review of the PR #177 successor candidate (JSONL pipe binding, #173 slice 2).'
 issue: 173
 ---

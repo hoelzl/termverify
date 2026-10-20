@@ -73,8 +73,13 @@ superseded_by: docs/agent/design/new.md      # required when status is supersede
 | `prompt` | `prompts/` | current, retired |
 | `handover` | `handovers/` | draft, active, blocked, complete, superseded |
 
+Unknown keys are rejected; older review reports may also keep their
+`scope`, `rounds`, `verdicts`, and `subject` keys. Quote any value that
+contains `#` or `:` — YAML otherwise truncates it at ` #` without warning,
+and the validator rejects that form.
+
 The frontmatter status is the living status. Records keep their historical
 text: a superseded decision's body still says what was accepted at the time,
 and a review's body is never rewritten. Finished handovers move to
-`handovers/archive/`; an amended decision stays in place and says so in its
-summary. Paths cited by source code stay stable, so decisions are never moved.
+`handovers/archive/`; a decision amended in place stays where it is and
+says so in its summary. Paths cited by source code stay stable, so decisions are never moved.

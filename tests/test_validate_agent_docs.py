@@ -277,3 +277,160 @@ def test_main_reports_failures_with_a_nonzero_exit(
 
     assert validator.main() == 1
     assert "simmering" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["summary: a: b: [", "date: 2026-13-45"],
+)
+def test_invalid_yaml_is_a_curated_error_not_a_crash(tmp_path: Path, line: str) -> None:
+    path = _record(tmp_path, "design/adr.md")
+    field = line.split(":", 1)[0]
+    text = path.read_text(encoding="utf-8")
+    kept = [row for row in text.splitlines() if not row.startswith(f"{field}:")]
+    kept.insert(1, line)
+    path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+    _record(tmp_path, "design/other.md", status="simmering")
+    validator = load_validator()
+
+    errors = validator.validate_agent_docs(tmp_path)
+
+    assert any("invalid YAML" in error for error in errors)
+    assert any("simmering" in error for error in errors), "later files still checked"
+
+
+def test_unquoted_hash_would_truncate_and_is_rejected(tmp_path: Path) -> None:
+    path = _record(tmp_path, "design/adr.md")
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "summary: One sentence that says what the record decides.",
+            "summary: Fixes PR #80 issue",
+        ),
+        encoding="utf-8",
+    )
+    _record(tmp_path, "design/quoted.md", extra="")
+    quoted = tmp_path / "docs/agent/design/quoted.md"
+    quoted.write_text(
+        quoted.read_text(encoding="utf-8").replace(
+            "summary: One sentence that says what the record decides.",
+            "summary: 'Fixes PR #80 issue'",
+        ),
+        encoding="utf-8",
+    )
+    validator = load_validator()
+
+    errors = validator.validate_agent_docs(tmp_path)
+
+    assert len(errors) == 1
+    assert "adr.md" in errors[0] and "quote" in errors[0]
+
+
+def test_unknown_keys_are_rejected_except_legacy_review_keys(tmp_path: Path) -> None:
+    _record(tmp_path, "design/adr.md", extra="isue: 12\n")
+    _record(
+        tmp_path,
+        "reviews/pass.md",
+        type_="review",
+        status="resolved",
+        extra="rounds: 3\nscope: whole repository\n",
+    )
+    validator = load_validator()
+
+    errors = validator.validate_agent_docs(tmp_path)
+
+    assert len(errors) == 1
+    assert "isue" in errors[0]
+
+
+@pytest.mark.parametrize("value", ["abc", "0", "true"])
+def test_issue_must_be_a_positive_number(tmp_path: Path, value: str) -> None:
+    _record(tmp_path, "design/adr.md", extra=f"issue: {value}\n")
+    validator = load_validator()
+
+    errors = validator.validate_agent_docs(tmp_path)
+
+    assert len(errors) == 1
+    assert "issue" in errors[0]
+
+
+@pytest.mark.parametrize(
+    ("extra", "fragment"),
+    [
+        ("superseded_by: docs/agent/design/old.md\n", "itself"),
+        ("superseded_by: pyproject.toml\n", "under docs/agent/"),
+        ("superseded_by: 'docs\\agent\\design\\new.md'\n", "forward-slash"),
+        ("superseded_by: [docs/agent/design/new.md]\n", "one path string"),
+    ],
+)
+def test_supersession_targets_are_other_records(
+    tmp_path: Path, extra: str, fragment: str
+) -> None:
+    (tmp_path / "pyproject.toml").write_text("", encoding="utf-8")
+    _record(tmp_path, "design/new.md")
+    _record(tmp_path, "design/old.md", status="superseded", extra=extra)
+    validator = load_validator()
+
+    errors = validator.validate_agent_docs(tmp_path)
+
+    assert len(errors) == 1
+    assert fragment in errors[0]
+
+
+def test_successor_without_superseded_status_is_reported(tmp_path: Path) -> None:
+    _record(tmp_path, "design/new.md")
+    _record(
+        tmp_path, "design/old.md", extra="superseded_by: docs/agent/design/new.md\n"
+    )
+    validator = load_validator()
+
+    errors = validator.validate_agent_docs(tmp_path)
+
+    assert len(errors) == 1
+    assert "not 'superseded'" in errors[0]
+
+
+@pytest.mark.parametrize("summary", ["'   '", "42"])
+def test_summary_must_be_non_empty_text(tmp_path: Path, summary: str) -> None:
+    path = _record(tmp_path, "design/adr.md")
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "summary: One sentence that says what the record decides.",
+            f"summary: {summary}",
+        ),
+        encoding="utf-8",
+    )
+    validator = load_validator()
+
+    errors = validator.validate_agent_docs(tmp_path)
+
+    assert len(errors) == 1
+    assert "non-empty string" in errors[0]
+
+
+def test_decisions_are_never_archived(tmp_path: Path) -> None:
+    _record(tmp_path, "design/archive/adr.md")
+    validator = load_validator()
+
+    errors = validator.validate_agent_docs(tmp_path)
+
+    assert len(errors) == 1
+    assert "never archived" in errors[0]
+
+
+def test_every_status_bullet_is_checked_outside_code_fences(tmp_path: Path) -> None:
+    _record(
+        tmp_path,
+        "handovers/live.md",
+        type_="handover",
+        status="active",
+        body=(
+            "# Handover\n\n- **Status:** active\n\n```markdown\n"
+            "- **Status:** draft\n```\n\n- **Status:** blocked\n"
+        ),
+    )
+    validator = load_validator()
+
+    errors = validator.validate_agent_docs(tmp_path)
+
+    assert len(errors) == 1
+    assert "blocked" in errors[0]

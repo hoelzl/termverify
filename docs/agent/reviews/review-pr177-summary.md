@@ -1,7 +1,7 @@
 ---
 type: review
 status: resolved
-date: 2026-07-24
+date: 2026-07-21
 summary: 'Adversarial review of PR #177, the real JSONL pipe binding (#173 slice 2).'
 issue: 173
 ---

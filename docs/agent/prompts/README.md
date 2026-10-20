@@ -12,7 +12,7 @@ module concurrently.
 
 Every prompt carries a `status` in its frontmatter: `current` prompts may be
 run; `retired` prompts were delivered or overtaken and are kept as execution
-records only. All prompts below are retired.
+records only.
 
 ## Prompts
 

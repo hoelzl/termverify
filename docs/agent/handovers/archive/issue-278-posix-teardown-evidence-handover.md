@@ -82,6 +82,17 @@ Production `src/termverify/_posix_pty.py` is byte-identical to `origin/main` aft
 4. Open the draft PR with `Closes #278` and obtain fresh-context adversarial review.
 5. Merge only at the exact reviewed, green head; then advance tracker #285 to #283 and archive this handover.
 
+## Completion
+
+The remaining sequence above was carried out: the candidate merged through
+[PR #302](https://github.com/hoelzl/termverify/pull/302) (`39e25f3`, 2026-08-13)
+and GitHub closed #278. The two sections above are kept as the record of the
+candidate at handover time.
+
+## Transition
+
+- **Complete and archived.** Tracker #285 advanced to issue #283.
+
 ## Risks and non-negotiables
 
 - Do not convert scripted barriers back into sleeps or throughput thresholds.

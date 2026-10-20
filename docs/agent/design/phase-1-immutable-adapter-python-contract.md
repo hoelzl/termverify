@@ -1,8 +1,8 @@
 ---
 type: decision
 status: accepted
-date: 2026-07-16
-summary: 'Immutable Python contract for adapters, run configuration, and observations (PRs #47 and #49).'
+date: 2026-07-17
+summary: 'Immutable Python contract for adapters, run configuration, and observations (PRs #47 and #49), amended by the termverify.key/v1 boundary.'
 ---
 
 # Phase 1 Immutable Adapter Python Contract

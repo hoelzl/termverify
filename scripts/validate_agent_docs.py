@@ -9,17 +9,23 @@ cannot hide in free-form prose (issue #322)::
     status: accepted          # closed vocabulary per type
     date: 2026-07-19          # when the record was made or decided
     summary: One line that says what the record decides or finds.
-    issue: 146                # optional
+    issue: 146                # optional: the record's own issue
     supersedes: [docs/agent/design/old.md]        # optional
     superseded_by: docs/agent/design/new.md       # required when superseded
     ---
 
-Paths in ``supersedes`` and ``superseded_by`` are repository-relative and
-must exist. ``README.md`` and ``index.md`` files are navigation, not records,
-and are exempt. The frontmatter status is the living status; a body
-``- **Status:**`` bullet must agree with it, except in reviews (point-in-time
-reports that are never rewritten) and in superseded records (whose bullet is
-history). The schema and its rationale are documented in ``docs/README.md``.
+Paths in ``supersedes`` and ``superseded_by`` are repository-relative, point
+at other existing records under ``docs/agent/``, and use forward slashes.
+Unknown keys are rejected (a misspelled key would otherwise vanish from the
+generated indexes), and an unquoted value containing `` #`` is rejected
+because YAML silently truncates it at the comment. ``README.md`` and
+``index.md`` files are navigation, not records, and are exempt.
+
+The frontmatter status is the living status; a body ``- **Status:**``
+bullet outside code fences must agree with it, except in reviews
+(point-in-time reports that are never rewritten) and in superseded records
+(whose bullet is history). The schema and its rationale are documented in
+``docs/README.md``.
 """
 
 from __future__ import annotations
@@ -34,6 +40,9 @@ import yaml
 AGENT_DOCS = Path("docs") / "agent"
 EXEMPT_FILENAMES = frozenset({"README.md", "index.md"})
 REQUIRED_FIELDS = ("type", "status", "date", "summary")
+OPTIONAL_FIELDS = frozenset({"issue", "supersedes", "superseded_by"})
+#: Keys some review reports carried before the schema existed.
+LEGACY_REVIEW_FIELDS = frozenset({"scope", "rounds", "verdicts", "subject"})
 
 #: Closed status vocabulary per record type.
 STATUSES: Mapping[str, frozenset[str]] = {
@@ -66,6 +75,7 @@ FINISHED: Mapping[str, frozenset[str]] = {
 
 _STATUS_BULLET = "- **Status:**"
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+_PLAIN_SCALAR_WITH_COMMENT = re.compile(r"^[A-Za-z_]+:\s+[^'\"\s|>\[{].*\s#")
 
 
 def read_frontmatter(path: Path) -> tuple[dict[str, object] | None, str, str]:
@@ -76,7 +86,21 @@ def read_frontmatter(path: Path) -> tuple[dict[str, object] | None, str, str]:
     end = text.find("\n---\n", 4)
     if end == -1:
         return None, text, "unterminated YAML frontmatter"
-    data = yaml.safe_load(text[4:end])
+    raw = text[4:end]
+    for line in raw.splitlines():
+        if _PLAIN_SCALAR_WITH_COMMENT.match(line):
+            return (
+                None,
+                text,
+                (
+                    f"unquoted value containing ' #' would be truncated by YAML:"
+                    f" {line!r} — quote the value"
+                ),
+            )
+    try:
+        data = yaml.safe_load(raw)
+    except (yaml.YAMLError, ValueError) as exc:
+        return None, text, f"invalid YAML frontmatter: {exc}"
     if not isinstance(data, dict):
         return None, text, "frontmatter is not a mapping"
     return data, text[end + 5 :], ""
@@ -108,6 +132,16 @@ def _validate_record(root: Path, path: Path) -> list[str]:
     folder = folder_parts[0]
     archived = "archive" in folder_parts[1:-1]
 
+    allowed_keys = set(REQUIRED_FIELDS) | OPTIONAL_FIELDS
+    if record_type == "review":
+        allowed_keys |= LEGACY_REVIEW_FIELDS
+    errors.extend(
+        f"{relative}: unknown frontmatter key {key!r}; allowed:"
+        f" {sorted(allowed_keys)} (docs/README.md)"
+        for key in data
+        if key not in allowed_keys
+    )
+
     allowed_types = FOLDER_TYPES.get(folder)
     if allowed_types is None:
         errors.append(
@@ -133,14 +167,37 @@ def _validate_record(root: Path, path: Path) -> list[str]:
     if not _DATE.fullmatch(_date_text(data["date"])):
         errors.append(f"{relative}: date must be YYYY-MM-DD")
     summary = data["summary"]
-    if not isinstance(summary, str) or "\n" in summary.strip():
+    if not isinstance(summary, str) or not summary.strip():
+        errors.append(f"{relative}: summary must be a non-empty string")
+    elif "\n" in summary.strip():
         errors.append(f"{relative}: summary must be a single line")
+    issue = data.get("issue")
+    if issue is not None and (
+        isinstance(issue, bool) or not isinstance(issue, int) or issue < 1
+    ):
+        errors.append(f"{relative}: issue must be a positive issue number")
 
     errors.extend(_validate_supersession(root, relative, data, status))
     errors.extend(_validate_placement(relative, record_type, status, archived))
     if record_type != "review" and status != "superseded":
         errors.extend(_validate_status_bullet(relative, body, status))
     return errors
+
+
+def _supersession_target_error(root: Path, relative: str, target: object) -> str:
+    text = str(target)
+    if not isinstance(target, str):
+        return f"{relative}: supersession target {text} must be one path string"
+    if text == relative:
+        return f"{relative}: a record cannot supersede itself"
+    if "\\" in text or not text.startswith(f"{AGENT_DOCS.as_posix()}/"):
+        return (
+            f"{relative}: supersession target {text} must be a forward-slash"
+            " path to a record under docs/agent/"
+        )
+    if not (root / text).is_file():
+        return f"{relative}: supersession target {text} does not exist"
+    return ""
 
 
 def _validate_supersession(
@@ -150,16 +207,20 @@ def _validate_supersession(
     successor = data.get("superseded_by")
     if status == "superseded" and not successor:
         errors.append(f"{relative}: status superseded requires superseded_by")
+    if successor and status != "superseded":
+        errors.append(
+            f"{relative}: superseded_by is set but the status is {status!r},"
+            " not 'superseded'"
+        )
     targets: list[object] = []
     if successor:
         targets.append(successor)
     predecessors = data.get("supersedes") or []
     targets.extend(predecessors if isinstance(predecessors, list) else [predecessors])
-    errors.extend(
-        f"{relative}: supersession target {target} does not exist"
-        for target in targets
-        if not (root / str(target)).is_file()
-    )
+    for target in targets:
+        error = _supersession_target_error(root, relative, target)
+        if error:
+            errors.append(error)
     return errors
 
 
@@ -168,6 +229,11 @@ def _validate_placement(
 ) -> list[str]:
     finished = FINISHED.get(record_type)
     if finished is None:
+        if archived:
+            return [
+                f"{relative}: {record_type} records are never archived; their"
+                " paths stay stable (docs/README.md)"
+            ]
         return []
     if archived and status not in finished:
         return [
@@ -183,19 +249,23 @@ def _validate_placement(
 
 
 def _validate_status_bullet(relative: str, body: str, status: str) -> list[str]:
+    errors: list[str] = []
+    in_fence = False
     for line in body.splitlines():
-        if not line.startswith(_STATUS_BULLET):
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence or not line.startswith(_STATUS_BULLET):
             continue
         rest = line[len(_STATUS_BULLET) :].strip()
         token = rest.split()[0].rstrip(",.;:") if rest else ""
         if token != status:
-            return [
+            errors.append(
                 f"{relative}: body status bullet says {token!r} but the"
                 f" frontmatter status is {status!r}; the frontmatter is the"
                 " living status — update the bullet to match"
-            ]
-        return []
-    return []
+            )
+    return errors
 
 
 def validate_agent_docs(root: Path) -> list[str]:

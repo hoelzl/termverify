@@ -2,8 +2,8 @@
 type: decision
 status: accepted
 date: 2026-07-20
-summary: Define termverify.control/v1 and the JSONL subprocess transport as the second live runtime; the normative wire specification now lives in docs/knowledge/control-protocol.md.
-issue: 173
+summary: Define termverify.control/v1 and the JSONL subprocess transport as the second live runtime; amended by the channel-tagged delivery records decision; the normative wire specification now lives in docs/knowledge/control-protocol.md.
+issue: 114
 ---
 
 # JSONL Subprocess Control Transport: `termverify.control/v1` and the Second Live Runtime

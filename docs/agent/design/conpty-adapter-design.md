@@ -2,7 +2,7 @@
 type: decision
 status: accepted
 date: 2026-07-18
-summary: 'Design of the public terminal adapter over ConPTY: binding mapping, epoch semantics, and evidence normalization.'
+summary: 'Design of the public terminal adapter over ConPTY: binding mapping, epoch semantics, and evidence normalization; amended in place by later issues (#194, #226, #232).'
 issue: 112
 ---
 
