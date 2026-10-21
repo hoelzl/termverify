@@ -1,0 +1,7 @@
+# Throwaway trial scripts from the 2026-10-20 viability review, kept as they
+# were run: later attempts exec() the setup of earlier ones, so undefined names
+# and late imports are expected here and nowhere else.
+extend = "../../pyproject.toml"
+
+[lint]
+extend-ignore = ["B904", "E402", "E501", "E741", "F821", "SIM105", "SIM115"]

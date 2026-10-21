@@ -1,7 +1,7 @@
 # GlyphWright direct-spike transcript — external conformance fixture
 
 - **Source:** `spikes/termverify-direct-adapter/transcript.jsonl` in the
-  [GlyphWright repository](https://github.com/hoelzl/glyphwright), an
+  [GlyphWright v0 repository](https://github.com/hoelzl/glyphwright-v0), an
   independent external application under test (issue #114).
 - **Commit:** `bf80051c5af46ce8eda5b8569797f03b8ed98ffe`
   (2026-07-18), retrieved unmodified on 2026-07-19.
