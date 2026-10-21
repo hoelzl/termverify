@@ -1,5 +1,16 @@
 # TermVerify
 
+> **Archived on 2026-10-21 and no longer maintained.** A
+> [viability review](docs/agent/reviews/viability-review-2026-10-20.md) found
+> that termverify cannot test ordinary programs: the program under test has to
+> print readiness markers. For testing terminal UIs, consider
+> [Microsoft's tui-test](https://github.com/microsoft/tui-test). The code,
+> documentation, and history stay available read-only. GlyphWright, its former
+> reference application, continues without termverify in
+> [hoelzl/glyphwright](https://github.com/hoelzl/glyphwright); the v0 code that
+> this repository's fixtures cite is in
+> [hoelzl/glyphwright-v0](https://github.com/hoelzl/glyphwright-v0).
+
 Protocol-driven verification for autonomous terminal applications.
 
 TermVerify is a Python library and reference toolkit for testing terminal and TUI applications through reproducible interaction. It combines direct semantic adapters with real pseudoconsole-driven runs, then compares structured observations rather than relying only on brittle raw-terminal snapshots.

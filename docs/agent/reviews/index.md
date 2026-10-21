@@ -6,6 +6,7 @@ Conventions: [`README.md`](README.md).
 
 | Record | Status | Date | Summary |
 | --- | --- | --- | --- |
+| [Viability review — 2026-10-20](viability-review-2026-10-20.md) | findings | 2026-10-20 | Whole-project viability review: termverify cannot yet test ordinary programs; recommends a freeze, a time-boxed trial on tui-test, and a decision gate. |
 | [Adversarial review record — PR #280 / issue #279](adversarial-review-pr280-issue-279.md) | resolved | 2026-08-03 | Three adversarial rounds on PR #280, the POSIX end-of-stream decoder flush (#279). ([#279](https://github.com/hoelzl/termverify/issues/279)) |
 | [Adversarial review — PR #276, POSIX binding residue (#274)](adversarial-review-pr276-issue-274.md) | resolved | 2026-08-02 | Three adversarial rounds on PR #276, the POSIX binding residue (#274). ([#274](https://github.com/hoelzl/termverify/issues/274)) |
 | [TermVerify — Adversarial Design & Implementation Review](adversarial-review-2026-07-24.md) | resolved | 2026-07-24 | Four-pass adversarial design and implementation review of main @ 8f33e6c; remediated by the archived 2026-07-24 remediation handover. |
